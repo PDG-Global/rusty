@@ -1,3 +1,6 @@
+// Copyright (C) 2025 Jeremy Moseley
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use std::path::Path;
 
 /// Build system context: platform info, working directory, git status

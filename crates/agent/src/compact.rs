@@ -1,3 +1,6 @@
+// Copyright (C) 2025 Jeremy Moseley
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use futures::StreamExt;
 use rusty_core::{Message, Role, RustyError};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};

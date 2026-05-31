@@ -1,3 +1,6 @@
+// Copyright (C) 2025 Jeremy Moseley
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use rusty_core::ContentBlock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

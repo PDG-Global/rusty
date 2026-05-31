@@ -1,3 +1,6 @@
+// Copyright (C) 2025 Jeremy Moseley
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 pub mod agent;
 pub mod bash;
 pub mod file_edit;

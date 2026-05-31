@@ -1,3 +1,6 @@
+// Copyright (C) 2025 Jeremy Moseley
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use async_trait::async_trait;
 use rusty_core::{PermissionLevel, RustyError};
 use serde_json::{json, Value};

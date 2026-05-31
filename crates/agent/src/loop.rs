@@ -1,3 +1,6 @@
+// Copyright (C) 2025 Jeremy Moseley
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use futures::StreamExt;
 use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,

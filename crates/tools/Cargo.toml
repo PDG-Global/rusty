@@ -1,3 +1,6 @@
+# Copyright (C) 2025 Jeremy Moseley
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 [package]
 name = "rusty-tools"
 version.workspace = true
