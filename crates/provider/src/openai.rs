@@ -91,6 +91,7 @@ impl LlmProvider for OpenAiProvider {
             stream: false,
             temperature: request.temperature,
             tools: oai_tools,
+            stream_options: None,
         };
 
         let endpoint = self.endpoint();
@@ -144,6 +145,7 @@ impl LlmProvider for OpenAiProvider {
             stream: true,
             temperature: request.temperature,
             tools: oai_tools,
+            stream_options: Some(StreamOptions { include_usage: true }),
         };
 
         let endpoint = self.endpoint();
@@ -205,6 +207,18 @@ impl LlmProvider for OpenAiProvider {
                         if let Some(data) = line.strip_prefix("data: ") {
                             match serde_json::from_str::<OaiStreamChunk>(data) {
                                 Ok(chunk) => {
+                                    // Emit usage data if present (sent on final chunk
+                                    // when stream_options.include_usage is true)
+                                    if let Some(usage) = &chunk.usage {
+                                        return Some((
+                                            Ok(StreamEvent::Usage(UsageInfo {
+                                                input_tokens: usage.prompt_tokens,
+                                                output_tokens: usage.completion_tokens,
+                                            })),
+                                            (stream, line_buf, tool_calls),
+                                        ));
+                                    }
+
                                     let choice = match chunk.choices.first() {
                                         Some(c) => c,
                                         None => continue,

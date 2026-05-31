@@ -24,7 +24,14 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Overlay permission prompt if active
     if app.permission_prompt.is_some() {
-        let prompt_area = centered_rect(60, 9, area);
+        // Dim the entire screen behind the prompt
+        let dim_style = Style::default().fg(Color::DarkGray).bg(Color::Black);
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                buf[(x, y)].set_style(dim_style);
+            }
+        }
+        let prompt_area = centered_rect(60, 10, area);
         draw_permission_prompt(app, prompt_area, buf);
     }
 }
