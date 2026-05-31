@@ -389,6 +389,6 @@ TUI Display ← Agent Events ← Tool Execution ← Tool Calls
 
 ---
 
-*Last updated: May 2025*
+*Last updated: May 2026*
 *Codebase version: 0.1.0*
 *Rust edition: 2021*
