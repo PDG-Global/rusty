@@ -2,6 +2,7 @@
 /target/
 **/*.rs.bk
 Cargo.lock
+*.pdb
 
 # IDE
 .idea/
@@ -14,18 +15,31 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# Environment
+# Environment & Secrets
 .env
-.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# Rusty local data
+.rusty/
+sessions/
+*.session.json
 
 # Build artifacts
 *.o
 *.d
 *.rlib
+*.so
+*.dylib
+*.dll
 
 # Test coverage
 *.profraw
 *.profdata
+lcov.info
 
 # Documentation
 /doc/
@@ -33,3 +47,4 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+*.log
