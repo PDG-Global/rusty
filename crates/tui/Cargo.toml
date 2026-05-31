@@ -1,0 +1,11 @@
+[package]
+name = "rusty-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rusty-core = { path = "../core" }
+ratatui.workspace = true
+crossterm.workspace = true
+tokio.workspace = true
+anyhow.workspace = true

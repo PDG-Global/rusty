@@ -1,0 +1,19 @@
+[package]
+name = "rusty-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rusty-core = { path = "../core" }
+rusty-provider = { path = "../provider" }
+rusty-tools = { path = "../tools" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+futures.workspace = true
+scopeguard.workspace = true
