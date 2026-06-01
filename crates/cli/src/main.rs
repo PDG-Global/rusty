@@ -18,6 +18,7 @@ use rusty_tools::{all_tools, Tool};
 use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -765,7 +766,12 @@ async fn run_tui(
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
 
-    // Install panic hook to restore terminal + stderr on crash
+    // Install panic hook to restore terminal + stderr on crash.
+    // The flag prevents the hook from yanking the terminal out of raw/alternate
+    // mode while the TUI render loop is still running on another thread.
+    let tui_active = Arc::new(AtomicBool::new(false));
+    let tui_active_hook = tui_active.clone();
+
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Restore real stderr so the panic message is visible
@@ -774,8 +780,14 @@ async fn run_tui(
             unsafe { libc::dup2(saved_stderr_fd, libc::STDERR_FILENO) };
             unsafe { libc::close(saved_stderr_fd) };
         }
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+
+        // Only restore terminal if the TUI render loop is NOT active.
+        // When the TUI is running, the main loop will detect the crashed agent
+        // task and handle cleanup gracefully.
+        if !tui_active_hook.load(Ordering::SeqCst) {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        }
         original_hook(info);
     }));
     let backend = CrosstermBackend::new(stdout);
@@ -921,6 +933,21 @@ async fn run_tui(
                             None => std::future::pending().await,
                         }
                     }, if current_run.is_some() => {
+                        if let Err(e) = _result {
+                            if e.is_panic() {
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::Error(
+                                        "Agent task panicked — check logs for details.".to_string()
+                                    ),
+                                ));
+                            } else {
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::Error(
+                                        format!("Agent task failed: {e}")
+                                    ),
+                                ));
+                            }
+                        }
                         current_run = None;
                         let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
 
@@ -1025,6 +1052,7 @@ async fn run_tui(
         &mut event_rx,
         agent_handle,
         working_dir,
+        tui_active.clone(),
     )
     .await;
 
@@ -1067,10 +1095,25 @@ async fn tui_main_loop(
     event_rx: &mut mpsc::UnboundedReceiver<AgentTaskEvent>,
     agent_handle: tokio::task::JoinHandle<()>,
     working_dir: &PathBuf,
+    tui_active: Arc<AtomicBool>,
 ) -> Result<()> {
     let mut agent_handle = Some(agent_handle);
     let mut last_draw = std::time::Instant::now();
     const MIN_DRAW_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
+
+    // Signal to the panic hook that the TUI render loop is active.
+    // This prevents the hook from restoring the terminal mid-render.
+    tui_active.store(true, Ordering::SeqCst);
+    let tui_active_for_guard = tui_active.clone();
+    struct TuiActiveGuard {
+        flag: Arc<AtomicBool>,
+    }
+    impl Drop for TuiActiveGuard {
+        fn drop(&mut self) {
+            self.flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _tui_guard = TuiActiveGuard { flag: tui_active_for_guard };
 
     loop {
         // Draw if needed, throttled to ~30 FPS

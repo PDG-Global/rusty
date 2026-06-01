@@ -5,7 +5,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rusty_core::{ConversationSession, PermissionDecision, PermissionRequest};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Instant;
 use tokio::sync::oneshot;
+
+/// Threshold for detecting paste events from timing.
+/// Events arriving faster than this (in nanoseconds) are considered part of a paste.
+/// Human typing is typically 50-200ms between keys; paste events arrive in <5ms.
+const PASTE_DETECT_THRESHOLD_NS: u128 = 5_000_000; // 5ms in nanoseconds
 
 /// Maximum allowed paste length (100KB of text). Prevents OOM from huge pastes.
 const MAX_PASTE_LENGTH: usize = 100 * 1024;
@@ -510,6 +516,10 @@ pub struct AppState {
     pub pinned_todos: Option<String>,
     /// File picker state for @ file references
     pub file_picker: Option<FilePickerState>,
+    /// Timestamp of the last key event, used for paste detection
+    last_key_time: Option<Instant>,
+    /// Whether we're currently in paste mode (rapid input detected)
+    pub paste_mode: bool,
 }
 
 pub struct PendingTool {
@@ -575,12 +585,28 @@ impl Default for AppState {
             pinned_todos: None,
             working_dir: None,
             file_picker: None,
+            last_key_time: None,
+            paste_mode: false,
         }
     }
 }
 
 impl AppState {
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Track timing for paste detection.
+        // If events arrive faster than PASTE_DETECT_THRESHOLD_NS, we're in a paste.
+        let now = Instant::now();
+        if let Some(prev) = self.last_key_time {
+            let elapsed_ns = now.duration_since(prev).as_nanos();
+            if elapsed_ns < PASTE_DETECT_THRESHOLD_NS {
+                self.paste_mode = true;
+            } else {
+                // Gap too large — normal typing or new interaction
+                self.paste_mode = false;
+            }
+        }
+        self.last_key_time = Some(now);
+
         // If session picker is active, handle it exclusively
         if let Some(ref mut picker) = self.session_picker {
             match key.code {
@@ -907,6 +933,13 @@ impl AppState {
                 && self.input.starts_with('/') => {
                     self.autocomplete_slash();
                 }
+            KeyCode::Enter if self.paste_mode => {
+                // In paste mode, insert newline instead of submitting
+                self.input.insert(self.cursor_pos, '\n');
+                self.cursor_pos += 1;
+                self.paste_mode = false;
+                self.needs_redraw = true;
+            }
             _ => {}
         }
     }

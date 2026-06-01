@@ -80,7 +80,7 @@ async fn run_loop(
         if event::poll(Duration::from_millis(16))? {
             match event::read()? {
                 Event::Key(key) => {
-                    if key.code == KeyCode::Enter && !app.input.is_empty() && !app.is_streaming {
+                    if key.code == KeyCode::Enter && !app.input.is_empty() && !app.is_streaming && !app.paste_mode {
                         let input = app.input.clone();
                         app.messages.push(app::ChatMessage {
                             role: MessageRole::User,
