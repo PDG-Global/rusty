@@ -514,24 +514,6 @@ fn parse_table_row(line: &str) -> Vec<String> {
         .collect()
 }
 
-/// Pad a cell to a target display width with alignment
-fn pad_cell(text: &str, width: usize, align: ColAlign) -> String {
-    let text_w = str_display_width(text);
-    if text_w >= width {
-        return text.chars().take(width).collect();
-    }
-    let diff = width - text_w;
-    match align {
-        ColAlign::Left => format!("{}{}", text, " ".repeat(diff)),
-        ColAlign::Right => format!("{}{}", " ".repeat(diff), text),
-        ColAlign::Center => {
-            let left = diff / 2;
-            let right = diff - left;
-            format!("{}{}{}", " ".repeat(left), text, " ".repeat(right))
-        }
-    }
-}
-
 fn render_table(
     rows: &[Vec<String>],
     aligns: &[ColAlign],
@@ -549,11 +531,13 @@ fn render_table(
     }
 
     // ── Measure natural column widths (display-width, not byte-len) ──
+    // Strip inline markdown markers (**bold** → bold) for accurate width
     let mut natural_widths = vec![1usize; num_cols];
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
             if i < num_cols {
-                let w = str_display_width(cell);
+                let stripped = strip_inline_markdown(cell);
+                let w = str_display_width(&stripped);
                 natural_widths[i] = natural_widths[i].max(w);
             }
         }
@@ -627,25 +611,108 @@ fn render_table(
             let w = col_widths[col];
             let align = aligns.get(col).copied().unwrap_or(ColAlign::Left);
 
-            // Truncate to fit (by display width)
+            // Truncate to fit (by display width, ignoring markdown markers)
             let truncated: String = {
                 let mut out = String::new();
                 let mut used = 0usize;
-                for ch in cell.chars() {
-                    let cw = char_display_width(ch);
-                    if used + cw > w {
-                        break;
+                let chars: Vec<char> = cell.chars().collect();
+                let len = chars.len();
+                let mut i = 0;
+                while i < len {
+                    // Check for markdown markers — if they fit within width, keep them
+                    // but only count the visible content width
+                    let marker_len;
+                    let visible;
+                    if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
+                        if let Some(end) = find_closing(&chars, i + 2, "**") {
+                            let visible_text: String = chars[i + 2..end].iter().collect();
+                            let vis_w = str_display_width(&visible_text);
+                            if used + vis_w > w { break; }
+                            out.extend(chars[i..=end + 1].iter());
+                            used += vis_w;
+                            i = end + 2;
+                            continue;
+                        }
+                        marker_len = 0; visible = 0; // fall through
+                    } else if chars[i] == '*' && (i + 1 < len && chars[i + 1] != '*') {
+                        if let Some(end) = find_closing(&chars, i + 1, "*") {
+                            let visible_text: String = chars[i + 1..end].iter().collect();
+                            let vis_w = str_display_width(&visible_text);
+                            if used + vis_w > w { break; }
+                            out.extend(chars[i..=end].iter());
+                            used += vis_w;
+                            i = end + 1;
+                            continue;
+                        }
+                        marker_len = 0; visible = 0;
+                    } else if chars[i] == '_' {
+                        if let Some(end) = find_closing(&chars, i + 1, "_") {
+                            let visible_text: String = chars[i + 1..end].iter().collect();
+                            let vis_w = str_display_width(&visible_text);
+                            if used + vis_w > w { break; }
+                            out.extend(chars[i..=end].iter());
+                            used += vis_w;
+                            i = end + 1;
+                            continue;
+                        }
+                        marker_len = 0; visible = 0;
+                    } else if chars[i] == '`' {
+                        if let Some(end) = find_closing(&chars, i + 1, "`") {
+                            let visible_text: String = chars[i + 1..end].iter().collect();
+                            let vis_w = str_display_width(&visible_text);
+                            if used + vis_w > w { break; }
+                            out.extend(chars[i..=end].iter());
+                            used += vis_w;
+                            i = end + 1;
+                            continue;
+                        }
+                        marker_len = 0; visible = 0;
+                    } else {
+                        marker_len = 0; visible = 0;
                     }
-                    out.push(ch);
+                    let _ = (marker_len, visible);
+                    let cw = char_display_width(chars[i]);
+                    if used + cw > w { break; }
+                    out.push(chars[i]);
                     used += cw;
+                    i += 1;
                 }
                 out
             };
 
-            let padded = pad_cell(&truncated, w, align);
+            // Parse inline markdown for styled rendering
+            let cell_spans = parse_inline_markdown(&truncated, base_style);
+            let cell_vis_w: usize = cell_spans.iter().map(|s| str_display_width(&s.content)).sum();
 
-            spans.push(Span::styled(format!(" {} ", padded), base_style));
-            spans.push(Span::styled(" ".to_string(), gray));
+            // Build cell with padding applied to the last span
+            let pad_needed = w.saturating_sub(cell_vis_w);
+            match align {
+                ColAlign::Left => {
+                    spans.push(Span::styled(" ".to_string(), base_style));
+                    for span in &cell_spans {
+                        spans.push(span.clone());
+                    }
+                    spans.push(Span::styled(" ".repeat(pad_needed + 1), base_style));
+                }
+                ColAlign::Right => {
+                    spans.push(Span::styled(" ".repeat(pad_needed + 1), base_style));
+                    for span in &cell_spans {
+                        spans.push(span.clone());
+                    }
+                    spans.push(Span::styled(" ".to_string(), base_style));
+                }
+                ColAlign::Center => {
+                    let left = pad_needed / 2 + 1;
+                    let right = pad_needed - pad_needed / 2 + 1;
+                    spans.push(Span::styled(" ".repeat(left), base_style));
+                    for span in &cell_spans {
+                        spans.push(span.clone());
+                    }
+                    spans.push(Span::styled(" ".repeat(right), base_style));
+                }
+            }
+
+            // Separator: border (cell padding is already included above)
             spans.push(Span::styled("\u{2502}".to_string(), gray)); // │
         }
         lines.push(Line::from(spans));
@@ -772,6 +839,52 @@ fn find_closing(chars: &[char], start: usize, delim: &str) -> Option<usize> {
             }
     }
     None
+}
+
+/// Strip inline markdown markers (**, *, _, `) for display-width calculation.
+fn strip_inline_markdown(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    let mut out = String::new();
+
+    while i < len {
+        // **bold**
+        if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
+            if let Some(end) = find_closing(&chars, i + 2, "**") {
+                out.extend(chars[i + 2..end].iter());
+                i = end + 2;
+                continue;
+            }
+        }
+        // *italic*
+        if chars[i] == '*' && (i + 1 < len && chars[i + 1] != '*') {
+            if let Some(end) = find_closing(&chars, i + 1, "*") {
+                out.extend(chars[i + 1..end].iter());
+                i = end + 1;
+                continue;
+            }
+        }
+        // _italic_
+        if chars[i] == '_' {
+            if let Some(end) = find_closing(&chars, i + 1, "_") {
+                out.extend(chars[i + 1..end].iter());
+                i = end + 1;
+                continue;
+            }
+        }
+        // `code`
+        if chars[i] == '`' {
+            if let Some(end) = find_closing(&chars, i + 1, "`") {
+                out.extend(chars[i + 1..end].iter());
+                i = end + 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }
 
 fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
