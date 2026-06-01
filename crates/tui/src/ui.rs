@@ -12,12 +12,23 @@ use ratatui::{
 use crate::app::{AppState, MessageRole};
 
 pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
+    // Dynamically size the input area based on content length.
+    // 2 border rows + ceil(text_width / inner_width) content rows, clamped to [3..8].
+    let inner_width = area.width.saturating_sub(2).max(1) as usize;
+    let text_len = if app.input.is_empty() {
+        28 // placeholder "Type a message or / for commands..."
+    } else {
+        app.input.len()
+    };
+    let content_rows = text_len.div_ceil(inner_width).max(1);
+    let input_height = (content_rows as u16 + 2).clamp(3, 8);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),    // Chat area
-            Constraint::Length(5), // Input area (2 border + 3 content lines)
-            Constraint::Length(1), // Status bar
+            Constraint::Min(1),              // Chat area
+            Constraint::Length(input_height), // Input area (dynamic)
+            Constraint::Length(1),            // Status bar
         ])
         .split(area);
 
@@ -921,26 +932,52 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     let inner = block.inner(area);
     block.render(area, buf);
 
-    let (input_text, style) = if app.is_streaming && app.input.is_empty() && !has_queued {
+    // Render input text with a visible block cursor at cursor_pos
+    let mut spans: Vec<Span<'_>> = Vec::new();
+    if app.is_streaming && app.input.is_empty() && !has_queued {
         // Show a generic streaming indicator; the tool details are visible
         // in the output area via pending_tools rendering.
         if !app.thinking_text.is_empty() {
-            ("Thinking...".to_string(), Style::default().fg(Color::Gray))
+            spans.push(Span::styled("Thinking...", Style::default().fg(Color::Gray)));
         } else {
-            ("Processing...".to_string(), Style::default().fg(Color::Gray))
+            spans.push(Span::styled("Processing...", Style::default().fg(Color::Gray)));
         }
     } else if has_queued && app.input.is_empty() {
-        (format!("[Queued]: {}", app.queued_message.as_ref().unwrap()), Style::default().fg(Color::Yellow))
+        spans.push(Span::styled(
+            format!("[Queued]: {}", app.queued_message.as_ref().unwrap()),
+            Style::default().fg(Color::Yellow),
+        ));
     } else if app.input.is_empty() {
-        (
-            "Type a message or / for commands...".to_string(),
+        spans.push(Span::styled(
+            "Type a message or / for commands...",
             Style::default().fg(Color::Gray),
-        )
-    } else if is_slash {
-        (app.input.clone(), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+        ));
     } else {
-        (app.input.clone(), Style::default().fg(Color::White))
-    };
+        let (text, style) = if is_slash {
+            (app.input.clone(), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+        } else {
+            (app.input.clone(), Style::default().fg(Color::White))
+        };
+        let cursor_pos = app.cursor_pos.min(text.len());
+        // Text before cursor
+        if cursor_pos > 0 {
+            spans.push(Span::styled(text[..cursor_pos].to_string(), style));
+        }
+        // Cursor character (block cursor via reverse video)
+        let cursor_style = style.add_modifier(Modifier::REVERSED);
+        if cursor_pos < text.len() {
+            let ch = text[cursor_pos..].chars().next().unwrap();
+            spans.push(Span::styled(ch.to_string(), cursor_style));
+            // Text after cursor
+            let after = cursor_pos + ch.len_utf8();
+            if after < text.len() {
+                spans.push(Span::styled(text[after..].to_string(), style));
+            }
+        } else {
+            // Cursor at end — render a space with reverse to show block cursor
+            spans.push(Span::styled(" ", cursor_style));
+        }
+    }
 
     // Calculate which row the cursor is on to scroll to it
     let width = inner.width.max(1) as usize;
@@ -948,7 +985,7 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     let visible_rows = inner.height as usize;
     let scroll = (cursor_row + 1).saturating_sub(visible_rows);
 
-    let paragraph = Paragraph::new(Line::from(Span::styled(input_text, style)))
+    let paragraph = Paragraph::new(Line::from(spans))
         .wrap(Wrap { trim: false })
         .scroll((scroll as u16, 0));
     Widget::render(&paragraph, inner, buf);
