@@ -95,7 +95,7 @@ impl LlmProvider for OpenAiProvider {
             temperature: request.temperature,
             tools: oai_tools,
             stream_options: None,
-            reasoning_budget: self.config.thinking_budget,
+            reasoning_budget: request.thinking_budget,
         };
 
         let endpoint = self.endpoint();
@@ -150,7 +150,7 @@ impl LlmProvider for OpenAiProvider {
             temperature: request.temperature,
             tools: oai_tools,
             stream_options: Some(StreamOptions { include_usage: true }),
-            reasoning_budget: self.config.thinking_budget,
+            reasoning_budget: request.thinking_budget,
         };
 
         let endpoint = self.endpoint();
@@ -269,6 +269,7 @@ impl LlmProvider for OpenAiProvider {
                                             if let Some(id) = &tc.id {
                                                 existing.id = Some(id.clone());
                                             }
+                                            let mut args_delta = String::new();
                                             if let Some(func) = &tc.function {
                                                 if existing.function.is_none() {
                                                     existing.function =
@@ -283,6 +284,7 @@ impl LlmProvider for OpenAiProvider {
                                                     }
                                                 }
                                                 if let Some(args) = &func.arguments {
+                                                    args_delta = args.clone();
                                                     if let Some(ref mut f) = existing.function {
                                                         f.arguments = Some(
                                                             f.arguments
@@ -300,11 +302,7 @@ impl LlmProvider for OpenAiProvider {
                                                 name: tc.function.as_ref().and_then(|f| {
                                                     f.name.clone()
                                                 }),
-                                                arguments_delta: tc
-                                                    .function
-                                                    .as_ref()
-                                                    .and_then(|f| f.arguments.clone())
-                                                    .unwrap_or_default(),
+                                                arguments_delta: args_delta,
                                             }));
                                         }
                                     }

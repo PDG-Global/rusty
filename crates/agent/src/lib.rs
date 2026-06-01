@@ -10,7 +10,7 @@ use rusty_tools::Tool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use r#loop::{Agent, PermissionCallback, ToolStatus};
+pub use r#loop::{Agent, CancelToken, PermissionCallback, ToolStatus};
 
 /// Spawn a sub-agent as a same-process tokio task.
 /// Returns the sub-agent's final text response.
@@ -26,7 +26,7 @@ pub async fn spawn_subagent(
     let handle = tokio::spawn(async move {
         let mut agent = Agent::new(provider, tools, config, working_dir, system_prompt);
         agent.set_permission_mode(PermissionMode::BypassPermissions);
-        agent.run(&task, None, None, None, None).await
+        agent.run(&task, None, None, None, None, None, None).await
     });
 
     handle

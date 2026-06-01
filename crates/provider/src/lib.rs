@@ -30,6 +30,7 @@ pub struct MessageRequest {
     pub tools: Vec<ToolDefinition>,
     pub max_tokens: u32,
     pub temperature: Option<f32>,
+    pub thinking_budget: Option<u32>,
 }
 
 #[derive(Debug, Clone)]

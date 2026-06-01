@@ -157,6 +157,7 @@ pub enum AgentEvent {
     ResponseComplete(String),
     Error(String),
     Usage { input_tokens: u32, output_tokens: u32 },
+    ThinkingLevel(Option<rusty_core::ThinkingLevel>),
 }
 
 /// Messages from the TUI to the agent task
@@ -385,6 +386,7 @@ pub struct StatusInfo {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub is_processing: bool,
+    pub thinking_level: Option<rusty_core::ThinkingLevel>,
 }
 
 
@@ -401,6 +403,8 @@ impl Default for AppState {
             thinking_text: String::new(),
             is_streaming: false,
             is_thinking: false,
+            cancel_requested: false,
+            queued_message: None,
             needs_redraw: true,
             should_quit: false,
             permission_prompt: None,
@@ -562,9 +566,8 @@ impl AppState {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL)
-                && !self.is_streaming => {
-                // Paste from clipboard
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Paste from clipboard (allowed even while streaming)
                 self.paste_from_clipboard();
             }
             KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -578,53 +581,37 @@ impl AppState {
                     self.should_quit = true;
                 }
             KeyCode::Esc if self.is_streaming => {
-                // Cancel streaming — reset to ready state
-                self.is_streaming = false;
-                self.is_thinking = false;
-                self.pending_tools.clear();
-                if !self.streaming_text.is_empty() {
-                    self.messages.push(ChatMessage {
-                        role: MessageRole::Assistant,
-                        content: std::mem::take(&mut self.streaming_text),
-                    });
-                }
-                self.thinking_text.clear();
-                self.saved_thinking.clear();
-                self.thinking_line_count = 0;
-                self.thinking_expanded = false;
+                // Request cancellation — the TUI main loop will send TuiCommand::Cancel
+                self.cancel_requested = true;
                 self.needs_redraw = true;
             }
-            KeyCode::Char(c) if !self.is_streaming => {
+            KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += 1;
                 self.needs_redraw = true;
             }
-            KeyCode::Backspace if !self.is_streaming
-                && self.cursor_pos > 0 => {
-                    self.cursor_pos -= 1;
-                    self.input.remove(self.cursor_pos);
-                    self.needs_redraw = true;
-                }
-            KeyCode::Delete if !self.is_streaming
-                && self.cursor_pos < self.input.len() => {
-                    self.input.remove(self.cursor_pos);
-                    self.needs_redraw = true;
-                }
-            KeyCode::Left if !self.is_streaming
-                && self.cursor_pos > 0 => {
-                    self.cursor_pos -= 1;
-                    self.needs_redraw = true;
-                }
-            KeyCode::Right if !self.is_streaming
-                && self.cursor_pos < self.input.len() => {
-                    self.cursor_pos += 1;
-                    self.needs_redraw = true;
-                }
-            KeyCode::Home if !self.is_streaming => {
+            KeyCode::Backspace if self.cursor_pos > 0 => {
+                self.cursor_pos -= 1;
+                self.input.remove(self.cursor_pos);
+                self.needs_redraw = true;
+            }
+            KeyCode::Delete if self.cursor_pos < self.input.len() => {
+                self.input.remove(self.cursor_pos);
+                self.needs_redraw = true;
+            }
+            KeyCode::Left if self.cursor_pos > 0 => {
+                self.cursor_pos -= 1;
+                self.needs_redraw = true;
+            }
+            KeyCode::Right if self.cursor_pos < self.input.len() => {
+                self.cursor_pos += 1;
+                self.needs_redraw = true;
+            }
+            KeyCode::Home => {
                 self.cursor_pos = 0;
                 self.needs_redraw = true;
             }
-            KeyCode::End if !self.is_streaming => {
+            KeyCode::End => {
                 self.cursor_pos = self.input.len();
                 self.needs_redraw = true;
             }
@@ -787,6 +774,25 @@ impl AppState {
     /// Returns true if Enter was pressed and we have input to send
     pub fn take_pending_input(&mut self) -> Option<String> {
         None
+    }
+
+    /// Take the cancel-requested flag, resetting it.
+    pub fn take_cancel_requested(&mut self) -> bool {
+        std::mem::take(&mut self.cancel_requested)
+    }
+
+    /// Take a queued message if one exists.
+    pub fn take_queued_message(&mut self) -> Option<String> {
+        self.queued_message.take()
+    }
+
+    /// Queue the current input for sending after streaming finishes.
+    pub fn queue_current_input(&mut self) {
+        if !self.input.is_empty() {
+            self.queued_message = Some(std::mem::take(&mut self.input));
+            self.cursor_pos = 0;
+            self.needs_redraw = true;
+        }
     }
 
     pub fn push_streaming_text(&mut self, text: &str) {

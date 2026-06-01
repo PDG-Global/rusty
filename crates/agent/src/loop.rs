@@ -6,13 +6,17 @@ use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,
     PermissionLevel, PermissionRequest,
 };
-use rusty_core::{Config, ContentBlock, Message, PermissionMode, RustyError, UsageInfo};
+use rusty_core::{
+    model_context_window, Config, ContentBlock, Message, PermissionMode, RustyError, UsageInfo,
+};
+use rusty_core::{dynamic_thinking_level, level_to_budget, ThinkingLevel};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
 use rusty_tools::{Tool, ToolContext, ToolResult};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -59,12 +63,34 @@ pub enum ToolStatus {
 pub type ToolCallback = Box<dyn Fn(&str, ToolStatus) + Send + Sync>;
 /// Callback for token usage updates
 pub type UsageCallback = Box<dyn Fn(u32, u32) + Send + Sync>;
+/// Callback for thinking level changes
+pub type ThinkingLevelCallback = Box<dyn Fn(Option<ThinkingLevel>) + Send + Sync>;
 /// Callback for permission requests — receives a request, returns a decision future
 pub type PermissionCallback = Arc<
     dyn Fn(PermissionRequest) -> Pin<Box<dyn Future<Output = PermissionDecision> + Send>>
         + Send
         + Sync,
 >;
+
+/// Lightweight cancellation token for cooperative cancellation of agent turns.
+/// Checked between stream events so the agent can abort mid-stream or mid-tool.
+#[derive(Clone)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+    pub fn reset(&self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
 
 pub struct Agent {
     provider: Arc<dyn LlmProvider>,
@@ -145,6 +171,7 @@ impl Agent {
     }
 
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
+    /// Pass a `CancelToken` to allow mid-turn cancellation (checked between stream events).
     pub async fn run(
         &mut self,
         user_input: &str,
@@ -152,10 +179,20 @@ impl Agent {
         on_thinking: Option<&ThinkingCallback>,
         on_tool: Option<&ToolCallback>,
         on_usage: Option<&UsageCallback>,
+        on_thinking_level: Option<&ThinkingLevelCallback>,
+        cancel: Option<&CancelToken>,
     ) -> Result<String, RustyError> {
+        if let Some(c) = cancel {
+            c.reset();
+        }
         self.messages.push(Message::user(user_input));
 
         for turn in 0..self.max_turns {
+            if let Some(c) = cancel {
+                if c.is_cancelled() {
+                    return Ok("Turn cancelled by user.".to_string());
+                }
+            }
             debug!("Agent turn {}/{}", turn + 1, self.max_turns);
 
             // Warn when approaching max turns
@@ -168,6 +205,26 @@ impl Agent {
 
             let tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();
 
+            // Compute dynamic thinking level based on context fill
+            let context_window = model_context_window(&self.config.model);
+            let estimated_chars: usize = self.messages.iter().map(|m| m.get_all_text().len()).sum();
+            let estimated_tokens = estimated_chars / 4;
+            let context_pct = estimated_tokens as f64 / context_window as f64;
+            let base_level = self.config.resolve_thinking_level();
+            let effective_level = dynamic_thinking_level(base_level, context_pct);
+            let thinking_budget = Some(level_to_budget(effective_level));
+
+            if effective_level != base_level {
+                debug!(
+                    "Thinking reduced from {:?} to {:?} (context {:.1}% full)",
+                    base_level, effective_level, context_pct * 100.0
+                );
+            }
+
+            if let Some(cb) = on_thinking_level {
+                cb(Some(effective_level));
+            }
+
             let request = MessageRequest {
                 model: self.config.model.clone(),
                 system: Some(self.system_prompt.clone()),
@@ -175,6 +232,7 @@ impl Agent {
                 tools: tool_defs,
                 max_tokens: self.config.max_tokens,
                 temperature: self.config.temperature,
+                thinking_budget,
             };
 
             debug!("Calling LLM API (model: {}, messages: {})", self.config.model, self.messages.len());
@@ -191,6 +249,11 @@ impl Agent {
             let mut stop_reason = None;
 
             while let Some(event) = stream.next().await {
+                if let Some(c) = cancel {
+                    if c.is_cancelled() {
+                        return Ok("Turn cancelled by user.".to_string());
+                    }
+                }
                 match event? {
                     StreamEvent::TextDelta(text) => {
                         assistant_text.push_str(&text);
@@ -265,6 +328,11 @@ impl Agent {
 
             // If there are tool calls, execute them
             if !tool_calls.is_empty() {
+                if let Some(c) = cancel {
+                    if c.is_cancelled() {
+                        return Ok("Turn cancelled by user.".to_string());
+                    }
+                }
                 for tc in &tool_calls {
                     let input: serde_json::Value =
                         serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
@@ -343,7 +411,11 @@ impl Agent {
                 }
                 Some("max_tokens") => {
                     warn!("Hit max_tokens limit");
-                    return Ok(assistant_text);
+                    let warning = format!(
+                        "{}\n\n[Response truncated: hit max_tokens limit. Consider using /compact if context is full.]",
+                        assistant_text
+                    );
+                    return Ok(warning);
                 }
                 Some(other) => {
                     debug!("Unexpected stop reason: {other}");
@@ -368,6 +440,7 @@ impl Agent {
             tools: vec![],
             max_tokens: 1024,
             temperature: self.config.temperature,
+            thinking_budget: Some(level_to_budget(ThinkingLevel::Minimal)),
         };
 
         let mut stream = match self.provider.create_message_stream(summary_request).await {

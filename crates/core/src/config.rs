@@ -8,6 +8,59 @@ use serde::{Deserialize, Serialize};
 
 use crate::permissions::PermissionMode;
 
+/// Thinking/reasoning depth tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingLevel {
+    /// Minimal reasoning (~1 024 tokens).
+    Minimal,
+    /// Normal reasoning (~4 096 tokens). Default for fresh sessions.
+    Normal,
+    /// Deep reasoning (~16 384 tokens).
+    Deep,
+}
+
+impl std::fmt::Display for ThinkingLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Minimal => write!(f, "minimal"),
+            Self::Normal => write!(f, "normal"),
+            Self::Deep => write!(f, "deep"),
+        }
+    }
+}
+
+impl ThinkingLevel {
+    /// Short single-letter label for the status bar.
+    pub fn short_label(&self) -> &'static str {
+        match self {
+            Self::Minimal => "M",
+            Self::Normal => "N",
+            Self::Deep => "D",
+        }
+    }
+}
+
+/// Map a thinking level to a token budget.
+pub fn level_to_budget(level: ThinkingLevel) -> u32 {
+    match level {
+        ThinkingLevel::Minimal => 1024,
+        ThinkingLevel::Normal => 4096,
+        ThinkingLevel::Deep => 16384,
+    }
+}
+
+/// Map a raw token budget to the nearest thinking level.
+pub fn budget_to_level(budget: u32) -> ThinkingLevel {
+    if budget <= 2048 {
+        ThinkingLevel::Minimal
+    } else if budget <= 8192 {
+        ThinkingLevel::Normal
+    } else {
+        ThinkingLevel::Deep
+    }
+}
+
 /// Where API credentials are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +100,7 @@ pub struct Config {
     pub no_claude_md: bool,
     pub auto_compact: bool,
     pub thinking_budget: Option<u32>,
+    pub thinking_level: Option<ThinkingLevel>,
     pub temperature: Option<f32>,
     /// When true, instructs the model to actively use `todowrite` for task tracking.
     /// Implies Plan permission mode (read-only + todowrite).
@@ -68,9 +122,31 @@ impl Default for Config {
             no_claude_md: false,
             auto_compact: true,
             thinking_budget: None,
+            thinking_level: None,
             temperature: None,
             plan_with_tasks: false,
         }
+    }
+}
+
+/// Return the known context-window size (in tokens) for a model name.
+/// Falls back to 128k for unknown models.
+pub fn model_context_window(model: &str) -> u32 {
+    let lower = model.to_lowercase();
+    if lower.contains("mimo") {
+        200_000
+    } else if lower.contains("kimi") || lower.contains("k2.6") || lower.contains("moonshot") {
+        200_000
+    } else if lower.contains("gpt-4o") || lower.contains("gpt-4-turbo") {
+        128_000
+    } else if lower.contains("gpt-4") {
+        8_192
+    } else if lower.contains("deepseek") {
+        64_000
+    } else if lower.contains("llama3") || lower.contains("llama-3") {
+        128_000
+    } else {
+        128_000
     }
 }
 
@@ -105,6 +181,38 @@ impl Config {
 
     pub fn memory_dir() -> PathBuf {
         Self::config_dir().join("memory")
+    }
+
+    /// Resolve the effective thinking level.
+    ///
+    /// Priority:
+    /// 1. Explicit `thinking_level`
+    /// 2. `thinking_budget` mapped to nearest level
+    /// 3. Default to `Normal`
+    pub fn resolve_thinking_level(&self) -> ThinkingLevel {
+        self.thinking_level
+            .clone()
+            .or_else(|| self.thinking_budget.map(budget_to_level))
+            .unwrap_or(ThinkingLevel::Normal)
+    }
+}
+
+/// Adjust thinking level downward based on how full the context window is.
+///
+/// Heuristic:
+/// - < 50 %  → keep base level
+/// - 50–75 % → step down one level
+/// - > 75 %  → force Minimal
+pub fn dynamic_thinking_level(base: ThinkingLevel, context_pct: f64) -> ThinkingLevel {
+    if context_pct > 0.75 {
+        ThinkingLevel::Minimal
+    } else if context_pct > 0.50 {
+        match base {
+            ThinkingLevel::Deep => ThinkingLevel::Normal,
+            _ => ThinkingLevel::Minimal,
+        }
+    } else {
+        base
     }
 }
 
@@ -185,6 +293,7 @@ mod tests {
         assert!(cfg.system_prompt.is_none());
         assert!(cfg.append_system_prompt.is_none());
         assert!(cfg.thinking_budget.is_none());
+        assert!(cfg.thinking_level.is_none());
         assert!(cfg.temperature.is_none());
         assert!(!cfg.plan_with_tasks);
     }
@@ -297,5 +406,95 @@ mod tests {
     fn allowed_tools_set_empty_for_default() {
         let settings = Settings::default();
         assert!(settings.allowed_tools_set().is_empty());
+    }
+
+    // ── ThinkingLevel mapping ────────────────────────────────────────
+
+    #[test]
+    fn level_to_budget_values() {
+        assert_eq!(level_to_budget(ThinkingLevel::Minimal), 1024);
+        assert_eq!(level_to_budget(ThinkingLevel::Normal), 4096);
+        assert_eq!(level_to_budget(ThinkingLevel::Deep), 16384);
+    }
+
+    #[test]
+    fn budget_to_level_maps_correctly() {
+        assert_eq!(budget_to_level(512), ThinkingLevel::Minimal);
+        assert_eq!(budget_to_level(2048), ThinkingLevel::Minimal);
+        assert_eq!(budget_to_level(4096), ThinkingLevel::Normal);
+        assert_eq!(budget_to_level(8192), ThinkingLevel::Normal);
+        assert_eq!(budget_to_level(16384), ThinkingLevel::Deep);
+    }
+
+    #[test]
+    fn resolve_thinking_level_prefers_explicit_level() {
+        let cfg = Config {
+            thinking_level: Some(ThinkingLevel::Deep),
+            thinking_budget: Some(1024),
+            ..Config::default()
+        };
+        assert_eq!(cfg.resolve_thinking_level(), ThinkingLevel::Deep);
+    }
+
+    #[test]
+    fn resolve_thinking_level_falls_back_to_budget() {
+        let cfg = Config {
+            thinking_level: None,
+            thinking_budget: Some(1024),
+            ..Config::default()
+        };
+        assert_eq!(cfg.resolve_thinking_level(), ThinkingLevel::Minimal);
+    }
+
+    #[test]
+    fn resolve_thinking_level_defaults_to_normal() {
+        let cfg = Config {
+            thinking_level: None,
+            thinking_budget: None,
+            ..Config::default()
+        };
+        assert_eq!(cfg.resolve_thinking_level(), ThinkingLevel::Normal);
+    }
+
+    // ── dynamic_thinking_level ───────────────────────────────────────
+
+    #[test]
+    fn dynamic_level_unchanged_below_half() {
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.25),
+            ThinkingLevel::Deep
+        );
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Normal, 0.49),
+            ThinkingLevel::Normal
+        );
+    }
+
+    #[test]
+    fn dynamic_level_steps_down_at_half() {
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.60),
+            ThinkingLevel::Normal
+        );
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Normal, 0.60),
+            ThinkingLevel::Minimal
+        );
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Minimal, 0.60),
+            ThinkingLevel::Minimal
+        );
+    }
+
+    #[test]
+    fn dynamic_level_forces_minimal_near_limit() {
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.76),
+            ThinkingLevel::Minimal
+        );
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Normal, 0.90),
+            ThinkingLevel::Minimal
+        );
     }
 }

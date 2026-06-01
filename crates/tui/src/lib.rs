@@ -142,6 +142,10 @@ async fn run_loop(
                         app.status.output_tokens = output_tokens;
                         app.needs_redraw = true;
                     }
+                    AgentEvent::ThinkingLevel(level) => {
+                        app.status.thinking_level = level;
+                        app.needs_redraw = true;
+                    }
                 },
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => break,

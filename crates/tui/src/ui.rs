@@ -776,25 +776,28 @@ fn find_closing(chars: &[char], start: usize, delim: &str) -> Option<usize> {
 
 fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     let is_slash = app.input.starts_with('/');
+    let has_queued = app.queued_message.is_some();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app.is_streaming {
-            Color::Gray
+            if has_queued { Color::Yellow } else { Color::Gray }
         } else if is_slash {
             Color::Magenta
         } else {
             Color::Green
         }))
         .title(Span::styled(
-            if app.is_streaming {
-                " processing... "
+            if app.is_streaming && has_queued {
+                " queued ".to_string()
+            } else if app.is_streaming {
+                " processing... ".to_string()
             } else if is_slash {
-                " command "
+                " command ".to_string()
             } else {
-                " input "
+                " input ".to_string()
             },
             Style::default().fg(if app.is_streaming {
-                Color::Gray
+                if has_queued { Color::Yellow } else { Color::Gray }
             } else if is_slash {
                 Color::Magenta
             } else {
@@ -805,7 +808,7 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     let inner = block.inner(area);
     block.render(area, buf);
 
-    let (input_text, style) = if app.is_streaming && app.input.is_empty() {
+    let (input_text, style) = if app.is_streaming && app.input.is_empty() && !has_queued {
         // Show a generic streaming indicator; the tool details are visible
         // in the output area via pending_tools rendering.
         if !app.thinking_text.is_empty() {
@@ -813,6 +816,8 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
         } else {
             ("Processing...".to_string(), Style::default().fg(Color::Gray))
         }
+    } else if has_queued && app.input.is_empty() {
+        (format!("[Queued]: {}", app.queued_message.as_ref().unwrap()), Style::default().fg(Color::Yellow))
     } else if app.input.is_empty() {
         (
             "Type a message or / for commands...".to_string(),
@@ -839,7 +844,6 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
 fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
     let model_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let separator_style = Style::default().fg(Color::Gray);
-    let token_style = Style::default().fg(Color::White);
     let state_style = if app.is_streaming {
         Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
     } else {
@@ -847,13 +851,37 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
     };
     let state_text = if app.is_streaming { "streaming" } else { "ready" };
 
+    // Context-window usage warning
+    let context_window = rusty_core::model_context_window(&app.status.model);
+    let total_estimated = app.status.input_tokens + app.status.output_tokens;
+    let usage_pct = if context_window > 0 {
+        (total_estimated as f64 / context_window as f64 * 100.0) as u32
+    } else {
+        0
+    };
+    let token_style = if usage_pct >= 90 {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    } else if usage_pct >= 75 {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let think_style = Style::default().fg(Color::Gray);
+    let think_span = match app.status.thinking_level {
+        Some(level) => Span::styled(format!("| think:{} ", level.short_label()), think_style),
+        None => Span::styled("", think_style),
+    };
+
     let spans = vec![
         Span::styled(format!(" {} ", app.status.model), model_style),
         Span::styled("| ", separator_style),
-        Span::styled(format!("in: {} ", app.status.input_tokens), token_style),
-        Span::styled(format!("out: {} ", app.status.output_tokens), token_style),
+        Span::styled(format!("prompt: {} ", app.status.input_tokens), token_style),
+        Span::styled(format!("completion: {} ", app.status.output_tokens), token_style),
+        Span::styled(format!("({}%)", usage_pct.min(999)), token_style),
         Span::styled("| ", separator_style),
         Span::styled(state_text, state_style),
+        think_span,
     ];
     let paragraph = Paragraph::new(Line::from(spans));
     Widget::render(&paragraph, area, buf);

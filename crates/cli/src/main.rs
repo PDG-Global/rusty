@@ -86,6 +86,10 @@ struct Args {
     #[arg(long)]
     thinking_budget: Option<u32>,
 
+    /// Thinking level (minimal, normal, deep)
+    #[arg(long, value_enum)]
+    thinking_level: Option<ThinkingLevelArg>,
+
     /// No TUI, just print responses
     #[arg(long)]
     headless: bool,
@@ -101,6 +105,23 @@ enum PermissionModeArg {
     AcceptEdits,
     Bypass,
     Plan,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum ThinkingLevelArg {
+    Minimal,
+    Normal,
+    Deep,
+}
+
+impl From<ThinkingLevelArg> for rusty_core::ThinkingLevel {
+    fn from(arg: ThinkingLevelArg) -> Self {
+        match arg {
+            ThinkingLevelArg::Minimal => rusty_core::ThinkingLevel::Minimal,
+            ThinkingLevelArg::Normal => rusty_core::ThinkingLevel::Normal,
+            ThinkingLevelArg::Deep => rusty_core::ThinkingLevel::Deep,
+        }
+    }
 }
 
 impl From<PermissionModeArg> for PermissionMode {
@@ -255,6 +276,9 @@ async fn main() -> Result<()> {
     if let Some(budget) = args.thinking_budget {
         config.thinking_budget = Some(budget);
     }
+    if let Some(level) = args.thinking_level {
+        config.thinking_level = Some(level.into());
+    }
     config.verbose = args.verbose;
     config.permission_mode = args.permissions.into();
     if args.plan_with_tasks {
@@ -399,7 +423,7 @@ async fn run_headless(agent: &mut Agent, prompt: &str) -> Result<()> {
         let _ = std::io::stdout().flush();
     });
 
-    let result = agent.run(prompt, Some(&text_cb), None, None, None).await?;
+    let result = agent.run(prompt, Some(&text_cb), None, None, None, None, None).await?;
     if !result.ends_with('\n') {
         println!();
     }
@@ -466,7 +490,7 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
                         print!("{text}");
                         let _ = io::stdout().flush();
                     });
-                    let result = agent.run(&init_prompt, Some(&text_cb), None, None, None).await?;
+                    let result = agent.run(&init_prompt, Some(&text_cb), None, None, None, None, None).await?;
                     if !result.ends_with('\n') {
                         println!();
                     }
@@ -563,7 +587,7 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
             let _ = io::stdout().flush();
         });
 
-        let result = agent.run(line, Some(&text_cb), None, None, None).await?;
+        let result = agent.run(line, Some(&text_cb), None, None, None, None, None).await?;
         if !result.ends_with('\n') {
             println!();
         }
@@ -666,79 +690,96 @@ async fn run_tui(
 
     // Spawn the agent task
     let perm_mode = config.permission_mode;
-    let agent_handle = tokio::spawn(async move {
-        let mut agent = agent;
-        agent.set_permission_mode(perm_mode);
-        agent.set_permanent_allowlist(permanent_allowlist);
+    let agent = Arc::new(tokio::sync::Mutex::new(agent));
+    let agent_handle = tokio::spawn({
+        let agent_arc = agent.clone();
+        async move {
+            let mut agent = agent_arc.lock().await;
+            agent.set_permission_mode(perm_mode);
+            agent.set_permanent_allowlist(permanent_allowlist);
 
-        // Set up permission callback
-        let event_tx_cb = event_tx.clone();
-        let perm_cb: rusty_agent::PermissionCallback = Arc::new(move |request| {
-            let tx = event_tx_cb.clone();
-            Box::pin(async move {
-                let (resp_tx, resp_rx) = oneshot::channel();
-                let _ = tx.send(AgentTaskEvent::PermissionRequest(PermissionPromptMsg {
-                    request,
-                    respond: resp_tx,
-                }));
-                resp_rx.await.unwrap_or(PermissionDecision::Deny("Channel closed".into()))
-            })
-        });
-        agent.set_permission_callback(perm_cb);
+            // Set up permission callback
+            let event_tx_cb = event_tx.clone();
+            let perm_cb: rusty_agent::PermissionCallback = Arc::new(move |request| {
+                let tx = event_tx_cb.clone();
+                Box::pin(async move {
+                    let (resp_tx, resp_rx) = oneshot::channel();
+                    let _ = tx.send(AgentTaskEvent::PermissionRequest(PermissionPromptMsg {
+                        request,
+                        respond: resp_tx,
+                    }));
+                    resp_rx.await.unwrap_or(PermissionDecision::Deny("Channel closed".into()))
+                })
+            });
+            agent.set_permission_callback(perm_cb);
+            drop(agent);
 
-        // Agent event callbacks
-        let tx_text = event_tx.clone();
-        let text_cb: rusty_agent::r#loop::TextCallback = Box::new(move |text| {
-            let _ = tx_text.send(AgentTaskEvent::Event(
-                rusty_tui::app::AgentEvent::TextDelta(text.to_string()),
-            ));
-        });
-        let tx_think = event_tx.clone();
-        let thinking_cb: rusty_agent::r#loop::ThinkingCallback = Box::new(move |text| {
-            let _ = tx_think.send(AgentTaskEvent::Event(
-                rusty_tui::app::AgentEvent::ThinkingDelta(text.to_string()),
-            ));
-        });
-        let tx_tool = event_tx.clone();
-        let tool_cb: rusty_agent::r#loop::ToolCallback = Box::new(move |name, status| {
-            let event = match status {
-                rusty_agent::ToolStatus::Running { arguments } => {
-                    rusty_tui::app::AgentEvent::ToolStart {
-                        name: name.to_string(),
-                        arguments,
-                    }
-                }
-                rusty_agent::ToolStatus::Done { output } => {
-                    rusty_tui::app::AgentEvent::ToolDone {
-                        name: name.to_string(),
-                        is_error: false,
-                        output,
-                    }
-                }
-                rusty_agent::ToolStatus::Error { output } => {
-                    rusty_tui::app::AgentEvent::ToolDone {
-                        name: name.to_string(),
-                        is_error: true,
-                        output,
-                    }
-                }
-            };
-            let _ = tx_tool.send(AgentTaskEvent::Event(event));
-        });
+            let agent_arc = agent_arc;
 
-        let tx_usage = event_tx.clone();
-        let usage_cb: rusty_agent::r#loop::UsageCallback = Box::new(move |input_tokens, output_tokens| {
-            let _ = tx_usage.send(AgentTaskEvent::Event(
-                rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens },
-            ));
-        });
+            // Helper to start an agent.run() in a spawned task
+            fn start_run(
+                agent: Arc<tokio::sync::Mutex<Agent>>,
+                event_tx: mpsc::UnboundedSender<AgentTaskEvent>,
+                input: String,
+                cancel: rusty_agent::CancelToken,
+            ) -> tokio::task::JoinHandle<()> {
+                tokio::spawn(async move {
+                    let mut agent = agent.lock().await;
 
-        // Process commands from the TUI
-        while let Some(cmd) = cmd_rx.recv().await {
-            match cmd {
-                rusty_tui::app::TuiCommand::Chat(input) => {
+                    let tx_text = event_tx.clone();
+                    let text_cb: rusty_agent::r#loop::TextCallback = Box::new(move |text: &str| {
+                        let _ = tx_text.send(AgentTaskEvent::Event(
+                            rusty_tui::app::AgentEvent::TextDelta(text.to_string()),
+                        ));
+                    });
+                    let tx_think = event_tx.clone();
+                    let thinking_cb: rusty_agent::r#loop::ThinkingCallback = Box::new(move |text: &str| {
+                        let _ = tx_think.send(AgentTaskEvent::Event(
+                            rusty_tui::app::AgentEvent::ThinkingDelta(text.to_string()),
+                        ));
+                    });
+                    let tx_tool = event_tx.clone();
+                    let tool_cb: rusty_agent::r#loop::ToolCallback = Box::new(move |name: &str, status: rusty_agent::ToolStatus| {
+                        let event = match status {
+                            rusty_agent::ToolStatus::Running { arguments } => {
+                                rusty_tui::app::AgentEvent::ToolStart {
+                                    name: name.to_string(),
+                                    arguments,
+                                }
+                            }
+                            rusty_agent::ToolStatus::Done { output } => {
+                                rusty_tui::app::AgentEvent::ToolDone {
+                                    name: name.to_string(),
+                                    is_error: false,
+                                    output,
+                                }
+                            }
+                            rusty_agent::ToolStatus::Error { output } => {
+                                rusty_tui::app::AgentEvent::ToolDone {
+                                    name: name.to_string(),
+                                    is_error: true,
+                                    output,
+                                }
+                            }
+                        };
+                        let _ = tx_tool.send(AgentTaskEvent::Event(event));
+                    });
+                    let tx_usage = event_tx.clone();
+                    let usage_cb: rusty_agent::r#loop::UsageCallback = Box::new(move |input_tokens, output_tokens| {
+                        let _ = tx_usage.send(AgentTaskEvent::Event(
+                            rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens },
+                        ));
+                    });
+                    let tx_thinking_level = event_tx.clone();
+                    let thinking_level_cb: rusty_agent::r#loop::ThinkingLevelCallback = Box::new(move |level| {
+                        let _ = tx_thinking_level.send(AgentTaskEvent::Event(
+                            rusty_tui::app::AgentEvent::ThinkingLevel(level),
+                        ));
+                    });
+
+                    let cancel_ref = cancel.clone();
                     let result = agent
-                        .run(&input, Some(&text_cb), Some(&thinking_cb), Some(&tool_cb), Some(&usage_cb))
+                        .run(&input, Some(&text_cb), Some(&thinking_cb), Some(&tool_cb), Some(&usage_cb), Some(&thinking_level_cb), Some(&cancel_ref))
                         .await;
 
                     match result {
@@ -753,52 +794,115 @@ async fn run_tui(
                             ));
                         }
                     }
-                }
-                rusty_tui::app::TuiCommand::Compact => {
-                    match agent.compact().await {
-                        Ok(true) => {
-                            let _ = event_tx.send(AgentTaskEvent::Event(
-                                rusty_tui::app::AgentEvent::ResponseComplete("Conversation compacted.".to_string()),
-                            ));
+                })
+            }
+
+            let mut current_run: Option<(tokio::task::JoinHandle<()>, rusty_agent::CancelToken)> = None;
+            let mut queued_chat: Option<String> = None;
+
+            loop {
+                tokio::select! {
+                    biased;
+
+                    // Current run finished
+                    _result = async {
+                        match &mut current_run {
+                            Some((handle, _)) => handle.await,
+                            None => std::future::pending().await,
                         }
-                        Ok(false) => {
-                            let _ = event_tx.send(AgentTaskEvent::Event(
-                                rusty_tui::app::AgentEvent::ResponseComplete("Not enough messages to compact (need at least 4).".to_string()),
-                            ));
-                        }
-                        Err(e) => {
-                            let _ = event_tx.send(AgentTaskEvent::Event(
-                                rusty_tui::app::AgentEvent::Error(format!("Compaction failed: {e}")),
-                            ));
+                    }, if current_run.is_some() => {
+                        current_run = None;
+                        let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+
+                        // Auto-start queued chat immediately
+                        if let Some(input) = queued_chat.take() {
+                            let cancel = rusty_agent::CancelToken::new();
+                            current_run = Some((start_run(agent_arc.clone(), event_tx.clone(), input, cancel.clone()), cancel));
                         }
                     }
-                }
-                rusty_tui::app::TuiCommand::Clear => {
-                    agent.messages_mut().clear();
-                    let _ = event_tx.send(AgentTaskEvent::Event(
-                        rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
-                    ));
-                }
-                rusty_tui::app::TuiCommand::ResumeSession(_id, messages) => {
-                    agent.messages_mut().clear();
-                    for msg in messages {
-                        agent.messages_mut().push(msg);
+
+                    // Receive commands — behavior depends on whether a run is active
+                    cmd = cmd_rx.recv() => {
+                        match cmd {
+                            Some(rusty_tui::app::TuiCommand::Cancel) if current_run.is_some() => {
+                                if let Some((_, cancel)) = &current_run {
+                                    cancel.cancel();
+                                }
+                            }
+                            Some(rusty_tui::app::TuiCommand::Chat(input)) if current_run.is_some() => {
+                                queued_chat = Some(input);
+                            }
+                            Some(rusty_tui::app::TuiCommand::Compact) if current_run.is_some() => {
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::Error("Cannot compact while agent is running.".to_string()),
+                                ));
+                            }
+                            Some(rusty_tui::app::TuiCommand::Clear) if current_run.is_some() => {
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::Error("Cannot clear while agent is running.".to_string()),
+                                ));
+                            }
+                            Some(rusty_tui::app::TuiCommand::Chat(input)) => {
+                                let cancel = rusty_agent::CancelToken::new();
+                                current_run = Some((start_run(agent_arc.clone(), event_tx.clone(), input, cancel.clone()), cancel));
+                            }
+                            Some(rusty_tui::app::TuiCommand::Compact) => {
+                                let mut agent = agent_arc.lock().await;
+                                match agent.compact().await {
+                                    Ok(true) => {
+                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                            rusty_tui::app::AgentEvent::ResponseComplete("Conversation compacted.".to_string()),
+                                        ));
+                                    }
+                                    Ok(false) => {
+                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                            rusty_tui::app::AgentEvent::ResponseComplete("Not enough messages to compact (need at least 4).".to_string()),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                            rusty_tui::app::AgentEvent::Error(format!("Compaction failed: {e}")),
+                                        ));
+                                    }
+                                }
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::Clear) => {
+                                let mut agent = agent_arc.lock().await;
+                                agent.messages_mut().clear();
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::ResumeSession(_id, messages)) => {
+                                let mut agent = agent_arc.lock().await;
+                                agent.messages_mut().clear();
+                                for msg in messages {
+                                    agent.messages_mut().push(msg);
+                                }
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::SessionRename(_name)) => {}
+                            Some(rusty_tui::app::TuiCommand::Cancel) => {}
+                            None => {
+                                if let Some((handle, _)) = current_run.take() {
+                                    handle.abort();
+                                }
+                                break;
+                            }
+                        }
                     }
-                    let _ = event_tx.send(AgentTaskEvent::Event(
-                        rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
-                    ));
-                }
-                rusty_tui::app::TuiCommand::SessionRename(_name) => {
-                    // Session rename is handled locally in the TUI app state
-                    // and persisted when the session is saved on exit
                 }
             }
 
-            let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+            // Return messages for session saving
+            let agent = agent_arc.lock().await;
+            let _ = msg_return_tx.send(agent.messages().to_vec());
         }
-
-        // Return messages for session saving
-        let _ = msg_return_tx.send(agent.messages().to_vec());
     });
 
     let mut tui_app = rusty_tui::app::AppState::default();
@@ -848,13 +952,17 @@ async fn tui_main_loop(
     working_dir: &PathBuf,
 ) -> Result<()> {
     let mut agent_handle = Some(agent_handle);
+    let mut last_draw = std::time::Instant::now();
+    const MIN_DRAW_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
+
     loop {
-        // Draw if needed
-        if app.needs_redraw {
+        // Draw if needed, throttled to ~30 FPS
+        if app.needs_redraw && last_draw.elapsed() >= MIN_DRAW_INTERVAL {
             terminal.draw(|frame| {
                 rusty_tui::ui::draw(app, frame.area(), frame.buffer_mut());
             })?;
             app.needs_redraw = false;
+            last_draw = std::time::Instant::now();
         }
 
         // Poll terminal events (always, even during agent processing)
@@ -867,17 +975,24 @@ async fn tui_main_loop(
                         continue;
                     }
 
-                    // Handle slash commands on Enter
+                    // Handle Enter — send message or queue while streaming
                     if key.code == KeyCode::Enter
                         && !app.input.is_empty()
-                        && !app.is_streaming
                         && app.permission_prompt.is_none()
                         && app.session_picker.is_none()
                     {
                         let input = app.input.clone();
 
-                        // Check if it's a slash command
-                        if let Some(slash) = rusty_tui::app::SlashCommand::parse(&input) {
+                        if app.is_streaming {
+                            if input.starts_with('/') {
+                                app.push_system("Commands cannot be used while the agent is responding.");
+                                app.input.clear();
+                                app.cursor_pos = 0;
+                                app.needs_redraw = true;
+                            } else {
+                                app.queue_current_input();
+                            }
+                        } else if let Some(slash) = rusty_tui::app::SlashCommand::parse(&input) {
                             app.input.clear();
                             app.cursor_pos = 0;
                             app.history.push(input.clone());
@@ -885,7 +1000,6 @@ async fn tui_main_loop(
                             handle_slash_command(app, slash, cmd_tx, working_dir).await;
                             app.needs_redraw = true;
                         } else if input.starts_with('/') {
-                            // Unknown slash command
                             app.push_system(&format!(
                                 "Unknown command: {input}. Type /help for available commands."
                             ));
@@ -912,8 +1026,9 @@ async fn tui_main_loop(
                         // Handle key (including permission prompt responses)
                         let had_perm = app.permission_prompt.is_some();
                         app.handle_key(key);
-                        // If a permission prompt was just resolved, nothing else to do
-                        // (the oneshot was already sent in handle_key)
+                        if app.take_cancel_requested() {
+                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Cancel);
+                        }
                         if had_perm {
                             app.needs_redraw = true;
                         }
@@ -923,8 +1038,7 @@ async fn tui_main_loop(
                     app.needs_redraw = true;
                 }
                 Event::Paste(text)
-                    if !app.is_streaming
-                        && app.permission_prompt.is_none()
+                    if app.permission_prompt.is_none()
                         && app.session_picker.is_none()
                         && !app.is_renaming =>
                 {
@@ -971,6 +1085,10 @@ async fn tui_main_loop(
                         app.status.output_tokens = output_tokens;
                         app.needs_redraw = true;
                     }
+                    rusty_tui::app::AgentEvent::ThinkingLevel(level) => {
+                        app.status.thinking_level = level;
+                        app.needs_redraw = true;
+                    }
                 },
                 Ok(AgentTaskEvent::PermissionRequest(msg)) => {
                     // Show the permission prompt in the TUI
@@ -981,7 +1099,20 @@ async fn tui_main_loop(
                     app.needs_redraw = true;
                 }
                 Ok(AgentTaskEvent::ReadyForInput) => {
-                    // Agent is ready for new input — nothing special to do in the TUI
+                    // Agent is ready — auto-send any queued message
+                    if let Some(input) = app.take_queued_message() {
+                        app.messages.push(rusty_tui::app::ChatMessage {
+                            role: rusty_tui::app::MessageRole::User,
+                            content: input.clone(),
+                        });
+                        app.history.push(input.clone());
+                        app.history_idx = None;
+                        app.is_streaming = true;
+                        app.streaming_text.clear();
+                        app.streaming_text = "...".to_string();
+                        app.needs_redraw = true;
+                        let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(input));
+                    }
                 }
                 Err(_) => break,
             }
@@ -1016,7 +1147,12 @@ async fn tui_main_loop(
         }
 
         // Small yield to prevent busy-waiting
-        if !app.needs_redraw {
+        if app.needs_redraw {
+            let elapsed = last_draw.elapsed();
+            if elapsed < MIN_DRAW_INTERVAL {
+                tokio::time::sleep(MIN_DRAW_INTERVAL - elapsed).await;
+            }
+        } else {
             tokio::time::sleep(Duration::from_millis(8)).await;
         }
     }

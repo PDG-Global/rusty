@@ -6,12 +6,18 @@ use rusty_core::{Message, Role, RustyError};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
 use tracing::{debug, info};
 
-/// Threshold: if estimated tokens exceed this, trigger compaction
-const COMPACT_TOKEN_THRESHOLD: usize = 80_000;
+/// Fraction of context window at which to trigger auto-compaction
+const COMPACT_THRESHOLD_FRACTION: f64 = 0.75;
 /// Keep the last N messages un-compacted
 const KEEP_RECENT: usize = 10;
 /// Fallback message count threshold
 const COMPACT_MESSAGE_THRESHOLD: usize = 40;
+
+/// Compute the token threshold for compaction based on the model's context window.
+fn compact_token_threshold(model: &str) -> usize {
+    let window = rusty_core::model_context_window(model);
+    (window as f64 * COMPACT_THRESHOLD_FRACTION) as usize
+}
 
 /// Check if compaction is needed and perform it
 pub async fn maybe_compact(
@@ -20,9 +26,10 @@ pub async fn maybe_compact(
     system_prompt: &str,
 ) -> Result<(), RustyError> {
     let estimated_tokens = estimate_tokens(messages);
+    let token_threshold = compact_token_threshold(provider.model());
 
     let needs_compact = messages.len() >= COMPACT_MESSAGE_THRESHOLD
-        || estimated_tokens >= COMPACT_TOKEN_THRESHOLD;
+        || estimated_tokens >= token_threshold;
 
     if !needs_compact {
         return Ok(());
@@ -52,6 +59,7 @@ pub async fn maybe_compact(
         tools: vec![],
         max_tokens: 2048,
         temperature: None,
+        thinking_budget: Some(rusty_core::level_to_budget(rusty_core::ThinkingLevel::Minimal)),
     };
 
     let mut stream = provider.create_message_stream(request).await?;
@@ -118,6 +126,7 @@ pub async fn force_compact(
         tools: vec![],
         max_tokens: 2048,
         temperature: None,
+        thinking_budget: Some(rusty_core::level_to_budget(rusty_core::ThinkingLevel::Minimal)),
     };
 
     let mut stream = provider.create_message_stream(request).await?;
