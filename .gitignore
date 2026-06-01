@@ -48,3 +48,6 @@ lcov.info
 *.tmp
 *.bak
 *.log
+# Build artifacts directory
+dist/
+.wrangler/

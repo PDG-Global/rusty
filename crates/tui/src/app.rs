@@ -276,8 +276,8 @@ impl SessionPickerState {
                         let text = m.get_all_text();
                         // Take first line, truncate to 60 chars
                         let first_line = text.lines().next().unwrap_or(&text);
-                        if first_line.len() > 60 {
-                            format!("{}...", &first_line[..60])
+                        if first_line.chars().count() > 60 {
+                            format!("{}...", first_line.chars().take(60).collect::<String>())
                         } else {
                             first_line.to_string()
                         }
@@ -627,7 +627,7 @@ impl AppState {
                         if at_pos <= self.input.len() {
                             let replace_end = self.cursor_pos;
                             if at_pos <= replace_end {
-                                let reference = format!("@{}", entry.display);
+                                let reference = entry.display.clone();
                                 self.input.replace_range(at_pos..replace_end, &reference);
                                 self.cursor_pos = at_pos + reference.len();
                             }
@@ -976,7 +976,7 @@ impl AppState {
                 // Calculate what to replace: from @ to cursor
                 let replace_end = self.cursor_pos;
                 if at_pos <= replace_end {
-                    let reference = format!("@{}", entry.display);
+                    let reference = entry.display.clone();
                     self.input.replace_range(at_pos..replace_end, &reference);
                     self.cursor_pos = at_pos + reference.len();
                 }
@@ -1322,7 +1322,7 @@ fn extract_tool_detail(name: &str, arguments: &str) -> String {
     match name {
         "bash" => {
             let cmd = v["command"].as_str().unwrap_or("");
-            if cmd.len() > 60 { format!("{}...", &cmd[..60]) } else { cmd.to_string() }
+            if cmd.chars().count() > 60 { format!("{}...", cmd.chars().take(60).collect::<String>()) } else { cmd.to_string() }
         }
         "file_read" | "file_write" | "file_edit" => {
             let path = v["file_path"].as_str().or_else(|| v["path"].as_str()).unwrap_or("");
@@ -1344,7 +1344,7 @@ fn extract_tool_detail(name: &str, arguments: &str) -> String {
         }
         "agent" => {
             let task = v["task"].as_str().unwrap_or("");
-            if task.len() > 60 { format!("{}...", &task[..60]) } else { task.to_string() }
+            if task.chars().count() > 60 { format!("{}...", task.chars().take(60).collect::<String>()) } else { task.to_string() }
         }
         _ => String::new(),
     }
@@ -1380,8 +1380,8 @@ fn tool_output_summary(name: &str, output: &str) -> String {
             // Show first non-empty line, truncated
             let first = trimmed.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
             let clean = first.trim();
-            if clean.len() > 60 {
-                format!("{}...", &clean[..60])
+            if clean.chars().count() > 60 {
+                format!("{}...", clean.chars().take(60).collect::<String>())
             } else if clean.is_empty() {
                 format!("{line_count} lines")
             } else {
