@@ -314,6 +314,73 @@ fn render_content(content: &str, prefix: &str, base_style: Style, lines: &mut Ve
             table_aligns.clear();
         }
 
+        // ATX headings: # through ######
+        if let Some(heading) = parse_atx_heading(line_str) {
+            let style = match heading.level {
+                1 => base_style.fg(Color::White).add_modifier(Modifier::BOLD),
+                2 => base_style.fg(Color::LightCyan).add_modifier(Modifier::BOLD),
+                _ => base_style.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            };
+            // Add blank line before heading (unless it's the first content)
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            let indent = if i == 0 { prefix } else { "  " };
+            let mut spans = vec![Span::styled(indent.to_string(), base_style)];
+            spans.extend(parse_inline_markdown(&heading.text, style));
+            for wrapped_line in wrap_line(&spans, width, indent) {
+                lines.push(Line::from(wrapped_line));
+            }
+            continue;
+        }
+
+        // Horizontal rules: ---, ***, ___
+        if is_horizontal_rule(line_str) {
+            let rule: String = "─".repeat(width.saturating_sub(4));
+            lines.push(Line::from(Span::styled(
+                format!("  {rule}"),
+                Style::default().fg(Color::Gray),
+            )));
+            continue;
+        }
+
+        // Unordered list items: - , * , +
+        if let Some(item_text) = parse_unordered_list_item(line_str) {
+            let indent = if i == 0 { prefix } else { "  " };
+            let mut spans = vec![Span::styled(indent.to_string(), base_style)];
+            spans.push(Span::styled("• ", base_style));
+            spans.extend(parse_inline_markdown(&item_text, base_style));
+            for wrapped_line in wrap_line(&spans, width, indent) {
+                lines.push(Line::from(wrapped_line));
+            }
+            continue;
+        }
+
+        // Ordered list items: 1. , 2. , etc.
+        if let Some((num, item_text)) = parse_ordered_list_item(line_str) {
+            let indent = if i == 0 { prefix } else { "  " };
+            let mut spans = vec![Span::styled(indent.to_string(), base_style)];
+            spans.push(Span::styled(format!("{num}. "), base_style));
+            spans.extend(parse_inline_markdown(&item_text, base_style));
+            for wrapped_line in wrap_line(&spans, width, indent) {
+                lines.push(Line::from(wrapped_line));
+            }
+            continue;
+        }
+
+        // Blockquotes: >
+        if let Some(quote_text) = parse_blockquote(line_str) {
+            let quote_style = Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC);
+            let indent = if i == 0 { prefix } else { "  " };
+            let mut spans = vec![Span::styled(indent.to_string(), base_style)];
+            spans.push(Span::styled("│ ", Style::default().fg(Color::Gray)));
+            spans.extend(parse_inline_markdown(&quote_text, quote_style));
+            for wrapped_line in wrap_line(&spans, width, indent) {
+                lines.push(Line::from(wrapped_line));
+            }
+            continue;
+        }
+
         // First line gets the prefix
         let indent = if i == 0 { prefix } else { "  " };
         let mut spans = vec![Span::styled(indent.to_string(), base_style)];
@@ -328,6 +395,104 @@ fn render_content(content: &str, prefix: &str, base_style: Style, lines: &mut Ve
     if !table_buf.is_empty() {
         render_table(&table_buf, &table_aligns, base_style, lines, width);
     }
+}
+
+/// Parsed ATX heading info
+struct HeadingInfo {
+    level: usize,
+    text: String,
+}
+
+/// Parse an ATX heading line (# through ######).
+/// Returns Some(HeadingInfo) if the line is a heading.
+fn parse_atx_heading(line: &str) -> Option<HeadingInfo> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+    let mut level = 0;
+    for ch in trimmed.chars() {
+        if ch == '#' {
+            level += 1;
+        } else {
+            break;
+        }
+    }
+    if level > 6 || level == 0 {
+        return None;
+    }
+    let rest = &trimmed[level..];
+    if rest.starts_with(' ') {
+        Some(HeadingInfo {
+            level,
+            text: rest[1..].to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// Check if a line is a horizontal rule (---, ***, ___).
+fn is_horizontal_rule(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.len() < 3 {
+        return false;
+    }
+    let ch = trimmed.chars().next().unwrap();
+    if ch != '-' && ch != '*' && ch != '_' {
+        return false;
+    }
+    trimmed.chars().all(|c| c == ch || c == ' ')
+}
+
+/// Parse an unordered list item (- , * , + ).
+/// Returns Some(text) if the line is a list item.
+fn parse_unordered_list_item(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if trimmed.len() >= 2 {
+        let bytes = trimmed.as_bytes();
+        if (bytes[0] == b'-' || bytes[0] == b'*' || bytes[0] == b'+') && bytes[1] == b' ' {
+            return Some(trimmed[2..].to_string());
+        }
+    }
+    None
+}
+
+/// Parse an ordered list item (1. , 2. , etc.).
+/// Returns Some((number, text)) if the line is an ordered list item.
+fn parse_ordered_list_item(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim_start();
+    let mut num_end = 0;
+    for ch in trimmed.chars() {
+        if ch.is_ascii_digit() {
+            num_end += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if num_end > 0 && num_end < trimmed.len() && trimmed.as_bytes()[num_end] == b'.' {
+        let num = trimmed[..num_end].to_string();
+        let rest = &trimmed[num_end + 1..];
+        if rest.starts_with(' ') {
+            return Some((num, rest[1..].to_string()));
+        }
+    }
+    None
+}
+
+/// Parse a blockquote line (> text).
+/// Returns Some(text) if the line is a blockquote.
+fn parse_blockquote(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('>') {
+        let rest = &trimmed[1..];
+        if rest.starts_with(' ') {
+            return Some(rest[1..].to_string());
+        } else if rest.is_empty() {
+            return Some(String::new());
+        }
+    }
+    None
 }
 
 /// Wrap plain text to fit within `width` columns. Returns Vec of strings.
