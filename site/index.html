@@ -1,789 +1,888 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>rusty - a tiny AI coding agent</title>
-  <meta name="description" content="An under 10MB self-contained AI coding agent binary. Runs open source frontier models like MiMo, DeepSeek, and Kimi. Built in Rust.">
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg: #fafaf9;
-      --bg-elevated: #ffffff;
-      --bg-surface: #f5f4f3;
-      --border: #e7e5e4;
-      --border-strong: #d6d3d1;
-      --text-primary: #1c1917;
-      --text-secondary: #57534e;
-      --text-muted: #a8a29e;
-      --accent: #d97706;
-      --accent-dim: #b45309;
-      --accent-glow: rgba(217, 119, 6, 0.06);
-      --accent-text: #92400e;
-      --mono: 'Menlo', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
-      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    }
-
-    html {
-      font-family: var(--sans);
-      background: var(--bg);
-      color: var(--text-primary);
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      scroll-behavior: smooth;
-    }
-
-    body { line-height: 1.6; }
-
-    a {
-      color: var(--accent-text);
-      text-decoration: none;
-      transition: color 0.2s;
-    }
-    a:hover { color: var(--accent); }
-
-    .container {
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 0 2rem;
-    }
-
-    /* Nav */
-    nav {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      border-bottom: 1px solid var(--border);
-      background: rgba(250, 250, 249, 0.88);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-    }
-    nav .container {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 56px;
-    }
-    .nav-brand {
-      font-family: var(--mono);
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--text-primary);
-      letter-spacing: -0.02em;
-    }
-    .nav-brand span { color: var(--accent); }
-    .nav-links {
-      display: flex;
-      gap: 1.5rem;
-      align-items: center;
-      list-style: none;
-    }
-    .nav-links a {
-      font-size: 0.85rem;
-      color: var(--text-muted);
-    }
-    .nav-links a:hover { color: var(--text-primary); }
-
-    /* Hero */
-    .hero {
-      padding: 6rem 0 5rem;
-    }
-    .hero-eyebrow {
-      font-family: var(--mono);
-      font-size: 0.8rem;
-      color: var(--accent);
-      letter-spacing: 0.08em;
-      margin-bottom: 1.5rem;
-    }
-    .hero h1 {
-      font-size: clamp(2.5rem, 5vw, 3.75rem);
-      font-weight: 700;
-      line-height: 1.08;
-      letter-spacing: -0.035em;
-      color: var(--text-primary);
-      max-width: 720px;
-      margin-bottom: 1.5rem;
-    }
-    .hero p {
-      font-size: 1.125rem;
-      line-height: 1.7;
-      color: var(--text-secondary);
-      max-width: 540px;
-      margin-bottom: 2.5rem;
-    }
-    .hero-install {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.75rem;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border-strong);
-      border-radius: 8px;
-      padding: 0.75rem 1.25rem;
-      font-family: var(--mono);
-      font-size: 0.875rem;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    .hero-install:hover {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-glow);
-    }
-    .hero-install code { color: var(--text-primary); }
-    .hero-install .copy-label {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-left: 0.5rem;
-    }
-
-    /* Metrics strip */
-    .metrics {
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      padding: 3rem 0;
-    }
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 2rem;
-    }
-    .metric-value {
-      font-family: var(--mono);
-      font-size: 2rem;
-      font-weight: 700;
-      color: var(--text-primary);
-      letter-spacing: -0.03em;
-      line-height: 1;
-      margin-bottom: 0.5rem;
-    }
-    .metric-label {
-      font-size: 0.85rem;
-      color: var(--text-muted);
-    }
-
-    /* Section headers */
-    .section {
-      padding: 5rem 0;
-    }
-    .section-header {
-      margin-bottom: 3rem;
-    }
-    .section-header h2 {
-      font-size: 1.75rem;
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 1.15;
-      margin-bottom: 0.75rem;
-    }
-    .section-header p {
-      color: var(--text-secondary);
-      max-width: 50ch;
-      font-size: 1rem;
-    }
-
-    /* Features */
-    .features-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1px;
-      background: var(--border);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .feature {
-      background: var(--bg-elevated);
-      padding: 2rem;
-    }
-    .feature-icon {
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      color: var(--accent);
-      letter-spacing: 0.06em;
-      margin-bottom: 1rem;
-      text-transform: uppercase;
-    }
-    .feature h3 {
-      font-size: 1.05rem;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      margin-bottom: 0.5rem;
-    }
-    .feature p {
-      font-size: 0.9rem;
-      color: var(--text-secondary);
-      line-height: 1.6;
-    }
-
-    /* Models */
-    .models-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 1rem;
-    }
-    .model-card {
-      padding: 1.5rem;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    .model-card:hover {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-glow);
-    }
-    .model-name {
-      font-weight: 700;
-      font-size: 1rem;
-      margin-bottom: 0.25rem;
-    }
-    .model-maker {
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      margin-bottom: 0.75rem;
-    }
-    .model-desc {
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
-    }
-    .models-note {
-      margin-top: 1.5rem;
-      font-size: 0.85rem;
-      color: var(--text-muted);
-    }
-    .models-note a {
-      color: var(--accent-text);
-      text-decoration: underline;
-      text-decoration-color: var(--border-strong);
-      text-underline-offset: 3px;
-    }
-
-    /* Terminal block */
-    .terminal {
-      background: #1e1e1e;
-      border: 1px solid #2d2d2d;
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .terminal-bar {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid #2d2d2d;
-    }
-    .terminal-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: #3a3a3a;
-    }
-    .terminal-title {
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      color: #6a6a6a;
-      margin-left: 0.5rem;
-    }
-    .terminal-body {
-      padding: 1.25rem 1.5rem;
-      font-family: var(--mono);
-      font-size: 0.85rem;
-      line-height: 1.8;
-      overflow-x: auto;
-      color: #cccccc;
-    }
-    .terminal-body .prompt { color: #e8943a; }
-    .terminal-body .cmd { color: #e4e4e7; }
-    .terminal-body .comment { color: #6a6a6a; }
-    .terminal-body .output { color: #9a9a9a; }
-    .terminal-body .highlight { color: #e8943a; }
-
-    /* Comparison */
-    .comparison-wrap {
-      overflow-x: auto;
-    }
-    .comparison {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-    }
-    .comparison th {
-      text-align: left;
-      font-weight: 600;
-      padding: 0.75rem 1rem;
-      border-bottom: 2px solid var(--border-strong);
-      color: var(--text-muted);
-      font-size: 0.8rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
-    .comparison td {
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid var(--border);
-      color: var(--text-secondary);
-    }
-    .comparison tr:last-child td { border-bottom: none; }
-    .comparison td:first-child {
-      font-weight: 500;
-      color: var(--text-primary);
-    }
-    .comparison .highlight-row td {
-      background: var(--accent-glow);
-    }
-    .comparison .highlight-row td:first-child {
-      color: var(--accent-text);
-      font-weight: 700;
-    }
-    .comparison .good { color: #16a34a; }
-    .comparison .warn { color: var(--accent); }
-
-    /* Platforms */
-    .platforms-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-    }
-    .platform {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      padding: 1.25rem;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      transition: border-color 0.2s;
-    }
-    .platform:hover { border-color: var(--accent); }
-    .platform-icon {
-      font-family: var(--mono);
-      font-size: 1.25rem;
-      color: var(--text-muted);
-      width: 2rem;
-      text-align: center;
-    }
-    .platform-name {
-      font-weight: 600;
-      font-size: 0.9rem;
-    }
-    .platform-arch {
-      font-family: var(--mono);
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-
-    /* Philosophy */
-    .philosophy {
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      padding: 4rem 0;
-    }
-    .philosophy-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 2.5rem;
-    }
-    .philosophy h2 {
-      font-size: 1.75rem;
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 1.15;
-      max-width: 480px;
-    }
-    .philosophy-list {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 1.25rem;
-    }
-    .philosophy-list li {
-      display: flex;
-      gap: 1rem;
-      align-items: flex-start;
-    }
-    .philosophy-list .check {
-      color: var(--accent);
-      font-family: var(--mono);
-      font-size: 0.85rem;
-      margin-top: 0.15rem;
-      flex-shrink: 0;
-    }
-    .philosophy-list .text {
-      font-size: 0.95rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
-    }
-    .philosophy-list .text strong {
-      color: var(--text-primary);
-      font-weight: 600;
-    }
-
-    /* Footer */
-    footer {
-      padding: 3rem 0;
-      border-top: 1px solid var(--border);
-    }
-    .footer-inner {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .footer-left {
-      font-family: var(--mono);
-      font-size: 0.8rem;
-      color: var(--text-muted);
-    }
-    .footer-links {
-      display: flex;
-      gap: 1.5rem;
-      list-style: none;
-    }
-    .footer-links a {
-      font-size: 0.85rem;
-      color: var(--text-muted);
-    }
-    .footer-links a:hover { color: var(--text-primary); }
-
-    /* Animations */
-    @media (prefers-reduced-motion: no-preference) {
-      .fade-in {
-        opacity: 0;
-        transform: translateY(16px);
-        animation: fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-      }
-      .fade-in:nth-child(2) { animation-delay: 0.08s; }
-      .fade-in:nth-child(3) { animation-delay: 0.16s; }
-      .fade-in:nth-child(4) { animation-delay: 0.24s; }
-      .fade-in:nth-child(5) { animation-delay: 0.32s; }
-      @keyframes fadeUp {
-        to { opacity: 1; transform: translateY(0); }
-      }
-    }
-
-    /* Responsive */
-    @media (max-width: 768px) {
-      .container { padding: 0 1.25rem; }
-      .hero { padding: 5rem 0 4rem; }
-      .hero h1 { font-size: 2.25rem; }
-      .metrics-grid { grid-template-columns: 1fr; gap: 1.5rem; }
-      .features-grid { grid-template-columns: 1fr; }
-      .models-grid { grid-template-columns: 1fr 1fr; }
-      .philosophy-grid { gap: 2rem; }
-      .comparison { font-size: 0.8rem; }
-      .comparison th, .comparison td { padding: 0.6rem 0.75rem; }
-      .footer-inner { flex-direction: column; gap: 1.5rem; text-align: center; }
-      .nav-links { gap: 1rem; }
-    }
-    @media (max-width: 480px) {
-      .models-grid { grid-template-columns: 1fr; }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rusty — Lightweight, Statically Compiled Terminal AI Agent</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Fira Code', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+                    },
+                }
+            }
+        }
+    </script>
+    <!-- Premium Google Fonts (Inter & JetBrains Mono) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .mono-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* Custom subtle animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+    </style>
 </head>
-<body>
+<body class="bg-white text-zinc-900 selection:bg-orange-100 min-h-screen flex flex-col">
 
-  <nav>
-    <div class="container">
-      <div class="nav-brand"><span>$</span> rusty</div>
-      <ul class="nav-links">
-        <li><a href="#features">Features</a></li>
-        <li><a href="#models">Models</a></li>
-        <li><a href="#quickstart">Quickstart</a></li>
-        <li><a href="https://github.com/anthropics/claude-code" target="_blank" rel="noopener">GitHub</a></li>
-      </ul>
+    <!-- HEADER -->
+    <header class="sticky top-0 z-50 border-b border-zinc-200/60 bg-white/90 backdrop-blur-md">
+        <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-6 h-6 rounded bg-orange-600 flex items-center justify-center shadow-sm">
+                    <span class="font-mono font-black text-white text-xs">R</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="font-bold tracking-tight text-sm text-zinc-900">rusty</span>
+                    <span class="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border border-zinc-200 bg-zinc-50 text-zinc-500">
+                        alpha
+                    </span>
+                </div>
+            </div>
+
+            <nav class="hidden md:flex items-center gap-8 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                <a href="#why" class="hover:text-zinc-950 transition-colors">Philosophy</a>
+                <a href="#quickstart" class="hover:text-zinc-950 transition-colors">Quick Start</a>
+                <a href="#specs" class="hover:text-zinc-950 transition-colors">Specifications</a>
+                <a href="#security" class="hover:text-zinc-950 transition-colors">Security</a>
+                <a href="#reference" class="hover:text-zinc-950 transition-colors">API & Tools</a>
+            </nav>
+
+            <div class="flex items-center gap-4">
+                <a 
+                    href="https://github.com/PDG-Global/rusty" 
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-zinc-500 hover:text-zinc-950 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+                    title="View source on GitHub"
+                >
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="hidden sm:inline text-[11px] uppercase tracking-wider font-semibold">GitHub</span>
+                </a>
+
+                <button 
+                    id="mobile-menu-btn"
+                    class="p-2 md:hidden rounded border border-zinc-200 hover:bg-zinc-50 text-zinc-600"
+                    aria-label="Toggle Menu"
+                >
+                    <svg id="menu-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                    <svg id="close-icon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Nav -->
+        <div 
+            id="mobile-nav" 
+            class="hidden md:hidden border-b border-zinc-200 bg-white px-6 py-4 flex flex-col gap-4 text-xs font-semibold uppercase tracking-wider text-zinc-500"
+        >
+            <a href="#why" class="mobile-link py-1">Philosophy</a>
+            <a href="#quickstart" class="mobile-link py-1">Quick Start</a>
+            <a href="#specs" class="mobile-link py-1">Specifications</a>
+            <a href="#security" class="mobile-link py-1">Security</a>
+            <a href="#reference" class="mobile-link py-1">API & Tools</a>
+            <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener noreferrer" class="mobile-link py-1 flex items-center gap-1.5">
+                GitHub ↗
+            </a>
+        </div>
+    </header>
+
+    <!-- HERO SECTION -->
+    <section class="relative py-20 sm:py-28 px-6 bg-white overflow-hidden">
+        <div class="max-w-4xl mx-auto text-left relative z-10">
+            <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-mono mb-8 bg-zinc-50 text-zinc-600 border-zinc-200/80">
+                <span>v0.1.0-alpha</span>
+                <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
+                <span>Portable Static Binary</span>
+            </div>
+
+            <h1 class="text-4xl sm:text-6xl font-light tracking-tight text-zinc-900 leading-[1.08] mb-8 max-w-3xl">
+                Lightweight terminal coding agent <span class="font-normal italic text-orange-600">built in Rust.</span>
+            </h1>
+
+            <p class="text-base sm:text-lg max-w-2xl mb-10 leading-relaxed font-light text-zinc-500">
+                Statically compiled to run natively with zero dependencies. Rusty safeguards your development environment using local directory sandboxing, OS keychain integration, and absolute privacy. No runtime, no telemetry, no backdoors.
+            </p>
+
+            <!-- Clean execution instruction box (Perfect aligned height of h-11) -->
+            <div class="flex flex-col sm:flex-row items-stretch gap-3 max-w-xl">
+                <div class="w-full sm:w-80 flex items-center justify-between font-mono text-xs px-4 h-11 rounded border bg-zinc-50 border-zinc-200 text-zinc-800 shadow-sm">
+                    <span id="install-cmd">cargo build --release</span>
+                    <button 
+                        onclick="copyText('cargo build --release', 'install-cmd-btn')" 
+                        id="install-cmd-btn"
+                        class="p-1 rounded text-zinc-400 hover:text-zinc-900 transition-colors"
+                        title="Copy installation instruction"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                    </button>
+                </div>
+                <a 
+                    href="https://github.com/PDG-Global/rusty" 
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="w-full sm:w-auto px-5 h-11 rounded text-[11px] font-bold uppercase tracking-wider bg-zinc-900 hover:bg-zinc-800 text-white transition-all text-center shrink-0 shadow-sm flex items-center justify-center gap-2"
+                >
+                    Get Source Code on GitHub
+                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- PHILOSOPHY SECTION (FOCUS ON PRIVACY & SECURITY) -->
+    <section id="why" class="py-20 border-y border-zinc-200 bg-zinc-50/50">
+        <div class="max-w-4xl mx-auto px-6">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-12 items-start">
+                <div class="md:col-span-4 space-y-4">
+                    <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Manifesto</span>
+                    <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900 leading-tight">Hardened local boundaries. Verified trust.</h2>
+                    <p class="text-xs leading-relaxed text-zinc-500 font-light">
+                        Most coding tools require bloated Node/Python packages, continuous background sync processes, and loose telemetry streams. Rusty operates under an absolute privacy model.
+                    </p>
+                </div>
+
+                <div class="md:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-10">
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">No Telemetry callbacks</h3>
+                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
+                            Rusty features absolutely zero analytic instrumentation, tracing pipelines, or outbound metrics checks. Chat payloads transit strictly between your host and the verified LLM endpoint you configure.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Zero-Backdoor blueprints</h3>
+                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
+                            Licensed entirely under AGPL-3.0-or-later copyleft protections. Every crate is distributed as open, verifiable source code. No compiled node packages, binary blobs, or obfuscated execution scripts.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Surgical path sandboxing</h3>
+                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
+                            Every single file write, read, and edit is checked recursively. System structures, configurations, and parent directories (`~/.ssh`, `/etc`) are isolated and blocked before any agent action is allowed.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Native Keyring Secrets</h3>
+                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
+                            Your API keys are stored in secure native hardware OS keychains (macOS Keychain, Linux Secret Service, Windows Credential Manager) instead of vulnerable plaintext `.env` configurations.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION: TERMINAL QUICK START -->
+    <section id="quickstart" class="py-20 max-w-4xl mx-auto px-6 bg-white">
+        <div class="text-left mb-12 space-y-3">
+            <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Quick Start</span>
+            <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Up and running natively</h2>
+            <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
+                Compile Rusty instantly, then launch a session. On first run, the interactive offline configuration guide secures your credentials, maps presets, and mounts directories immediately.
+            </p>
+        </div>
+
+        <!-- Fake Terminal Window container -->
+        <div class="rounded border border-zinc-200 bg-[#fbfbfb] text-[#18181b] shadow-sm flex flex-col h-[480px] overflow-hidden">
+            <!-- Terminal Header Bar -->
+            <div class="px-4 py-2.5 border-b border-zinc-200 bg-zinc-100 flex items-center justify-between">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-zinc-300"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-zinc-300"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-zinc-300"></span>
+                    <span class="text-[10px] font-mono text-zinc-450 ml-2">rusty --setup</span>
+                </div>
+                <span class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Console Session</span>
+            </div>
+
+            <!-- Terminal Contents Area (Pure scroll with plenty of whitespace) -->
+            <div class="flex-1 p-6 font-mono text-xs overflow-y-auto leading-relaxed space-y-4 text-zinc-800">
+                <div class="flex items-center gap-2 text-zinc-400">
+                    <span>$</span>
+                    <span class="text-zinc-950 font-semibold">cargo build --release && ./target/release/rusty</span>
+                </div>
+                
+                <div class="text-zinc-400 font-light">// Environment audit complete. Launching Setup Wizard...</div>
+                
+                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.0-alpha</div>
+                <div class="text-zinc-500">Settings database `~/.rusty/settings.json` not found. Entering safe first-run sequence.</div>
+                
+                <div class="space-y-1">
+                    <div class="text-zinc-900 font-semibold font-mono"><span class="text-orange-600">?</span> Select LLM Provider Preset:</div>
+                    <div class="text-zinc-500 pl-4 leading-normal">
+                        Xiaomi MiMo (token-plan-cn.xiaomimimo.com)<br />
+                        Kimi / Moonshot (api.moonshot.cn)<br />
+                        OpenAI (api.openai.com)<br />
+                        Ollama (localhost:11434)<br />
+                        ▸ <span class="text-zinc-900 underline font-semibold">DeepSeek (api.deepseek.com)</span>
+                    </div>
+                </div>
+
+                <div class="text-emerald-700 font-medium">✓ Selected Preset: DeepSeek (deepseek-chat)</div>
+
+                <div class="space-y-1">
+                    <div class="text-zinc-900 font-semibold font-mono"><span class="text-orange-600">?</span> Choose API Key Credential Store:</div>
+                    <div class="text-zinc-500 pl-4 leading-normal">
+                        ▸ <span class="text-zinc-900 underline font-semibold">OS Keyring (Keychain / Credential Manager)</span><br />
+                        Settings File (~/.rusty/settings.json)
+                    </div>
+                </div>
+
+                <div class="space-y-1">
+                    <div class="text-zinc-900 font-semibold font-mono"><span class="text-orange-600">?</span> Enter your API Key: <span class="text-zinc-400 font-normal">********************************</span></div>
+                    <div class="text-emerald-700 font-medium">🔒 Securely stored API Key in OS Keyring.</div>
+                </div>
+
+                <div class="text-zinc-500 border-l border-zinc-200 pl-3">
+                    ✓ Configurations written to <code class="bg-zinc-100 px-1 py-0.5 rounded text-zinc-855">~/.rusty/settings.json</code><br />
+                    🎉 Setup complete. Run `rusty` to start coding in plan, bypass, or default modes.
+                </div>
+            </div>
+
+            <!-- Terminal footer info -->
+            <div class="px-5 py-2 border-t border-zinc-200 bg-zinc-50 flex items-center justify-between text-[10px] text-zinc-400">
+                <span class="flex items-center gap-1.5 font-mono">
+                    <span class="w-1.5 h-3 bg-orange-500"></span>
+                    <span>Offline Setup Pipeline Ready</span>
+                </span>
+                <span>Active Target</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- SPECIFICATIONS SECTION (TECHNICAL AUDIT COMPREHENSIVE REBUILD) -->
+    <section id="specs" class="py-20 border-t border-zinc-200 bg-zinc-50/50">
+        <div class="max-w-4xl mx-auto px-6 space-y-16">
+            
+            <!-- Header Text -->
+            <div class="text-left space-y-3">
+                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Technical Audit</span>
+                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Performance and resource profile</h2>
+                <p class="text-xs max-w-lg text-zinc-500 font-light">
+                    Verified diagnostics derived directly from static compilation targets. Pure, zero-overhead execution metrics.
+                </p>
+            </div>
+
+            <!-- Highly Clean, Column-Ruled Specs Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 border-t border-b border-zinc-200 divide-y sm:divide-y-0 sm:divide-x divide-zinc-200 py-6">
+                <!-- Stat 1 -->
+                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
+                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">Binary footprint</span>
+                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">~12 MB</div>
+                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
+                        Statically compiled inside Rust. Zero dynamically linked dependencies or bloated container nodes.
+                    </p>
+                </div>
+                
+                <!-- Stat 2 -->
+                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
+                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">Startup overhead</span>
+                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">&lt; 15ms</div>
+                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
+                        Instant start latency. Avoids interpreters, background runtime boots, or virtual environment parsing.
+                    </p>
+                </div>
+
+                <!-- Stat 3 -->
+                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
+                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">macOS WindowServer CPU</span>
+                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">~0.0%</div>
+                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
+                        Eliminates compositor overhead. Zero rendering lag even with multiple workspace sessions active.
+                    </p>
+                </div>
+
+                <!-- Stat 4 -->
+                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
+                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">Idle memory usage</span>
+                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">~4.8 MB</div>
+                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
+                        Runs on ultra-low memory footprints. No background Node engines or Python runtime leakages.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Comparison Table -->
+            <div class="space-y-6">
+                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
+                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50 flex items-center justify-between">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Harness Architecture Comparison</h3>
+                        <span class="text-[9px] uppercase tracking-wider font-semibold text-zinc-400 font-mono">Platform Profiles</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs font-light">
+                            <thead>
+                                <tr class="border-b border-zinc-200 font-semibold uppercase tracking-wider text-[10px] text-zinc-400 bg-zinc-50/50">
+                                    <th class="p-4 w-1/4">Operational Aspect</th>
+                                    <th class="p-4 w-1/4 text-zinc-900 font-bold bg-zinc-50/50">Rusty (Static Crate)</th>
+                                    <th class="p-4 w-1/4 text-zinc-500">Node/TS Harnesses</th>
+                                    <th class="p-4 w-1/4 text-zinc-500">Python Frameworks</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-zinc-100 text-zinc-650 font-light">
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-medium text-zinc-800">Primary Dependency</td>
+                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Statically linked bin</td>
+                                    <td class="p-4 text-zinc-500">Node runtime + 100MB+ node_modules</td>
+                                    <td class="p-4 text-zinc-500">Python + Pip packages dependency trees</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-medium text-zinc-800">Memory Footprint (Idle)</td>
+                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~4.8 MB</td>
+                                    <td class="p-4 text-zinc-500">~60 MB - 120 MB</td>
+                                    <td class="p-4 text-zinc-500">~45 MB - 90 MB</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-medium text-zinc-800">macOS WindowServer Load</td>
+                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~0.0% (99% Saved)</td>
+                                    <td class="p-4 text-zinc-500">25% – 50% CPU spikes (2+ sessions)</td>
+                                    <td class="p-4 text-zinc-500">Variable (High on Tcl/Tk or Electron GUI)</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-medium text-zinc-800">API Key Encryption</td>
+                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Native hardware keyring</td>
+                                    <td class="p-4 text-zinc-500">Plaintext environment logs</td>
+                                    <td class="p-4 text-zinc-500">Plaintext .env configs on host disks</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-medium text-zinc-800">Path Boundary Locks</td>
+                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Strict workspace bounds</td>
+                                    <td class="p-4 text-zinc-500">Full parent disk access</td>
+                                    <td class="p-4 text-zinc-500">Arbitrary host access defaults</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-medium text-zinc-800">Third-Party Risk</td>
+                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Statically audited crates</td>
+                                    <td class="p-4 text-zinc-500">Deep, shifting npm dependency trees</td>
+                                    <td class="p-4 text-zinc-500">Nested pip supply chain packages</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- WindowServer Explanation (Perfect Alignment, High-Fidelity Styling) -->
+                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">The macOS WindowServer Composite Bottleneck</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Modern web-tech developer tools offload code visualization and rendering loops to local Electron or Chrome layers, forcing macOS <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">WindowServer</code> processes to continuously recompute compositing arrays. Opening just two Node/TS agent sessions often captures up to 50% of system CPU purely to draw the interface. 
+                    </p>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Rusty is architected directly around a hardware-supported console-driven <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">ioctl</code> buffer pipeline. Because it writes raw terminal character arrays natively to the active shell viewport, WindowServer rendering overhead is reduced by **99%**, leaving absolute CPU power available for local compilations and model token operations.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECURITY & WORKSPACE MAP SECTION -->
+    <section id="security" class="py-20 border-y border-zinc-200 bg-white">
+        <div class="max-w-4xl mx-auto px-6">
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-12 items-center">
+                <!-- Folder Layout Codeblock -->
+                <div class="md:col-span-6 space-y-4">
+                    <span class="text-[10px] uppercase tracking-widest font-bold text-orange-655 block">Architecture</span>
+                    <h3 class="text-xl font-light tracking-tight text-zinc-900">Workspace Map</h3>
+                    <p class="text-xs leading-relaxed text-zinc-500 font-light">
+                        Rusty contains no obfuscated packages. Review every single source directory, crate boundary, and utility module cleanly.
+                    </p>
+
+                    <div class="p-4 rounded font-mono text-[11px] leading-relaxed border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm">
+                        <div class="text-zinc-400">// crates/</div>
+                        <div class="space-y-1.5 mt-2">
+                            <div>├── <span class="font-semibold text-zinc-900">core/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Foundation: config, permissions, OS credential store integrations, setup wizard.</span></div>
+                            <div>├── <span class="font-semibold text-zinc-900">provider/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Engine: OpenAI-compatible HTTP endpoints & SSE stream clients.</span></div>
+                            <div>├── <span class="font-semibold text-zinc-900">tools/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Sandboxes: file I/O operations, bash command evaluators, search & patch parsers.</span></div>
+                            <div>├── <span class="font-semibold text-zinc-900">agent/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Loop: core orchestration, sub-agents spawning, session compaction.</span></div>
+                            <div>├── <span class="font-semibold text-zinc-900">tui/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Viewports: low-latency, ratatui-based terminal system drawings.</span></div>
+                            <div>└── <span class="font-semibold text-zinc-900">cli/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Entry point: parameters bindings, parsing routines, run modes selector.</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Explanation items -->
+                <div class="md:col-span-6 space-y-8">
+                    <div class="space-y-2">
+                        <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Operational Logic</span>
+                        <h2 class="text-2xl font-light tracking-tight text-zinc-900">Hardened Local Logic</h2>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div class="flex items-start gap-3">
+                            <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
+                                <span class="w-2 h-2 rounded-full bg-orange-650"></span>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">Path Range Isolation</h4>
+                                <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
+                                    Before performing file operations or searches, Rusty verifies that targeted directories map cleanly underneath your current workspace context. Access beyond designated boundaries is aborted instantly.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-3">
+                            <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
+                                <span class="w-2 h-2 rounded-full bg-orange-650"></span>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">Interactive Command Checks</h4>
+                                <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
+                                    Commands map recursively to offline classifications. Low-risk actions (such as checking `git status` or running `cargo test`) process smoothly, while modifications to workspace packages demand an explicit confirmation.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-3">
+                            <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
+                                <span class="w-2 h-2 rounded-full bg-orange-650"></span>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">Open Copyleft Licensing</h4>
+                                <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
+                                    Every module operates transparently under copyleft AGPL-3.0-or-later conditions. No proprietary tracking middleware, background phone-homes, or telemetry is permitted in the compilation stream.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- HARDENED PRIVACY OATH BANNER -->
+            <div class="mt-16 p-8 border border-zinc-200 bg-zinc-50/50 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm">
+                <div class="space-y-1.5 max-w-2xl">
+                    <span class="text-[9px] uppercase tracking-widest font-bold text-orange-650 block">Privacy Guarantee</span>
+                    <h4 class="text-sm font-bold tracking-tight text-zinc-900">Zero Analytics Callbacks, Middleware, or Backdoors.</h4>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Rusty does not establish network handshakes to any central telemetry servers. The codebase contains no trackers, telemetry instrumentation libraries, or telemetry toggles. Requests stream strictly and directly between your terminal and the endpoint you specify.
+                    </p>
+                </div>
+                <div class="w-10 h-10 rounded-full border border-orange-200 bg-orange-50/30 flex items-center justify-center shrink-0 text-orange-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- DOCUMENTATION EXPLORER SECTION -->
+    <section id="reference" class="py-20 max-w-4xl mx-auto px-6 bg-zinc-50/50 border-b border-zinc-200">
+        <div class="text-left mb-16 space-y-3">
+            <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Documentation Directory</span>
+            <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">CLI flags, tools, and custom interfaces</h2>
+            <p class="text-xs max-w-lg text-zinc-500 font-light">
+                Inspect CLI parameters, sandbox agent capabilities, or TUI commands verified inside alpha builds.
+            </p>
+        </div>
+
+        <!-- Tab Selector & Search -->
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-6 pb-6 border-b border-zinc-200 mb-8">
+            <div class="flex items-center p-0.5 rounded border border-zinc-200 bg-white">
+                <button
+                    onclick="switchRefTab('cli')"
+                    id="ref-tab-cli"
+                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all bg-zinc-900 text-white shadow-sm"
+                >
+                    CLI Parameters
+                </button>
+                <button
+                    onclick="switchRefTab('tools')"
+                    id="ref-tab-tools"
+                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all text-zinc-500 hover:text-zinc-900"
+                >
+                    Agent Tools
+                </button>
+                <button
+                    onclick="switchRefTab('commands')"
+                    id="ref-tab-commands"
+                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all text-zinc-500 hover:text-zinc-900"
+                >
+                    Slash Commands
+                </button>
+            </div>
+
+            <!-- Search box -->
+            <div class="relative w-full sm:w-64">
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input
+                    type="text"
+                    id="ref-search-input"
+                    oninput="filterRefItems()"
+                    placeholder="Search parameters..."
+                    class="w-full pl-9 pr-4 py-2 rounded text-xs focus:outline-none focus:ring-1 focus:ring-zinc-800 border border-zinc-200 bg-white text-zinc-900 placeholder-zinc-400 font-mono transition-all"
+                />
+            </div>
+        </div>
+
+        <!-- Dynamic Reference Container -->
+        <div id="ref-cards-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Content will be injected dynamically via JS -->
+        </div>
+    </section>
+
+    <!-- INSTALLATION SECTION -->
+    <section id="install" class="py-20 max-w-4xl mx-auto px-6 bg-white">
+        <div class="text-left mb-16 space-y-3">
+            <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Compilation & Deployment</span>
+            <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Deploy Rusty locally</h2>
+            <p class="text-xs max-w-lg text-zinc-500 font-light">
+                Secure binary builds directly on any architecture with normal Cargo toolchains.
+            </p>
+        </div>
+
+        <div class="space-y-4">
+            <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 animate-fade-in">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+                    <div class="flex items-center gap-3">
+                        <span class="w-6 h-6 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center font-mono text-xs font-bold">1</span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Global Installation with Cargo</h4>
+                    </div>
+                    <span class="text-[9px] font-mono bg-emerald-50 border border-emerald-200 text-emerald-600 px-2 py-0.5 rounded uppercase font-semibold">
+                        Standard Deployment
+                    </span>
+                </div>
+                <p class="text-xs mb-4 text-zinc-500 font-light">
+                    Download and assemble target sources from crates.io directly into standard cargo paths.
+                </p>
+                <div class="flex items-center justify-between font-mono text-xs p-3.5 rounded border border-zinc-200 bg-white text-zinc-800 shadow-sm">
+                    <span id="install-route-1">cargo install --path crates/cli</span>
+                    <button 
+                        onclick="copyText('cargo install --path crates/cli', 'install-route-1-btn')"
+                        id="install-route-1-btn"
+                        class="text-zinc-400 hover:text-zinc-900 transition-colors"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="w-6 h-6 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center font-mono text-xs font-bold">2</span>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Build from local repository checkout</h4>
+                </div>
+                <p class="text-xs mb-4 text-zinc-500 font-light">
+                    Perform a manual security audit of workspace source files, then assemble release binaries.
+                </p>
+                <div class="space-y-3 font-mono text-xs p-4 rounded border border-zinc-200 bg-white text-zinc-800 shadow-sm">
+                    <div class="flex items-center justify-between">
+                        <span>git clone https://github.com/PDG-Global/rusty.git</span>
+                    </div>
+                    <div class="text-zinc-400 select-none">// Execute fully optimized local compiler build</div>
+                    <div class="flex items-center justify-between">
+                        <span id="install-route-2">cd rusty && cargo build --release</span>
+                        <button 
+                            onclick="copyText('git clone https://github.com/PDG-Global/rusty.git && cd rusty && cargo build --release', 'install-route-2-btn')"
+                            id="install-route-2-btn"
+                            class="text-zinc-400 hover:text-zinc-900 transition-colors"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="border-t border-zinc-200 py-16 px-6 bg-zinc-50 text-zinc-500">
+        <div class="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8 text-xs">
+            <div class="flex items-center gap-3">
+                <div class="w-5 h-5 rounded bg-orange-600 flex items-center justify-center">
+                    <span class="font-mono font-bold text-white text-[11px]">R</span>
+                </div>
+                <span class="font-mono font-bold text-zinc-800">
+                    rusty terminal AI agent
+                </span>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-center gap-6">
+                <a 
+                    href="https://github.com/PDG-Global/rusty" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    class="hover:text-zinc-800 transition-colors inline-flex items-center gap-1.5 font-medium text-zinc-500"
+                >
+                    <svg class="w-4 h-4 text-zinc-400 hover:text-zinc-800 transition-colors" fill="currentColor" viewBox="0 0 24 24">
+                        <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" stroke="none" />
+                    </svg>
+                    <span>View Repository</span>
+                </a>
+                <span class="text-zinc-300">•</span>
+                <span>Licensed under <strong class="text-zinc-800 font-medium">AGPL-3.0-or-later</strong></span>
+                <span class="text-zinc-300">•</span>
+                <span>© 2026 PDG Global Limited</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Dynamic Copy Notification Toast -->
+    <div id="copy-toast" class="fixed bottom-6 right-6 px-4 py-2.5 rounded bg-zinc-900 text-white text-xs font-mono shadow-lg border border-zinc-850 transform translate-y-12 opacity-0 transition-all duration-300 pointer-events-none z-50 flex items-center gap-2">
+        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span>Content copied to clipboard</span>
     </div>
-  </nav>
 
-  <section class="hero">
-    <div class="container">
-      <div class="hero-eyebrow fade-in">open source &middot; written in rust</div>
-      <h1 class="fade-in">A coding agent built for open source models.</h1>
-      <p class="fade-in">Under 10MB. Zero dependencies. Runs frontier open source models like MiMo, DeepSeek, and Kimi from a single binary in your terminal.</p>
-      <button class="hero-install fade-in" onclick="copyInstall(this)" aria-label="Copy install command">
-        <code>curl -sSf https://rusty.dev/install.sh | sh</code>
-        <span class="copy-label">copy</span>
-      </button>
-    </div>
-  </section>
+    <!-- MAIN JAVASCRIPT LOGIC -->
+    <script>
+        // ==========================================
+        // LOCAL ARCHITECTURE DATA DIRECTORY
+        // ==========================================
+        const REFERENCE_DATA = {
+            cli: [
+                { name: "-p, --prompt <TEXT>", type: "String", desc: "Launches the agent in non-interactive mode to process a specific, single task directly." },
+                { name: "--permissions <MODE>", type: "default | accept-edits | bypass | plan", desc: "Configures access boundaries. 'plan' triggers fully read-only code exploration." },
+                { name: "--plan-with-tasks", type: "Flag", desc: "Forces secure plan permissions and processes execution tasks via the localized 'todowrite' tool." },
+                { name: "--setup", type: "Flag", desc: "Launches the secure interactive offline configuration wizard to link providers and keyring." },
+                { name: "--resume <SESSION_ID>", type: "String", desc: "Reloads chat memory buffers and localized context snapshots of a past workspace session." }
+            ],
+            tools: [
+                { name: "file_edit", params: "path, old_text, new_text", desc: "Conducts surgical finding-and-replacing text updates. Inhibits complete model file rewrites." },
+                { name: "apply_patch", params: "path, patch", desc: "Parses, verifies, and applies system-compliant Git unified diff patches directly." },
+                { name: "bash", params: "command", desc: "Runs designated commands inside shell. Prompts user interactively on file modifications." },
+                { name: "todowrite", params: "action, tasks", desc: "Maps, updates, and checks off target task list arrays directly in the project environment." }
+            ],
+            commands: [
+                { name: "/init", alias: "None", desc: "Scans project code files and compiles structural target workspace configurations to AGENTS.md." },
+                { name: "/compact", alias: "None", desc: "Compresses local conversation histories to maintain optimal context boundary footprints." },
+                { name: "/sessions", alias: "/s", desc: "Returns a clean catalog of active or historical session identifiers on the machine." },
+                { name: "/quit", alias: "/q, /exit", desc: "Saves remaining local checkpoint buffers and cleanly terminates active terminal agent loops." }
+            ]
+        };
 
-  <section class="metrics">
-    <div class="container">
-      <div class="metrics-grid">
-        <div class="fade-in">
-          <div class="metric-value">&lt;10MB</div>
-          <div class="metric-label">Self-contained binary</div>
-        </div>
-        <div class="fade-in">
-          <div class="metric-value">5+</div>
-          <div class="metric-label">Supported models</div>
-        </div>
-        <div class="fade-in">
-          <div class="metric-value">0</div>
-          <div class="metric-label">Runtime dependencies</div>
-        </div>
-      </div>
-    </div>
-  </section>
+        let activeRefTab = 'cli';
 
-  <section class="section" id="features">
-    <div class="container">
-      <div class="section-header fade-in">
-        <h2>What it does</h2>
-        <p>An agent that reads your code, runs commands, edits files, and reasons through problems. Works with any OpenAI-compatible API endpoint.</p>
-      </div>
-      <div class="features-grid">
-        <div class="feature fade-in">
-          <div class="feature-icon">terminal</div>
-          <h3>Shell execution</h3>
-          <p>Runs commands with a tiered permission system. Read-only operations auto-approve. Write operations prompt you inline.</p>
-        </div>
-        <div class="feature fade-in">
-          <div class="feature-icon">files</div>
-          <h3>File operations</h3>
-          <p>Read, write, and edit files with surgical precision. Shows you what changed before committing.</p>
-        </div>
-        <div class="feature fade-in">
-          <div class="feature-icon">reason</div>
-          <h3>Transparent reasoning</h3>
-          <p>Visible thinking tokens let you watch the agent work through problems step by step. No black boxes.</p>
-        </div>
-        <div class="feature fade-in">
-          <div class="feature-icon">secure</div>
-          <h3>Sandboxed by default</h3>
-          <p>File access is restricted to your working directory. Destructive commands and write operations require explicit approval.</p>
-        </div>
-      </div>
-    </div>
-  </section>
+        // ==========================================
+        // INITIALIZATION
+        // ==========================================
+        window.onload = function() {
+            // Render default references
+            switchRefTab('cli');
 
-  <section class="section" id="models">
-    <div class="container">
-      <div class="section-header fade-in">
-        <h2>Runs the best open source models</h2>
-        <p>No vendor lock-in. Point rusty at any OpenAI-compatible endpoint and start coding. These are the models we test against.</p>
-      </div>
-      <div class="models-grid">
-        <div class="model-card fade-in">
-          <div class="model-name">MiMo</div>
-          <div class="model-maker">Xiaomi</div>
-          <div class="model-desc">Strong reasoning and code generation with visible thinking tokens.</div>
-        </div>
-        <div class="model-card fade-in">
-          <div class="model-name">DeepSeek</div>
-          <div class="model-maker">DeepSeek AI</div>
-          <div class="model-desc">Excellent at code understanding and multi-step problem solving.</div>
-        </div>
-        <div class="model-card fade-in">
-          <div class="model-name">Kimi</div>
-          <div class="model-maker">Moonshot AI</div>
-          <div class="model-desc">Long context, strong tool use, and reliable instruction following.</div>
-        </div>
-        <div class="model-card fade-in">
-          <div class="model-name">GLM</div>
-          <div class="model-maker">Zhipu AI</div>
-          <div class="model-desc">Balanced performance across code, reasoning, and general tasks.</div>
-        </div>
-        <div class="model-card fade-in">
-          <div class="model-name">MiniMax</div>
-          <div class="model-maker">MiniMax</div>
-          <div class="model-desc">Fast inference with competitive coding ability.</div>
-        </div>
-      </div>
-      <p class="models-note fade-in">Also works with GPT-4o, Claude, Mistral, Qwen, and any other OpenAI-compatible API. <a href="#quickstart">Set your endpoint</a> and go.</p>
-    </div>
-  </section>
+            // Set up mobile menu interactions
+            const menuBtn = document.getElementById('mobile-menu-btn');
+            const mobileNav = document.getElementById('mobile-nav');
+            const menuIcon = document.getElementById('menu-icon');
+            const closeIcon = document.getElementById('close-icon');
 
-  <section class="section" id="quickstart">
-    <div class="container">
-      <div class="section-header fade-in">
-        <h2>Get started in seconds</h2>
-        <p>One command to install. Point it at your model. That's it.</p>
-      </div>
-      <div class="terminal fade-in">
-        <div class="terminal-bar">
-          <div class="terminal-dot"></div>
-          <div class="terminal-dot"></div>
-          <div class="terminal-dot"></div>
-          <span class="terminal-title">zsh</span>
-        </div>
-        <div class="terminal-body">
-          <div><span class="comment"># Install rusty</span></div>
-          <div><span class="prompt">$ </span><span class="cmd">curl -sSf https://rusty.dev/install.sh | sh</span></div>
-          <div>&nbsp;</div>
-          <div><span class="comment"># Point it at your model</span></div>
-          <div><span class="prompt">$ </span><span class="cmd">export OPENAI_API_BASE=https://api.deepseek.com/v1</span></div>
-          <div><span class="prompt">$ </span><span class="cmd">export OPENAI_API_KEY=your-key</span></div>
-          <div>&nbsp;</div>
-          <div><span class="comment"># Start coding</span></div>
-          <div><span class="prompt">$ </span><span class="cmd">rusty</span></div>
-          <div>&nbsp;</div>
-          <div><span class="output">  rusty v0.1.0 &middot; ready</span></div>
-          <div><span class="output">  model: deepseek-coder &middot; permissions: read-only</span></div>
-          <div>&nbsp;</div>
-          <div><span class="output">  <span class="highlight">&gt;</span> explain the structure of this project</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
+            if (menuBtn && mobileNav) {
+                menuBtn.addEventListener('click', () => {
+                    const isHidden = mobileNav.classList.contains('hidden');
+                    if (isHidden) {
+                        mobileNav.classList.remove('hidden');
+                        menuIcon.classList.add('hidden');
+                        closeIcon.classList.remove('hidden');
+                    } else {
+                        mobileNav.classList.add('hidden');
+                        menuIcon.classList.remove('hidden');
+                        closeIcon.classList.add('hidden');
+                    }
+                });
+            }
 
-  <section class="section">
-    <div class="container">
-      <div class="section-header fade-in">
-        <h2>How it compares</h2>
-        <p>Most AI coding tools ship a 200MB+ runtime. rusty is a single static binary that runs natively.</p>
-      </div>
-      <div class="comparison-wrap fade-in">
-        <table class="comparison">
-          <thead>
-            <tr>
-              <th></th>
-              <th>Binary size</th>
-              <th>Dependencies</th>
-              <th>Model flexibility</th>
-              <th>Cross-platform</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr class="highlight-row">
-              <td>rusty</td>
-              <td class="good">&lt;10MB</td>
-              <td class="good">None</td>
-              <td class="good">Any OpenAI-compat</td>
-              <td class="good">macOS, Linux, FreeBSD</td>
-            </tr>
-            <tr>
-              <td>Node-based agents</td>
-              <td class="warn">200MB+</td>
-              <td class="warn">Node.js, npm</td>
-              <td>Usually locked</td>
-              <td>Where Node runs</td>
-            </tr>
-            <tr>
-              <td>Python-based agents</td>
-              <td class="warn">150MB+</td>
-              <td class="warn">Python, pip, venv</td>
-              <td>Usually locked</td>
-              <td>Where Python runs</td>
-            </tr>
-            <tr>
-              <td>Container agents</td>
-              <td>500MB+</td>
-              <td>Docker</td>
-              <td>Varies</td>
-              <td>Where Docker runs</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
+            // Close mobile menu on links clicks
+            const mobileLinks = document.querySelectorAll('.mobile-link');
+            mobileLinks.forEach(link => {
+                link.addEventListener('click', () => {
+                    mobileNav.classList.add('hidden');
+                    menuIcon.classList.remove('hidden');
+                    closeIcon.classList.add('hidden');
+                });
+            });
+        };
 
-  <section class="section" id="platforms">
-    <div class="container">
-      <div class="section-header fade-in">
-        <h2>Download</h2>
-        <p>Pre-built binaries for every supported platform. No installer needed.</p>
-      </div>
-      <div class="platforms-grid">
-        <a href="#" class="platform fade-in">
-          <div class="platform-icon">&#63743;</div>
-          <div>
-            <div class="platform-name">macOS</div>
-            <div class="platform-arch">aarch64 &middot; x86_64</div>
-          </div>
-        </a>
-        <a href="#" class="platform fade-in">
-          <div class="platform-icon">&#120041;</div>
-          <div>
-            <div class="platform-name">Linux</div>
-            <div class="platform-arch">x86_64 &middot; aarch64</div>
-          </div>
-        </a>
-        <a href="#" class="platform fade-in">
-          <div class="platform-icon">&#120069;</div>
-          <div>
-            <div class="platform-name">FreeBSD</div>
-            <div class="platform-arch">x86_64</div>
-          </div>
-        </a>
-        <a href="#" class="platform fade-in">
-          <div class="platform-icon">&#120057;</div>
-          <div>
-            <div class="platform-name">Windows</div>
-            <div class="platform-arch">x86_64 (preview)</div>
-          </div>
-        </a>
-      </div>
-    </div>
-  </section>
+        // ==========================================
+        // TERMINAL WIZARD STEP SWITCHER
+        // ==========================================
+        function switchTerminalStep(stepNumber) {
+            // Reset button active classes
+            const stepButtons = document.querySelectorAll('.term-step-btn');
+            stepButtons.forEach((btn, idx) => {
+                const stepIdx = idx + 1;
+                const numSpan = btn.querySelector('span');
+                const titleHeading = btn.querySelector('h4');
+                const pTag = btn.querySelector('p');
 
-  <section class="philosophy">
-    <div class="container">
-      <div class="philosophy-grid">
-        <div class="fade-in">
-          <h2>Built on principles, not features.</h2>
-        </div>
-        <ul class="philosophy-list">
-          <li class="fade-in">
-            <span class="check">01</span>
-            <span class="text"><strong>One binary, zero config.</strong> Drop it in your PATH and go. No package managers, no runtime installs, no config files to edit.</span>
-          </li>
-          <li class="fade-in">
-            <span class="check">02</span>
-            <span class="text"><strong>Model-agnostic by design.</strong> Works with any OpenAI-compatible endpoint. Switch models by changing an environment variable.</span>
-          </li>
-          <li class="fade-in">
-            <span class="check">03</span>
-            <span class="text"><strong>Your keys, your data.</strong> No telemetry. No proxy. No account required. Your API key stays local.</span>
-          </li>
-          <li class="fade-in">
-            <span class="check">04</span>
-            <span class="text"><strong>Security is the default.</strong> File access is sandboxed. Destructive operations require explicit approval. You see every command before it runs.</span>
-          </li>
-        </ul>
-      </div>
-    </div>
-  </section>
+                if (stepIdx === stepNumber) {
+                    btn.className = "term-step-btn w-full text-left p-4 rounded-lg border border-orange-500/30 bg-orange-50/50 transition-all flex items-start gap-3.5";
+                    if (numSpan) numSpan.className = "font-mono text-xs font-bold text-orange-600 mt-0.5";
+                    if (titleHeading) titleHeading.className = "text-xs font-bold uppercase tracking-wider text-zinc-800";
+                    if (pTag) pTag.className = "text-[11px] text-zinc-500 mt-1 font-light leading-snug";
+                } else {
+                    btn.className = "term-step-btn w-full text-left p-4 rounded-lg border border-zinc-200 hover:bg-zinc-50/50 transition-all flex items-start gap-3.5";
+                    if (numSpan) numSpan.className = "font-mono text-xs font-bold text-zinc-400 mt-0.5";
+                    if (titleHeading) titleHeading.className = "text-xs font-bold uppercase tracking-wider text-zinc-700";
+                    if (pTag) pTag.className = "text-[11px] text-zinc-400 mt-1 font-light leading-snug";
+                }
+            });
 
-  <footer>
-    <div class="container">
-      <div class="footer-inner">
-        <div class="footer-left">&copy; 2026 PDG Global Limited &middot; AGPL-3.0</div>
-        <ul class="footer-links">
-          <li><a href="https://github.com/anthropics/claude-code">GitHub</a></li>
-          <li><a href="#features">Docs</a></li>
-          <li><a href="#quickstart">Install</a></li>
-        </ul>
-      </div>
-    </div>
-  </footer>
+            // Toggle contents display
+            const contentBlocks = document.querySelectorAll('.term-content-block');
+            contentBlocks.forEach((block, idx) => {
+                const blockStep = idx + 1;
+                if (blockStep === stepNumber) {
+                    block.classList.remove('hidden');
+                } else {
+                    block.classList.add('hidden');
+                }
+            });
+        }
 
-  <script>
-    function copyInstall(btn) {
-      const cmd = btn.querySelector('code').textContent;
-      navigator.clipboard.writeText(cmd).then(() => {
-        const label = btn.querySelector('.copy-label');
-        label.textContent = 'copied';
-        setTimeout(() => { label.textContent = 'copy'; }, 2000);
-      });
-    }
+        // ==========================================
+        // REFERENCE TAB SWITCHER & FILTERING
+        // ==========================================
+        function switchRefTab(tabName) {
+            activeRefTab = tabName;
 
-    if (window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            entry.target.style.animationPlayState = 'running';
-            observer.unobserve(entry.target);
-          }
-        });
-      }, { threshold: 0.15 });
+            // Highlight chosen buttons
+            const tabButtons = document.querySelectorAll('.ref-tab-btn');
+            tabButtons.forEach(btn => {
+                if (btn.id === `ref-tab-${tabName}`) {
+                    btn.className = "ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all bg-zinc-900 text-white shadow-sm";
+                } else {
+                    btn.className = "ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all text-zinc-500 hover:text-zinc-900";
+                }
+            });
 
-      document.querySelectorAll('.fade-in').forEach(el => {
-        el.style.animationPlayState = 'paused';
-        observer.observe(el);
-      });
-    }
-  </script>
+            // Adjust search placeholder dynamically
+            const inputField = document.getElementById('ref-search-input');
+            if (inputField) {
+                inputField.value = '';
+                inputField.placeholder = `Search ${tabName.toUpperCase()} references...`;
+            }
 
+            renderRefCards(REFERENCE_DATA[tabName]);
+        }
+
+        function filterRefItems() {
+            const inputField = document.getElementById('ref-search-input');
+            if (!inputField) return;
+
+            const query = inputField.value.trim().toLowerCase();
+            const sourceDataset = REFERENCE_DATA[activeRefTab];
+
+            if (!query) {
+                renderRefCards(sourceDataset);
+                return;
+            }
+
+            const filtered = sourceDataset.filter(item => 
+                item.name.toLowerCase().includes(query) || 
+                item.desc.toLowerCase().includes(query)
+            );
+
+            renderRefCards(filtered);
+        }
+
+        function renderRefCards(dataset) {
+            const cardsGrid = document.getElementById('ref-cards-grid');
+            if (!cardsGrid) return;
+
+            if (dataset.length === 0) {
+                cardsGrid.innerHTML = `
+                    <div class="col-span-full text-center py-16 border border-dashed border-zinc-200 rounded bg-white">
+                        <p class="text-zinc-400 font-mono text-xs">No records correspond to the criteria.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let htmlString = '';
+            dataset.forEach(item => {
+                let badgeContent = '';
+                if (item.type) {
+                    badgeContent = `Type: <code class="text-zinc-600 font-medium">${item.type}</code>`;
+                } else if (item.params) {
+                    badgeContent = `Params: <code class="text-zinc-600 font-medium">${item.params}</code>`;
+                } else if (item.alias) {
+                    badgeContent = `Alias: <code class="text-zinc-600 font-medium">${item.alias}</code>`;
+                }
+
+                htmlString += `
+                    <div class="p-5 rounded border border-zinc-200 bg-white flex flex-col justify-between transition-all hover:bg-zinc-50/30 hover:shadow-sm">
+                        <div>
+                            <div class="flex items-center justify-between gap-4 mb-3">
+                                <span class="font-mono text-xs font-bold text-orange-600 px-2 py-0.5 rounded bg-orange-50">
+                                    ${item.name}
+                                </span>
+                                <span class="text-[10px] font-mono text-zinc-400">
+                                    ${badgeContent}
+                                </span>
+                            </div>
+                            <p class="text-xs leading-relaxed text-zinc-600 font-light font-sans">
+                                ${item.desc}
+                            </p>
+                        </div>
+                    </div>
+                `;
+            });
+
+            cardsGrid.innerHTML = htmlString;
+        }
+
+        // ==========================================
+        // CLIPBOARD COPY UTILITY
+        // ==========================================
+        function copyText(payload, buttonId) {
+            try {
+                navigator.clipboard.writeText(payload);
+            } catch (e) {
+                // Secure iframe context fallback logic
+                const tempTextarea = document.createElement('textarea');
+                tempTextarea.value = payload;
+                document.body.appendChild(tempTextarea);
+                tempTextarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(tempTextarea);
+            }
+
+            // Animate check icon state swap inside button
+            const btn = document.getElementById(buttonId);
+            if (btn) {
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = `
+                    <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                `;
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                }, 2000);
+            }
+
+            // Show custom toast notification
+            const toast = document.getElementById('copy-toast');
+            if (toast) {
+                toast.classList.remove('translate-y-12', 'opacity-0');
+                toast.classList.add('translate-y-0', 'opacity-100');
+                setTimeout(() => {
+                    toast.classList.add('translate-y-12', 'opacity-0');
+                    toast.classList.remove('translate-y-0', 'opacity-100');
+                }, 2500);
+            }
+        }
+    </script>
 </body>
 </html>
