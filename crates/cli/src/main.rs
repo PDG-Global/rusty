@@ -9,7 +9,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use rusty_agent::Agent;
+use rusty_agent::{Agent, AgentCallbacks};
 use rusty_core::permissions::{PermissionDecision, PermissionRequest};
 use rusty_core::{Config, ConversationSession, CredentialManager, PermissionMode, Settings};
 use rusty_core::setup_wizard::{run_setup_wizard, is_first_run};
@@ -330,22 +330,21 @@ async fn main() -> Result<()> {
     let provider = OpenAiProvider::new(provider_config)?;
     let provider: Arc<dyn rusty_provider::LlmProvider> = Arc::new(provider);
 
+    // Build system prompt (must happen before make_agent_tool so sub-agents
+    // receive the full context including AGENTS.md/CLAUDE.md, platform info, etc.)
+    let system_prompt = rusty_agent::build_system_prompt(&config, &working_dir).await;
+
     // Build tools (including agent tool)
     let mut tools: Vec<Box<dyn Tool>> = all_tools();
 
-    // Add agent tool with spawn function
+    // Add agent tool with spawn function — uses the full system prompt so
+    // sub-agents inherit the same context (AGENTS.md, CLAUDE.md, git info, etc.)
     let agent_tool = rusty_agent::make_agent_tool(
         provider.clone(),
-        config
-            .system_prompt
-            .clone()
-            .unwrap_or_else(|| "You are a helpful AI coding assistant.".to_string()),
+        system_prompt.clone(),
         config.clone(),
     );
     tools.push(Box::new(agent_tool));
-
-    // Build system prompt
-    let system_prompt = rusty_agent::build_system_prompt(&config, &working_dir).await;
 
     info!("Model: {}", config.model);
     info!("Working directory: {}", working_dir.display());
@@ -423,7 +422,15 @@ async fn run_headless(agent: &mut Agent, prompt: &str) -> Result<()> {
         let _ = std::io::stdout().flush();
     });
 
-    let result = agent.run(prompt, Some(&text_cb), None, None, None, None, None).await?;
+    let result = agent
+        .run(
+            prompt,
+            AgentCallbacks {
+                on_text: Some(&text_cb),
+                ..Default::default()
+            },
+        )
+        .await?;
     if !result.ends_with('\n') {
         println!();
     }
@@ -490,7 +497,15 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
                         print!("{text}");
                         let _ = io::stdout().flush();
                     });
-                    let result = agent.run(&init_prompt, Some(&text_cb), None, None, None, None, None).await?;
+                    let result = agent
+                        .run(
+                            &init_prompt,
+                            AgentCallbacks {
+                                on_text: Some(&text_cb),
+                                ..Default::default()
+                            },
+                        )
+                        .await?;
                     if !result.ends_with('\n') {
                         println!();
                     }
@@ -587,7 +602,15 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
             let _ = io::stdout().flush();
         });
 
-        let result = agent.run(line, Some(&text_cb), None, None, None, None, None).await?;
+        let result = agent
+            .run(
+                line,
+                AgentCallbacks {
+                    on_text: Some(&text_cb),
+                    ..Default::default()
+                },
+            )
+            .await?;
         if !result.ends_with('\n') {
             println!();
         }
@@ -779,7 +802,17 @@ async fn run_tui(
 
                     let cancel_ref = cancel.clone();
                     let result = agent
-                        .run(&input, Some(&text_cb), Some(&thinking_cb), Some(&tool_cb), Some(&usage_cb), Some(&thinking_level_cb), Some(&cancel_ref))
+                        .run(
+                            &input,
+                            AgentCallbacks {
+                                on_text: Some(&text_cb),
+                                on_thinking: Some(&thinking_cb),
+                                on_tool: Some(&tool_cb),
+                                on_usage: Some(&usage_cb),
+                                on_thinking_level: Some(&thinking_level_cb),
+                                cancel: Some(&cancel_ref),
+                            },
+                        )
                         .await;
 
                     match result {

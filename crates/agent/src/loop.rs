@@ -92,6 +92,12 @@ impl CancelToken {
     }
 }
 
+impl Default for CancelToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Agent {
     provider: Arc<dyn LlmProvider>,
     tools: HashMap<String, Arc<dyn Tool>>,
@@ -105,6 +111,16 @@ pub struct Agent {
     permission_callback: Option<PermissionCallback>,
     session_allowlist: HashSet<String>,
     permanent_allowlist: HashSet<String>,
+}
+
+#[derive(Default)]
+pub struct AgentCallbacks<'a> {
+    pub on_text: Option<&'a TextCallback>,
+    pub on_thinking: Option<&'a ThinkingCallback>,
+    pub on_tool: Option<&'a ToolCallback>,
+    pub on_usage: Option<&'a UsageCallback>,
+    pub on_thinking_level: Option<&'a ThinkingLevelCallback>,
+    pub cancel: Option<&'a CancelToken>,
 }
 
 impl Agent {
@@ -171,17 +187,20 @@ impl Agent {
     }
 
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
-    /// Pass a `CancelToken` to allow mid-turn cancellation (checked between stream events).
+    /// Pass a `CancelToken` via callbacks to allow mid-turn cancellation (checked between stream events).
     pub async fn run(
         &mut self,
         user_input: &str,
-        on_text: Option<&TextCallback>,
-        on_thinking: Option<&ThinkingCallback>,
-        on_tool: Option<&ToolCallback>,
-        on_usage: Option<&UsageCallback>,
-        on_thinking_level: Option<&ThinkingLevelCallback>,
-        cancel: Option<&CancelToken>,
+        callbacks: AgentCallbacks<'_>,
     ) -> Result<String, RustyError> {
+        let AgentCallbacks {
+            on_text,
+            on_thinking,
+            on_tool,
+            on_usage,
+            on_thinking_level,
+            cancel,
+        } = callbacks;
         if let Some(c) = cancel {
             c.reset();
         }
