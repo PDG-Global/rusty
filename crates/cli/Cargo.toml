@@ -10,8 +10,13 @@ edition.workspace = true
 name = "rusty"
 path = "src/main.rs"
 
+[features]
+default = ["os-keyring"]
+# Forward keyring support to rusty-core. Disabled for FreeBSD builds.
+os-keyring = ["rusty-core/os-keyring"]
+
 [dependencies]
-rusty-core = { path = "../core" }
+rusty-core = { path = "../core", default-features = false }
 rusty-provider = { path = "../provider" }
 rusty-tools = { path = "../tools" }
 rusty-agent = { path = "../agent" }
@@ -20,6 +25,7 @@ tokio.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+dirs.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
@@ -27,3 +33,4 @@ chrono.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 arboard.workspace = true
+libc = "0.2"

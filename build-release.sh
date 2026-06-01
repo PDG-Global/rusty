@@ -105,6 +105,13 @@ build_binary() {
         rustup target add "$target"
     fi
 
+    # FreeBSD: disable os-keyring feature (dbus-secret-service vendored build rejects FreeBSD)
+    local feature_flags=()
+    if [[ "$target" == *-freebsd ]]; then
+        feature_flags=(--no-default-features)
+        echo -e "  ${YELLOW}FreeBSD: building without os-keyring feature${NC}"
+    fi
+
     if [ "$use_zig" = true ]; then
         # Use cargo-zigbuild for cross-compilation
         if ! command -v cargo-zigbuild &> /dev/null; then
@@ -112,12 +119,12 @@ build_binary() {
             return 1
         fi
 
-        cargo zigbuild --release --bin "$binary" --target "$target" 2>&1 | while read line; do
+        cargo zigbuild --release --bin "$binary" --target "$target" "${feature_flags[@]}" 2>&1 | while read line; do
             echo "    $line"
         done
     else
         # Use native cargo (for macOS targets on macOS host)
-        cargo build --release --bin "$binary" --target "$target" 2>&1 | while read line; do
+        cargo build --release --bin "$binary" --target "$target" "${feature_flags[@]}" 2>&1 | while read line; do
             echo "    $line"
         done
     fi

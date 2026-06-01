@@ -6,6 +6,12 @@ name = "rusty-core"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["os-keyring"]
+# OS keyring integration (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+# Disabled for FreeBSD where the vendored dbus build is not supported.
+os-keyring = ["dep:keyring"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -15,6 +21,6 @@ chrono.workspace = true
 dirs.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
-keyring.workspace = true
+keyring = { workspace = true, optional = true }
 reqwest.workspace = true
 crossterm.workspace = true

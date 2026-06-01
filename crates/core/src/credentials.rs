@@ -8,16 +8,23 @@
 //! 2. OS Keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service)
 //! 3. Settings file fallback (`~/.rusty/settings.json`)
 
+use crate::{RustyError, Settings};
+#[cfg(feature = "os-keyring")]
+use crate::CredentialStore;
+
+#[cfg(feature = "os-keyring")]
 use crate::credentials::keyring_impl::Entry;
-use crate::{CredentialStore, RustyError, Settings};
 
 // Re-export keyring for internal use
+#[cfg(feature = "os-keyring")]
 mod keyring_impl {
     pub use keyring::Entry;
 }
 
 /// Service name used for keyring entries.
+#[cfg(feature = "os-keyring")]
 const KEYRING_SERVICE: &str = "rusty";
+#[cfg(feature = "os-keyring")]
 const KEYRING_USER: &str = "default";
 
 /// Manages API key storage with tiered resolution.
@@ -28,7 +35,18 @@ impl CredentialManager {
     ///
     /// Attempts a benign read to verify the platform secret store is accessible.
     /// Returns `false` in headless environments (Docker, SSH without agent, etc.).
+    ///
+    /// Always returns `false` when built without the `os-keyring` feature.
+    #[cfg(feature = "os-keyring")]
     pub fn is_keyring_available() -> bool {
+        // FreeBSD: the vendored dbus-secret-service build doesn't support FreeBSD,
+        // so even if the feature is compiled in, the keyring won't work at runtime.
+        #[cfg(target_os = "freebsd")]
+        {
+            return false;
+        }
+
+        #[cfg(not(target_os = "freebsd"))]
         match Entry::new(KEYRING_SERVICE, KEYRING_USER) {
             Ok(entry) => {
                 // A get_password() on a non-existent key returns Err, but that's fine —
@@ -38,6 +56,11 @@ impl CredentialManager {
             }
             Err(_) => false, // Keyring not available
         }
+    }
+
+    #[cfg(not(feature = "os-keyring"))]
+    pub fn is_keyring_available() -> bool {
+        false
     }
 
     /// Resolve API key using the tiered priority chain:
@@ -59,7 +82,8 @@ impl CredentialManager {
             }
         }
 
-        // Priority 2: OS Keyring
+        // Priority 2: OS Keyring (only available with os-keyring feature)
+        #[cfg(feature = "os-keyring")]
         if settings.credential_store == CredentialStore::Keyring {
             if let Some(key) = Self::get_from_keyring() {
                 return Some(key);
@@ -77,6 +101,7 @@ impl CredentialManager {
     }
 
     /// Retrieve the API key from the OS keyring.
+    #[cfg(feature = "os-keyring")]
     pub fn get_from_keyring() -> Option<String> {
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?;
         match entry.get_password() {
@@ -88,6 +113,7 @@ impl CredentialManager {
     }
 
     /// Store the API key in the OS keyring.
+    #[cfg(feature = "os-keyring")]
     pub fn store_in_keyring(api_key: &str) -> Result<(), RustyError> {
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| RustyError::Config(format!("Failed to access keyring: {e}")))?;
@@ -97,6 +123,7 @@ impl CredentialManager {
     }
 
     /// Delete the API key from the OS keyring.
+    #[cfg(feature = "os-keyring")]
     pub fn delete_from_keyring() -> Result<(), RustyError> {
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER)
             .map_err(|e| RustyError::Config(format!("Failed to access keyring: {e}")))?;
@@ -113,9 +140,19 @@ impl CredentialManager {
 /// Convenience function: retrieve the API key from the OS keyring.
 ///
 /// Returns `Err` if the keyring is unavailable or contains no entry.
+///
+/// Without the `os-keyring` feature, always returns an error.
+#[cfg(feature = "os-keyring")]
 pub fn get_stored_api_key() -> Result<String, RustyError> {
     CredentialManager::get_from_keyring()
         .ok_or_else(|| RustyError::Config("No API key found in keyring".to_string()))
+}
+
+#[cfg(not(feature = "os-keyring"))]
+pub fn get_stored_api_key() -> Result<String, RustyError> {
+    Err(RustyError::Config(
+        "Keyring support not available in this build".to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -123,9 +160,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_keyring_available_does_not_panic() {
-        // Just verify it returns without crashing — actual availability
-        // depends on the CI/dev environment.
-        let _available = CredentialManager::is_keyring_available();
+    fn credential_manager_roundtrip() {
+        // Verify the basic API works regardless of keyring feature.
+        let _ = CredentialManager::is_keyring_available();
     }
 }

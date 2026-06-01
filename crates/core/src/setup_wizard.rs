@@ -280,15 +280,24 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
     }
 
     // --- Store API key ---
-    if let Some(ref key) = api_key_value {
+    #[allow(unused_variables)]
+    if let Some(ref _key) = api_key_value {
         match credential_store {
             CredentialStore::Keyring => {
-                CredentialManager::store_in_keyring(key)?;
-                println!(
-                    "  {} API key stored in OS Keychain / Credential Manager.",
-                    "✓".green()
-                );
-                // Don't set api_key in settings — it lives in the keyring
+                #[cfg(feature = "os-keyring")]
+                {
+                    CredentialManager::store_in_keyring(_key)?;
+                    println!(
+                        "  {} API key stored in OS Keychain / Credential Manager.",
+                        "✓".green()
+                    );
+                }
+                #[cfg(not(feature = "os-keyring"))]
+                {
+                    // Unreachable: without the os-keyring feature, is_keyring_available()
+                    // always returns false, so the wizard never offers Keyring as a choice.
+                    unreachable!("Keyring credential store selected without os-keyring feature");
+                }
             }
             CredentialStore::SettingsFile => {
                 // Will be saved into settings.json below alongside other config

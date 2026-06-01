@@ -1110,11 +1110,31 @@ impl AppState {
     }
 
     pub fn push_error(&mut self, msg: &str) {
+        // Flush any partial streaming content as an assistant message before the error
+        if !self.streaming_text.is_empty() {
+            self.messages.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: self.streaming_text.clone(),
+            });
+        }
+        // Save any remaining thinking text so it remains accessible
+        if self.is_thinking && !self.thinking_text.is_empty() {
+            self.saved_thinking = self.thinking_text.clone();
+            self.thinking_line_count = self.thinking_text.lines().count();
+        }
+
         self.messages.push(ChatMessage {
             role: MessageRole::System,
             content: format!("Error: {msg}"),
         });
+
+        // Full cleanup of streaming state (mirrors finish_streaming)
+        self.streaming_text.clear();
+        self.thinking_text.clear();
+        self.pending_tools.clear();
         self.is_streaming = false;
+        self.is_thinking = false;
+        self.thinking_expanded = false;
         self.needs_redraw = true;
     }
 

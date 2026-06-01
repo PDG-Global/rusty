@@ -19,7 +19,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "macos-system-configuration", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -43,6 +43,6 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 scopeguard = "1"
 dirs = "6"
 arboard = "3"
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "vendored"] }
 base64 = "0.22"
 png = "0.17"

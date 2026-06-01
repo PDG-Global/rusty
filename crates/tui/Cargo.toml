@@ -7,7 +7,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-rusty-core = { path = "../core" }
+rusty-core = { path = "../core", default-features = false }
 ratatui.workspace = true
 crossterm.workspace = true
 tokio.workspace = true

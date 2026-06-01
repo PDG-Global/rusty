@@ -137,15 +137,55 @@ impl From<PermissionModeArg> for PermissionMode {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
+    // Determine log directory (RUSTY_LOG_DIR env, or platform-appropriate cache dir)
+    let log_dir = std::env::var("RUSTY_LOG_DIR").unwrap_or_else(|_| {
+        dirs::cache_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+            .join("rusty")
+            .to_string_lossy()
+            .into_owned()
+    });
+    // Best-effort directory creation — fall back to /tmp if it fails
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = std::path::Path::new(&log_dir).join("debug.log");
+
+    // Open log file in append mode; fall back to stderr if file can't be opened
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .ok();
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+
+    match log_file {
+        Some(_file) => {
+            let log_path_clone = log_path.clone();
+            tracing_subscriber::fmt()
+                .with_writer(move || {
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path_clone)
+                        .unwrap()
+                })
+                .with_env_filter(filter)
+                .init();
+        }
+        None => {
+            // Last resort: stderr (headless mode may tolerate this)
+            tracing_subscriber::fmt()
+                .with_writer(std::io::stderr)
+                .with_env_filter(filter)
+                .init();
+        }
+    }
 
     let args = Args::parse();
+
+    // Add a startup log line so we know where logs are written
+    info!("Log file: {}", log_path.display());
 
     // Handle --setup or auto-detect first run
     let needs_setup = args.setup || is_first_run();
@@ -396,7 +436,7 @@ async fn main() -> Result<()> {
         run_headless_stdin(&mut agent, &config.model).await?;
     } else {
         // Interactive TUI mode — moves agent into spawned task, handles session save internally
-        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir).await?;
+        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path).await?;
         return Ok(());
     }
 
@@ -682,22 +722,58 @@ enum AgentTaskEvent {
     ReadyForInput,
 }
 
+#[allow(unused_variables)]
 async fn run_tui(
     agent: Agent,
     model: &str,
     permanent_allowlist: HashSet<String>,
     config: &Config,
     working_dir: &PathBuf,
+    log_path: &std::path::Path,
 ) -> Result<()> {
     use rusty_core::Message;
+
+    // ── OS-level stderr redirect (Unix only) ──────────────────────────────
+    // Save the real stderr fd so we can restore it on exit.  Then point fd 2
+    // at the log file.  This captures *all* writes to stderr — from tracing,
+    // log, eprintln!(), or raw fd 2 writes from any dependency — and sends
+    // them to the log file instead of corrupting the TUI.
+    #[cfg(unix)]
+    let saved_stderr_fd: i32 = unsafe { libc::dup(libc::STDERR_FILENO) };
+    #[cfg(not(unix))]
+    let _saved_stderr_fd: i32 = -1;
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        if let Ok(path_cstr) = CString::new(log_path.as_os_str().as_bytes()) {
+            let log_fd = unsafe {
+                libc::open(
+                    path_cstr.as_ptr(),
+                    libc::O_WRONLY | libc::O_CREAT | libc::O_APPEND,
+                    0o644,
+                )
+            };
+            if log_fd >= 0 {
+                unsafe { libc::dup2(log_fd, libc::STDERR_FILENO) };
+                unsafe { libc::close(log_fd) };
+            }
+        }
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
 
-    // Install panic hook to restore terminal on crash
+    // Install panic hook to restore terminal + stderr on crash
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // Restore real stderr so the panic message is visible
+        #[cfg(unix)]
+        if saved_stderr_fd >= 0 {
+            unsafe { libc::dup2(saved_stderr_fd, libc::STDERR_FILENO) };
+            unsafe { libc::close(saved_stderr_fd) };
+        }
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
         original_hook(info);
@@ -954,6 +1030,13 @@ async fn run_tui(
 
     // Drop cmd_tx so the agent task sees channel close and finishes
     drop(cmd_tx);
+
+    // Restore real stderr before tearing down the TUI
+    #[cfg(unix)]
+    if saved_stderr_fd >= 0 {
+        unsafe { libc::dup2(saved_stderr_fd, libc::STDERR_FILENO) };
+        unsafe { libc::close(saved_stderr_fd) };
+    }
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
