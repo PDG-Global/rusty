@@ -1028,7 +1028,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         Span::styled("| ", separator_style),
         Span::styled(format!("prompt: {} ", app.status.input_tokens), token_style),
         Span::styled(format!("completion: {} ", app.status.output_tokens), token_style),
-        Span::styled(format!("({}%)", usage_pct.min(999)), token_style),
+        Span::styled(format!("({}%) ", usage_pct.min(999)), token_style),
         Span::styled("| ", separator_style),
         Span::styled(state_text, state_style),
         think_span,

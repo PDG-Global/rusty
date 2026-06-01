@@ -99,14 +99,7 @@ async fn run_loop(
                 }
                 Event::Paste(text)
                     if !app.is_streaming => {
-                        // Insert pasted text at cursor position, replacing newlines with spaces
-                        let sanitized: String = text
-                            .chars()
-                            .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
-                            .collect();
-                        app.input.insert_str(app.cursor_pos, &sanitized);
-                        app.cursor_pos += sanitized.len();
-                        app.needs_redraw = true;
+                        app.handle_bracketed_paste(text);
                     }
                 Event::Resize(_, _) => {
                     app.needs_redraw = true;

@@ -548,13 +548,18 @@ impl AppState {
                 }
                 KeyCode::Char(c) => {
                     self.input.insert(self.cursor_pos, c);
-                    self.cursor_pos += 1;
+                    self.cursor_pos += c.len_utf8();
                     self.needs_redraw = true;
                 }
                 KeyCode::Backspace
                     if self.cursor_pos > 0 => {
-                        self.cursor_pos -= 1;
-                        self.input.remove(self.cursor_pos);
+                        let prev = self.input[..self.cursor_pos]
+                            .char_indices()
+                            .last()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        self.input.drain(prev..self.cursor_pos);
+                        self.cursor_pos = prev;
                         self.needs_redraw = true;
                     }
                 _ => {}
@@ -587,24 +592,42 @@ impl AppState {
             }
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
-                self.cursor_pos += 1;
+                self.cursor_pos += c.len_utf8();
                 self.needs_redraw = true;
             }
             KeyCode::Backspace if self.cursor_pos > 0 => {
-                self.cursor_pos -= 1;
-                self.input.remove(self.cursor_pos);
+                let prev = self.input[..self.cursor_pos]
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                self.input.drain(prev..self.cursor_pos);
+                self.cursor_pos = prev;
                 self.needs_redraw = true;
             }
             KeyCode::Delete if self.cursor_pos < self.input.len() => {
-                self.input.remove(self.cursor_pos);
+                let next = self.input[self.cursor_pos..]
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| self.cursor_pos + i)
+                    .unwrap_or(self.input.len());
+                self.input.drain(self.cursor_pos..next);
                 self.needs_redraw = true;
             }
             KeyCode::Left if self.cursor_pos > 0 => {
-                self.cursor_pos -= 1;
+                self.cursor_pos = self.input[..self.cursor_pos]
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
                 self.needs_redraw = true;
             }
             KeyCode::Right if self.cursor_pos < self.input.len() => {
-                self.cursor_pos += 1;
+                self.cursor_pos = self.input[self.cursor_pos..]
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| self.cursor_pos + i)
+                    .unwrap_or(self.input.len());
                 self.needs_redraw = true;
             }
             KeyCode::Home => {
