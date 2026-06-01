@@ -4,6 +4,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rusty_core::{ConversationSession, PermissionDecision, PermissionRequest};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use tokio::sync::oneshot;
 
 /// Maximum allowed paste length (100KB of text). Prevents OOM from huge pastes.
@@ -318,6 +319,152 @@ impl SessionPickerState {
     }
 }
 
+/// Entry in the file picker
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    /// Display path (relative to working_dir)
+    pub display: String,
+    /// Full absolute path
+    pub full_path: String,
+    /// File size in bytes (for display)
+    pub size: Option<u64>,
+    /// Whether this is a directory
+    pub is_dir: bool,
+}
+
+/// State for the file picker overlay (triggered by @)
+pub struct FilePickerState {
+    /// Current search pattern (text after @)
+    pub query: String,
+    /// Matching file paths from glob search
+    pub matches: Vec<FileEntry>,
+    /// Currently selected index
+    pub selected: usize,
+    /// Scroll offset for long lists
+    pub scroll_offset: usize,
+    /// Working directory for resolving paths
+    pub working_dir: PathBuf,
+    /// Cursor position where @ was typed (position after @)
+    pub at_position: usize,
+}
+
+impl FilePickerState {
+    pub fn new(working_dir: String, at_position: usize) -> Self {
+        let mut picker = Self {
+            query: String::new(),
+            matches: Vec::new(),
+            selected: 0,
+            scroll_offset: 0,
+            working_dir: PathBuf::from(working_dir),
+            at_position,
+        };
+        picker.update_matches();
+        picker
+    }
+
+    pub fn update_matches(&mut self) {
+        use glob::Pattern;
+        use walkdir::WalkDir;
+
+        let pattern_str = if self.query.is_empty() {
+            "**/*".to_string()
+        } else {
+            format!("**/*{}*", self.query)
+        };
+
+        let matcher = match Pattern::new(&pattern_str) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        // Directories to skip (build artifacts, dependencies, etc.)
+        const SKIP_DIRS: &[&str] = &[
+            "node_modules", "target", "__pycache__", ".git", ".svn", ".hg",
+            "dist", "build", ".next", ".nuxt", ".cache", "vendor", "venv",
+            ".venv", "env", ".tox", ".mypy_cache", ".pytest_cache",
+            "coverage", ".turbo", ".parcel-cache",
+        ];
+
+        let mut matches = Vec::new();
+        let max_results = 100;
+
+        let walker = WalkDir::new(&self.working_dir)
+            .follow_links(false)
+            .into_iter();
+
+        for entry in walker.filter_entry(|e| {
+            let name = e.file_name().to_str().unwrap_or("");
+            // Skip hidden directories
+            if name.starts_with('.') {
+                return false;
+            }
+            // Skip known large directories
+            if e.file_type().is_dir() && SKIP_DIRS.contains(&name) {
+                return false;
+            }
+            true
+        }) {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(&self.working_dir)
+                .unwrap_or(path)
+                .to_string_lossy();
+
+            if matcher.matches(&relative) {
+                let display = if relative.is_empty() {
+                    ".".to_string()
+                } else {
+                    relative.to_string()
+                };
+
+                matches.push(FileEntry {
+                    display,
+                    full_path: path.display().to_string(),
+                    size: entry.metadata().ok().map(|m| m.len()),
+                    is_dir: entry.file_type().is_dir(),
+                });
+
+                if matches.len() >= max_results {
+                    break;
+                }
+            }
+        }
+
+        // Sort: directories first, then by name
+        matches.sort_by(|a, b| {
+            b.is_dir.cmp(&a.is_dir).then_with(|| a.display.cmp(&b.display))
+        });
+
+        self.matches = matches;
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    pub fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+            if self.selected < self.scroll_offset {
+                self.scroll_offset = self.selected;
+            }
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.selected + 1 < self.matches.len() {
+            self.selected += 1;
+            let visible_rows = 15; // matches the overlay height
+            if self.selected >= self.scroll_offset + visible_rows {
+                self.scroll_offset = self.selected - visible_rows + 1;
+            }
+        }
+    }
+}
+
 pub struct AppState {
     pub input: String,
     pub cursor_pos: usize,
@@ -361,6 +508,8 @@ pub struct AppState {
     pub paste_counter: usize,
     /// Pinned todo list text shown at bottom of chat area
     pub pinned_todos: Option<String>,
+    /// File picker state for @ file references
+    pub file_picker: Option<FilePickerState>,
 }
 
 pub struct PendingTool {
@@ -425,6 +574,7 @@ impl Default for AppState {
             paste_counter: 0,
             pinned_todos: None,
             working_dir: None,
+            file_picker: None,
         }
     }
 }
@@ -453,6 +603,64 @@ impl AppState {
                 _ => {}
             }
             return;
+        }
+
+        // If file picker is active, handle it exclusively
+        if let Some(ref mut picker) = self.file_picker {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    picker.move_up();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    picker.move_down();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Enter | KeyCode::Tab => {
+                    // Extract what we need to avoid borrow checker issues
+                    let selected_entry = picker.matches.get(picker.selected).cloned();
+                    let at_pos = picker.at_position;
+                    if let Some(entry) = selected_entry {
+                        // Replace @query with @selected_path in input
+                        if at_pos <= self.input.len() {
+                            let replace_end = self.cursor_pos;
+                            if at_pos <= replace_end {
+                                let reference = format!("@{}", entry.display);
+                                self.input.replace_range(at_pos..replace_end, &reference);
+                                self.cursor_pos = at_pos + reference.len();
+                            }
+                        }
+                    }
+                    self.file_picker = None;
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.file_picker = None;
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Char(c) => {
+                    picker.query.push(c);
+                    picker.update_matches();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Backspace => {
+                    picker.query.pop();
+                    if picker.query.is_empty() && picker.at_position == self.cursor_pos {
+                        // Backspaced all query text, close picker
+                        self.file_picker = None;
+                    } else {
+                        picker.update_matches();
+                    }
+                    self.needs_redraw = true;
+                    return;
+                }
+                _ => {}
+            }
         }
 
         // If permission prompt is active, handle it exclusively
@@ -594,6 +802,23 @@ impl AppState {
             KeyCode::Esc if self.is_streaming => {
                 // Request cancellation — the TUI main loop will send TuiCommand::Cancel
                 self.cancel_requested = true;
+                self.needs_redraw = true;
+            }
+            KeyCode::Char('@') if !self.is_streaming => {
+                // Insert the @ character
+                self.input.insert(self.cursor_pos, '@');
+                self.cursor_pos += 1;
+                
+                // Open file picker
+                let working_dir = self.working_dir.clone().unwrap_or_else(|| {
+                    std::env::current_dir()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|_| ".".to_string())
+                });
+                self.file_picker = Some(FilePickerState::new(
+                    working_dir,
+                    self.cursor_pos,
+                ));
                 self.needs_redraw = true;
             }
             KeyCode::Char(c) => {
@@ -740,6 +965,23 @@ impl AppState {
         };
 
         self.handle_paste_text(&clipboard_text, clipboard_image);
+    }
+
+    /// Insert a file reference from the file picker into the input
+    pub fn insert_file_reference(&mut self, entry: &FileEntry) {
+        if let Some(picker) = &self.file_picker {
+            let at_pos = picker.at_position;
+            // Find the @ position in input
+            if at_pos <= self.input.len() {
+                // Calculate what to replace: from @ to cursor
+                let replace_end = self.cursor_pos;
+                if at_pos <= replace_end {
+                    let reference = format!("@{}", entry.display);
+                    self.input.replace_range(at_pos..replace_end, &reference);
+                    self.cursor_pos = at_pos + reference.len();
+                }
+            }
+        }
     }
 
     /// Process pasted text: sanitize it, then decide whether to use a placeholder
@@ -934,16 +1176,8 @@ impl AppState {
             self.streaming_text.push_str(&done_header);
         }
 
-        // For todowrite, show the full task list so the user can see their todos
+        // For todowrite, update the pinned panel only (don't duplicate inline)
         if name == "todowrite" && !output.trim().is_empty() {
-            if !self.streaming_text.ends_with('\n') {
-                self.streaming_text.push('\n');
-            }
-            for line in output.lines() {
-                self.streaming_text.push_str(&format!("    {line}\n"));
-            }
-
-            // Update pinned todos: keep visible while any task is not completed/cancelled
             let has_active = output.contains("[ ]") || output.contains("[~]");
             if has_active {
                 self.pinned_todos = Some(output.trim().to_string());

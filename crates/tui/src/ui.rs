@@ -66,6 +66,18 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
         let picker_area = centered_rect(80, 16, area);
         draw_session_picker(app, picker_area, buf);
     }
+
+    // Overlay file picker if active
+    if app.file_picker.is_some() {
+        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                buf[(x, y)].set_style(dim_style);
+            }
+        }
+        let picker_area = centered_rect(60, 20, area);
+        draw_file_picker(app, picker_area, buf);
+    }
 }
 
 fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
@@ -1286,6 +1298,115 @@ fn draw_session_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
     lines.push(Line::from(vec![
         Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(" Resume  "),
+        Span::styled("[Up/Down]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" Navigate  "),
+        Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" Cancel"),
+    ]));
+
+    let paragraph = Paragraph::new(lines);
+    Widget::render(&paragraph, inner, buf);
+}
+
+fn draw_file_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
+    let picker = match &app.file_picker {
+        Some(p) => p,
+        None => return,
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" File Reference ");
+
+    let inner = block.inner(area);
+    block.render(area, buf);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Query line
+    let query_display = if picker.query.is_empty() {
+        String::from("type to search...")
+    } else {
+        picker.query.clone()
+    };
+    let query_style = if picker.query.is_empty() {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    lines.push(Line::from(Span::styled(format!("  @{query_display}"), query_style)));
+    lines.push(Line::from(""));
+
+    if picker.matches.is_empty() {
+        if picker.query.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  Start typing to search files...",
+                Style::default().fg(Color::Gray),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  No matching files found.",
+                Style::default().fg(Color::Gray),
+            )));
+        }
+    } else {
+        // Calculate visible rows based on available space
+        let visible_rows = inner.height.saturating_sub(3) as usize; // room for query + divider + footer
+        let end = (picker.scroll_offset + visible_rows).min(picker.matches.len());
+
+        for (i, entry) in picker.matches[picker.scroll_offset..end].iter().enumerate() {
+            let actual_idx = picker.scroll_offset + i;
+            let is_selected = actual_idx == picker.selected;
+
+            let style = if is_selected {
+                Style::default().fg(Color::Black).bg(Color::Cyan)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let icon = if entry.is_dir { "📁 " } else { "📄 " };
+            let cursor = if is_selected { "> " } else { "  " };
+            let mut display_path = entry.display.clone();
+            if entry.is_dir {
+                display_path.push('/');
+            }
+
+            // Truncate if too long
+            let max_len = inner.width.saturating_sub(6) as usize; // account for icon + cursor
+            if display_path.len() > max_len {
+                display_path = format!("{}...", &display_path[..max_len.saturating_sub(3)]);
+            }
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("{cursor}{icon}"), style),
+                Span::styled(display_path, style),
+            ]));
+        }
+
+        // Scroll indicator
+        if picker.matches.len() > visible_rows {
+            let scroll_pct = if picker.matches.len() > 1 {
+                (picker.selected * 100) / (picker.matches.len() - 1)
+            } else {
+                100
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {}/{} ({}%)",
+                    picker.selected + 1,
+                    picker.matches.len(),
+                    scroll_pct
+                ),
+                Style::default().fg(Color::Gray),
+            )));
+        }
+    }
+
+    // Footer
+    lines.push(Line::from(vec![
+        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" Select  "),
         Span::styled("[Up/Down]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw(" Navigate  "),
         Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
