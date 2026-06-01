@@ -163,6 +163,8 @@ pub enum AgentEvent {
 pub enum TuiCommand {
     /// Regular chat message
     Chat(String),
+    /// Cancel the currently running agent turn
+    Cancel,
     /// Force compaction of conversation history
     Compact,
     /// Clear conversation and start fresh
@@ -326,6 +328,10 @@ pub struct AppState {
     pub thinking_text: String,
     pub is_streaming: bool,
     pub is_thinking: bool,
+    /// Flag to request cancellation of the current agent turn
+    pub cancel_requested: bool,
+    /// Message queued while streaming is active
+    pub queued_message: Option<String>,
     pub needs_redraw: bool,
     pub should_quit: bool,
     pub permission_prompt: Option<PermissionPromptState>,
