@@ -161,12 +161,6 @@ impl Agent {
             // Warn when approaching max turns
             if turn == self.max_turns.saturating_sub(3) && self.max_turns > 5 {
                 warn!("Approaching max turns limit ({}/{})", turn + 1, self.max_turns);
-                if let Some(cb) = on_text {
-                    cb(&format!(
-                        "\n[Note: Approaching turn limit ({}/{}). Wrapping up soon.]\n\n",
-                        turn + 1, self.max_turns
-                    ));
-                }
             }
 
             // Maybe compact before sending
@@ -360,9 +354,6 @@ impl Agent {
 
         // Hit max turns — ask the model to summarize progress
         warn!("Max turns ({}) exceeded, requesting summary", self.max_turns);
-        if let Some(cb) = on_text {
-            cb("\n\n[Turn limit reached. Please summarize what was accomplished and what remains.]\n\n");
-        }
 
         let summary_request = MessageRequest {
             model: self.config.model.clone(),

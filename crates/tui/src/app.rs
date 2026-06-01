@@ -953,7 +953,7 @@ impl AppState {
                     format!("[Image: {} {}, {}{}]", format, encoded, data.len(), dims)
                 }
             };
-            let placeholder = format!(" ⟦Pasted Content: lines, id={}⟧ ", id);
+            let _placeholder = format!(" ⟦Pasted Content: lines, id={}⟧ ", id);
             // Search for any placeholder containing this id
             let pattern_start = result.find(&format!("⟦Pasted Content:"));
             if pattern_start.is_none() {

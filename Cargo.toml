@@ -44,3 +44,5 @@ scopeguard = "1"
 dirs = "6"
 arboard = "3"
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+base64 = "0.22"
+png = "0.17"

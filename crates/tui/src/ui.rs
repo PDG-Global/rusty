@@ -806,13 +806,13 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     block.render(area, buf);
 
     let (input_text, style) = if app.is_streaming && app.input.is_empty() {
-        let status = if let Some(tool) = app.pending_tools.last() {
-            
-            crate::app::format_tool_label(&tool.name, &tool.arguments)
+        // Show a generic streaming indicator; the tool details are visible
+        // in the output area via pending_tools rendering.
+        if !app.thinking_text.is_empty() {
+            ("Thinking...".to_string(), Style::default().fg(Color::Gray))
         } else {
-            "waiting for response...".to_string()
-        };
-        (status, Style::default().fg(Color::Gray))
+            ("Processing...".to_string(), Style::default().fg(Color::Gray))
+        }
     } else if app.input.is_empty() {
         (
             "Type a message or / for commands...".to_string(),
