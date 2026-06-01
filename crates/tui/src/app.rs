@@ -3,7 +3,143 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rusty_core::{ConversationSession, PermissionDecision, PermissionRequest};
+use std::collections::BTreeMap;
 use tokio::sync::oneshot;
+
+/// Maximum allowed paste length (100KB of text). Prevents OOM from huge pastes.
+const MAX_PASTE_LENGTH: usize = 100 * 1024;
+
+/// Sanitize pasted text by removing control characters and potential terminal injection.
+///
+/// This strips:
+/// - All C0 control characters except `\n` and `\t`
+/// - All C1 control characters (0x80-0x9F)
+/// - ANSI escape sequences (`\x1b[...`)
+/// - Unicode bidi override characters (U+202A-U+202E, U+2066-U+2069)
+/// - Zero-width characters that could cause cursor desync
+///
+/// The text is also truncated to `MAX_PASTE_LENGTH` bytes.
+pub fn sanitize_paste_text(text: &str) -> String {
+    let mut result = String::with_capacity(text.len().min(MAX_PASTE_LENGTH));
+    let mut chars = text.chars().peekable();
+    let mut chars_skipped = 0u32;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            // Allow newline and tab
+            '\n' | '\t' => result.push(ch),
+
+            // Strip ANSI escape sequences: ESC [ ... final_byte
+            '\x1b' => {
+                // Skip the entire escape sequence
+                if chars.peek() == Some(&'[') {
+                    chars.next(); // consume '['
+                    while let Some(&c) = chars.peek() {
+                        chars.next();
+                        if c >= '@' && c <= '~' {
+                            break; // final byte of CSI sequence
+                        }
+                    }
+                    chars_skipped += 1;
+                }
+                // Also strip ESC followed by other chars (OSC, etc.)
+                else if let Some(&c) = chars.peek() {
+                    if c == ']' || c == '(' || c == ')' || c == '#' || c == 'P' {
+                        // OSC/SCS/DCS sequences - skip until ST (ESC \) or BEL
+                        let prefix = c;
+                        chars.next();
+                        if prefix == ']' {
+                            // OSC: terminated by BEL (0x07) or ST (ESC \)
+                            while let Some(&c2) = chars.peek() {
+                                chars.next();
+                                if c2 == '\x07' {
+                                    break;
+                                }
+                                if c2 == '\x1b' && chars.peek() == Some(&'\\') {
+                                    chars.next();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    chars_skipped += 1;
+                }
+            }
+
+            // Strip C0 control characters (0x00-0x1F) except \n and \t (handled above)
+            c if c.is_control() => {
+                chars_skipped += 1;
+                continue;
+            }
+
+            // Strip Unicode bidi override characters (security risk)
+            '\u{202A}' | '\u{202B}' | '\u{202C}' | '\u{202D}' | '\u{202E}' |
+            '\u{2066}' | '\u{2067}' | '\u{2068}' | '\u{2069}' |
+            '\u{200E}' | '\u{200F}' => {
+                chars_skipped += 1;
+                continue;
+            }
+
+            // Strip zero-width characters that can cause cursor desync
+            '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' | '\u{00AD}' => {
+                chars_skipped += 1;
+                continue;
+            }
+
+            // All other printable characters pass through
+            c => result.push(c),
+        }
+    }
+
+    if chars_skipped > 0 {
+        tracing::debug!("Sanitized paste: stripped {chars_skipped} control/escape chars");
+    }
+
+    // Truncate if needed
+    if result.len() > MAX_PASTE_LENGTH {
+        tracing::warn!(
+            "Paste truncated from {} to {} bytes",
+            result.len(),
+            MAX_PASTE_LENGTH
+        );
+        result.truncate(MAX_PASTE_LENGTH);
+    }
+
+    result
+}
+
+/// Sanitize text for single-line insertion (used when pasting into a single-line input).
+/// Strips control chars and converts newlines to spaces.
+pub fn sanitize_single_line(text: &str) -> String {
+    sanitize_paste_text(text)
+        .replace('\n', " ")
+        .replace('\t', "    ")
+}
+
+/// Content type for pasted data
+#[derive(Debug, Clone)]
+pub enum PastedContentType {
+    /// Multi-line text content
+    Text(String),
+    /// Image data (raw bytes from clipboard)
+    Image {
+        /// Raw image bytes (e.g., PNG, JPEG, or RGBA)
+        data: Vec<u8>,
+        /// Image format hint (e.g., "png", "jpeg", "rgba")
+        format: String,
+        /// Width if known (for raw RGBA data)
+        width: Option<u32>,
+        /// Height if known
+        height: Option<u32>,
+    },
+}
+
+/// A single piece of pasted content stored for later reconstruction
+#[derive(Debug, Clone)]
+pub struct PastedContent {
+    pub content_type: PastedContentType,
+    pub order: usize,
+}
 
 /// Events from the terminal input
 pub enum InputEvent {
@@ -210,6 +346,10 @@ pub struct AppState {
     pub thinking_line_count: usize,
     /// Whether thinking is expanded (full text visible)
     pub thinking_expanded: bool,
+    /// Stored pasted content keyed by placeholder ID
+    pub pasted_content: BTreeMap<String, PastedContent>,
+    /// Counter for generating unique paste IDs
+    pub paste_counter: usize,
 }
 
 pub struct PendingTool {
@@ -267,6 +407,8 @@ impl Default for AppState {
             saved_thinking: String::new(),
             thinking_line_count: 0,
             thinking_expanded: false,
+            pasted_content: BTreeMap::new(),
+            paste_counter: 0,
         }
     }
 }
@@ -414,6 +556,11 @@ impl AppState {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
+            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL)
+                && !self.is_streaming => {
+                // Paste from clipboard
+                self.paste_from_clipboard();
+            }
             KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL)
                 // Toggle thinking expand/collapse
                 && (self.thinking_line_count > 0 || self.is_thinking) => {
@@ -549,6 +696,83 @@ impl AppState {
         }
     }
 
+    /// Read clipboard via arboard and handle the paste
+    fn paste_from_clipboard(&mut self) {
+        use arboard::Clipboard;
+
+        let clipboard_text = match Clipboard::new() {
+            Ok(mut ctx) => match ctx.get_text() {
+                Ok(text) => text,
+                Err(_) => return, // clipboard empty or unsupported
+            },
+            Err(_) => return, // can't access clipboard
+        };
+
+        // Also try to get an image from the clipboard
+        let clipboard_image = match Clipboard::new() {
+            Ok(mut ctx) => match ctx.get_image() {
+                Ok(img) => Some(img),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        };
+
+        self.handle_paste_text(&clipboard_text, clipboard_image);
+    }
+
+    /// Process pasted text: sanitize it, then decide whether to use a placeholder
+    /// (multi-line) or insert directly (single-line). Also handles image data.
+    pub fn handle_paste_text(
+        &mut self,
+        raw_text: &str,
+        image_data: Option<arboard::ImageData>,
+    ) {
+        // Always sanitize first
+        let text = sanitize_paste_text(raw_text);
+
+        if text.is_empty() && image_data.is_none() {
+            return;
+        }
+
+        let has_newlines = text.contains('\n');
+        let is_long = text.len() > 500; // threshold for "too long for inline"
+        let has_image = image_data.is_some();
+
+        if has_image {
+            // Store image as placeholder
+            let img = image_data.unwrap();
+            let (w, h) = (img.width as u32, img.height as u32);
+            // Convert RGBA to PNG for storage/transmission
+            let png_data = rgba_to_png(&img.bytes, w, h);
+            let format = if png_data.is_some() { "png" } else { "rgba" };
+            let data = png_data.unwrap_or_else(|| img.bytes.to_vec());
+            let placeholder = self.add_pasted_image(
+                data,
+                format.to_string(),
+                Some(w),
+                Some(h),
+            );
+            self.input.insert_str(self.cursor_pos, &placeholder);
+            self.cursor_pos += placeholder.len();
+        } else if has_newlines || is_long {
+            // Multi-line or long text → store as placeholder
+            let placeholder = self.add_pasted_text(text);
+            self.input.insert_str(self.cursor_pos, &placeholder);
+            self.cursor_pos += placeholder.len();
+        } else {
+            // Short single-line → insert directly (already sanitized)
+            self.input.insert_str(self.cursor_pos, &text);
+            self.cursor_pos += text.len();
+        }
+        self.needs_redraw = true;
+    }
+
+    /// Handle terminal bracketed paste event (from crossterm Event::Paste).
+    /// This is called when the terminal sends paste events via bracketed paste mode.
+    pub fn handle_bracketed_paste(&mut self, text: String) {
+        self.handle_paste_text(&text, None);
+    }
+
     /// Check if the current input is a slash command (starts with /)
     pub fn is_slash_input(&self) -> bool {
         self.input.starts_with('/')
@@ -670,6 +894,116 @@ impl AppState {
         }
         self.needs_redraw = true;
     }
+
+    /// Generate a unique paste placeholder ID
+    fn next_paste_id(&mut self) -> String {
+        self.paste_counter += 1;
+        format!("PASTE{}", self.paste_counter)
+    }
+
+    /// Add pasted text content and return the placeholder string
+    pub fn add_pasted_text(&mut self, text: String) -> String {
+        let id = self.next_paste_id();
+        let line_count = text.lines().count();
+        let placeholder = format!(" ⟦Pasted Content: {} lines, id={}⟧ ", line_count, id);
+        let order = self.pasted_content.len();
+        self.pasted_content.insert(
+            id.clone(),
+            PastedContent {
+                content_type: PastedContentType::Text(text),
+                order,
+            },
+        );
+        placeholder
+    }
+
+    /// Add pasted image content and return the placeholder string
+    pub fn add_pasted_image(&mut self, data: Vec<u8>, format: String, width: Option<u32>, height: Option<u32>) -> String {
+        let id = self.next_paste_id();
+        let size_str = if data.len() > 1024 * 1024 {
+            format!("{:.1}MB", data.len() as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{}KB", data.len() / 1024)
+        };
+        let placeholder = format!(" ⟦Image {}, id={}⟧ ", size_str, id);
+        let order = self.pasted_content.len();
+        self.pasted_content.insert(
+            id.clone(),
+            PastedContent {
+                content_type: PastedContentType::Image { data, format, width, height },
+                order,
+            },
+        );
+        placeholder
+    }
+
+    /// Reconstruct full input text with pasted content inlined
+    pub fn reconstruct_input(&self) -> String {
+        let mut result = self.input.clone();
+        for (id, content) in &self.pasted_content {
+            let text_content = match &content.content_type {
+                PastedContentType::Text(text) => text.clone(),
+                PastedContentType::Image { data, format, width, height } => {
+                    use base64::Engine;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+                    let dims = match (width, height) {
+                        (Some(w), Some(h)) => format!(" ({w}x{h})"),
+                        _ => String::new(),
+                    };
+                    format!("[Image: {} {}, {}{}]", format, encoded, data.len(), dims)
+                }
+            };
+            let placeholder = format!(" ⟦Pasted Content: lines, id={}⟧ ", id);
+            // Search for any placeholder containing this id
+            let pattern_start = result.find(&format!("⟦Pasted Content:"));
+            if pattern_start.is_none() {
+                // Try image pattern
+                let img_pattern = format!("⟦Image ");
+                if let Some(start) = result.find(&img_pattern) {
+                    if let Some(end) = result[start..].find("⟧") {
+                        let full_end = start + end + "⟧".len();
+                        result.replace_range(start..full_end, &text_content);
+                    }
+                }
+            } else if let Some(start) = pattern_start {
+                if let Some(end) = result[start..].find("⟧") {
+                    let full_end = start + end + "⟧".len();
+                    result.replace_range(start..full_end, &text_content);
+                }
+            }
+        }
+        result
+    }
+
+    /// Clear all stored pasted content
+    pub fn clear_pasted_content(&mut self) {
+        self.pasted_content.clear();
+        self.paste_counter = 0;
+    }
+
+    /// Check if input contains paste placeholders
+    pub fn has_paste_placeholders(&self) -> bool {
+        !self.pasted_content.is_empty()
+    }
+
+    /// Parse input text to find paste placeholder boundaries for rendering
+    pub fn find_paste_placeholders(input: &str) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+        let mut pos = 0;
+        while pos < input.len() {
+            if let Some(start) = input[pos..].find("⟦") {
+                let abs_start = pos + start;
+                if let Some(end) = input[abs_start..].find("⟧") {
+                    let abs_end = abs_start + end + "⟧".len();
+                    ranges.push((abs_start, abs_end));
+                    pos = abs_end;
+                    continue;
+                }
+            }
+            break;
+        }
+        ranges
+    }
 }
 
 pub fn format_tool_label(name: &str, arguments: &str) -> String {
@@ -788,4 +1122,27 @@ fn tool_output_summary(name: &str, output: &str) -> String {
             format!("{line_count} lines")
         }
     }
+}
+
+/// Convert raw RGBA bytes to PNG format for clipboard image storage.
+/// Returns None if the encoding fails (e.g., invalid dimensions).
+fn rgba_to_png(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    if width == 0 || height == 0 || rgba.len() < (width as usize * height as usize * 4) {
+        return None;
+    }
+
+    let mut png_data = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png_data, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = match encoder.write_header() {
+            Ok(w) => w,
+            Err(_) => return None,
+        };
+        if writer.write_image_data(rgba).is_err() {
+            return None;
+        }
+    }
+    Some(png_data)
 }

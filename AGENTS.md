@@ -1,13 +1,14 @@
-# AGENTS.md — Rusty Codebase Guide
+# AGENTS.md - Rusty Codebase Guide
 
 ## Overview
 
-**Rusty** is a lightweight AI coding agent written in Rust. It connects to OpenAI-compatible LLM APIs, streams responses, executes tools (file I/O, bash, search, web fetch, sub-agents), and enforces a tiered permission system. It runs as a terminal UI (TUI) or in headless/pipe modes.
+Rusty is a terminal-based AI coding agent written in Rust. It connects to OpenAI-compatible LLM APIs via SSE streaming, executes tools (file I/O, bash, search, patches, web fetch, sub-agents), and enforces a tiered permission system. It runs as a ratatui TUI, in headless mode, or in stdin REPL mode.
 
-- **Language:** Rust (edition 2021)
-- **Runtime:** Tokio async
-- **Default model:** `mimo-v2.5-pro` (Xiaomi MiMo)
-- **Config dir:** `~/.rusty/`
+- Language: Rust (edition 2021)
+- Async runtime: Tokio
+- Default model: `mimo-v2.5-pro` (Xiaomi MiMo)
+- Config directory: `~/.rusty/`
+- License: AGPL-3.0-or-later
 
 ---
 
@@ -17,13 +18,13 @@
 rusty/
 ├── Cargo.toml              # Workspace root (6 crates)
 ├── crates/
-│   ├── core/               # rusty-core: types, config, permissions, errors, history
+│   ├── core/               # rusty-core: types, config, permissions, errors, credentials, setup wizard
 │   ├── provider/           # rusty-provider: OpenAI-compatible HTTP/SSE streaming client
 │   ├── tools/              # rusty-tools: all tool implementations
 │   ├── agent/              # rusty-agent: agent loop, compaction, sub-agent spawning
-│   ├── tui/                # rusty-tui: ratatui-based terminal UI (app state + rendering)
-│   └── cli/                # rusty (binary): CLI args, main entry point, TUI/headless modes
-└── tests/                  # (currently empty — tests live inline in modules)
+│   ├── tui/                # rusty-tui: ratatui terminal UI (app state + rendering)
+│   └── cli/                # rusty (binary): CLI args, main entry point, run modes
+└── site/                   # Landing page (index.html)
 ```
 
 ### Dependency Graph
@@ -39,54 +40,58 @@ cli → agent → provider
 
 ## Crate Details
 
-### `crates/core` — Foundation Layer
+### `crates/core` - Foundation Layer
 
 | File | Purpose |
 |---|---|
-| `types.rs` | `Role` (User/Assistant), `ContentBlock` (Text/ToolUse/ToolResult/Thinking), `Message`, `MessageContent` (Text/Blocks), `UsageInfo`, `ToolDefinition`. Message has helpers: `user()`, `assistant()`, `user_blocks()`, `assistant_blocks()`, `get_text()`, `get_all_text()`, `has_tool_use()`, `get_tool_use_blocks()`. |
-| `config.rs` | `Config` (runtime config with model, api_key, api_base, max_tokens, temperature, working_dir, permission_mode), `Settings` (persisted `~/.rusty/settings.json` with theme, default_model, permanent permissions), `add_permanent_permission()` |
-| `permissions.rs` | `PermissionMode` (Default/AcceptEdits/Bypass/Plan), `PermissionLevel` (None/ReadOnly/Write/Execute), `PermissionRequest`/`PermissionDecision`, bash command classifier (`classify_bash_command` categorizes commands as ReadOnly/Write/Execute based on executable name and flags), `build_tool_description`, `make_allow_key` |
-| `error.rs` | `RustyError` enum with `thiserror`: Api, ApiStatus, Auth, PermissionDenied, Tool, Io, Json, Http, RateLimit (with retry_after), ContextWindowExceeded, MaxTokensReached, Cancelled, Config, Other. Helpers: `is_retryable()`, `is_context_limit()` |
-| `context.rs` | `build_system_context()` (platform info, working directory, git status, recent commits, sandbox notice), `build_user_context()` (discovers `AGENTS.md`/`CLAUDE.md`/`RUSTY.md` files walking up from working dir to root, plus `~/.rusty/` global files, includes current date) |
-| `history.rs` | `ConversationSession` — save/load/list sessions in `~/.rusty/sessions/` as JSON files with id, messages, model, timestamps |
-| `cost.rs` | `CostTracker` — thread-safe token usage tracking (input/output totals) |
+| `types.rs` | `Role` (User/Assistant), `ContentBlock` (Text/ToolUse/ToolResult/Thinking), `Message`, `MessageContent` (Text/Blocks), `UsageInfo`, `ToolDefinition`. Message helpers: `user()`, `assistant()`, `user_blocks()`, `assistant_blocks()`, `get_text()`, `get_all_text()`, `has_tool_use()`, `get_tool_use_blocks()`. |
+| `config.rs` | `Config` (runtime config: model, api_key, api_base, max_tokens, temperature, permission_mode, thinking_budget, plan_with_tasks, auto_compact, system_prompt). `Settings` (persisted `~/.rusty/settings.json`: api_key, api_base, default_model, allowed_tools, credential_store). `CredentialStore` enum (Keyring / SettingsFile). `add_permanent_permission()`. |
+| `credentials.rs` | `CredentialManager` - tiered API key resolution. Priority: (1) env vars `RUSTY_API_KEY` then `OPENAI_API_KEY`, (2) OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service), (3) settings file. Also provides `store_in_keyring()`, `delete_from_keyring()`, `is_keyring_available()`. |
+| `setup_wizard.rs` | Interactive first-run wizard. Provider selection (Xiaomi, Kimi, OpenAI, DeepSeek, Ollama, Custom), API key entry with masked input, credential storage choice (keyring vs settings file), model selection, connectivity test. Plain terminal mode, no TUI dependency. |
+| `permissions.rs` | `PermissionMode` (Default/AcceptEdits/Bypass/Plan), `PermissionLevel` (None/ReadOnly/Write/Execute), `PermissionRequest`/`PermissionDecision`, bash command classifier (`classify_bash_command`), `build_tool_description`, `make_allow_key`. |
+| `error.rs` | `RustyError` enum: Api, ApiStatus, Auth, PermissionDenied, Tool, Io, Json, Http, RateLimit (with retry_after), ContextWindowExceeded, MaxTokensReached, Cancelled, Config, Other. Helpers: `is_retryable()`, `is_context_limit()`. |
+| `context.rs` | `build_system_context()` (platform info, working directory, git status, recent commits, sandbox notice). `build_user_context()` (discovers AGENTS.md/CLAUDE.md/RUSTY.md files walking up from working dir to root, plus `~/.rusty/` global files, includes current date). |
+| `history.rs` | `ConversationSession` - save/load/list sessions in `~/.rusty/sessions/` as JSON files with id, messages, model, timestamps. |
+| `cost.rs` | `CostTracker` - thread-safe token usage tracking (input/output totals). |
 
-### `crates/provider` — LLM API Client
+### `crates/provider` - LLM API Client
 
 | File | Purpose |
 |---|---|
-| `types.rs` | `StreamEvent` enum (TextDelta, ThinkingDelta, ToolCallDelta, Usage, Done, Error), `MessageRequest`, `ToolDefinition` (API-facing), `ProviderConfig`. Also contains OpenAI wire format types (`OaiRequest`, `OaiMessage`, `OaiTool`, `OaiToolCall`, `OaiResponse`, `OaiStreamChunk`, etc.) and conversion helpers (`rusty_messages_to_oai`, `rusty_tools_to_oai`, `oai_response_to_rusty`). |
-| `openai.rs` | `OpenAiProvider` — full OpenAI Chat Completions streaming implementation with SSE parsing, retry logic (exponential backoff for rate limits/529s), delta accumulation into `StreamEvent`s |
-| `mod.rs` | `LlmProvider` trait: `create_message_stream()`, `model()`, `messages()` |
+| `types.rs` | `StreamEvent` enum (TextDelta, ThinkingDelta, ToolCallDelta, Usage, Done, Error), `MessageRequest`, `ToolDefinition` (API-facing), `ProviderConfig`. OpenAI wire format types (`OaiRequest`, `OaiMessage`, `OaiTool`, `OaiToolCall`, `OaiResponse`, `OaiStreamChunk`) and conversion helpers (`rusty_messages_to_oai`, `rusty_tools_to_oai`, `oai_response_to_rusty`). |
+| `openai.rs` | `OpenAiProvider` - OpenAI Chat Completions streaming implementation with SSE parsing, retry logic (exponential backoff for rate limits/529s), delta accumulation into `StreamEvent`s. |
+| `mod.rs` | `LlmProvider` trait: `create_message_stream()`, `model()`, `messages()`. |
 
-**Key pattern:** All LLM communication is streaming-first. The provider yields a `Stream<Item = Result<StreamEvent, RustyError>>` which the agent loop consumes.
+All LLM communication is streaming-first. The provider yields `Stream<Item = Result<StreamEvent, RustyError>>` which the agent loop consumes.
 
-### `crates/tools` — Tool Implementations
+### `crates/tools` - Tool Implementations
 
 | File | Tool | Permission | Description |
 |---|---|---|---|
-| `file_read` | `file_read` | ReadOnly | Read file contents with optional offset/limit. Uses `resolve_path` sandbox. |
-| `file_write.rs` | `file_write` | Write | Create/overwrite files, auto-creates parent dirs. Uses `resolve_path` sandbox. |
-| `file_edit.rs` | `file_edit` | Write | Exact string match-and-replace editing. Uses `resolve_path` sandbox. |
-| `bash.rs` | `bash` | **Classified per-command** | Execute shell commands; read-only commands (ls, git status, cargo check, etc.) bypass write permissions via `classify_bash_command`. |
-| `grep.rs` | `grep` | ReadOnly | Regex search across files with glob filtering. Caps at 200 results. Skips binary file extensions. |
+| `file_read.rs` | `file_read` | ReadOnly | Read file contents with optional offset/limit. Path sandbox. |
+| `file_write.rs` | `file_write` | Write | Create/overwrite files, auto-creates parent dirs. Path sandbox. |
+| `file_edit.rs` | `file_edit` | Write | Exact string match-and-replace editing. Path sandbox. |
+| `apply_patch.rs` | `apply_patch` | Write | Apply unified diff patches. Supports `*** Begin Patch` / `*** End Patch` format with `*** Add File`, `*** Update File`, `*** Delete File` sections. Fuzzy matching for context lines (3-line search window). Uses `similar` crate for diff stats. Path sandbox. |
+| `bash.rs` | `bash` | Classified per-command | Execute shell commands. Read-only commands (ls, git status, cargo check, etc.) bypass write permissions via `classify_bash_command`. |
+| `grep.rs` | `grep` | ReadOnly | Regex search across files with glob filtering. Caps at 200 results. Skips binary extensions. |
 | `glob.rs` | `glob` | ReadOnly | File pattern matching. |
-| `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via `reqwest` (30s timeout). Returns text with configurable `max_length` (default 10000 chars). Truncates with length notice. |
-| `agent.rs` | `agent` | None | Spawn sub-agents via a `SubAgentFn` callback. Accepts `task` (required) and `context` (optional) params. |
+| `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via reqwest (30s timeout). Configurable max_length (default 10000 chars). |
+| `todowrite.rs` | `todowrite` | None | Structured task list management. Accepts array of todo items with content, status (pending/in_progress/completed/cancelled), and priority (high/medium/low). Renders grouped by priority with status indicators. Persists across conversation. |
+| `agent.rs` | `agent` | None | Spawn sub-agents via `SubAgentFn` callback. Accepts `task` (required) and `context` (optional). |
 
-**Tool trait** (`mod.rs`): `name()`, `description()`, `input_schema()`, `permission_level()`, `execute()`, `definition()` (generates `ToolDefinition` for the API).
+**Tool trait** (`mod.rs`): `name()`, `description()`, `input_schema()`, `permission_level()`, `execute()`, `definition()`.
 
-**`resolve_path(path_str, working_dir)`** — shared sandbox utility in `mod.rs`. Canonicalizes paths, resolves symlinks and `..`, and rejects any path that escapes the working directory. Used by `file_read`, `file_write`, and `file_edit`.
+**`resolve_path(path_str, working_dir)`** in `mod.rs`: canonicalizes paths, resolves symlinks and `..`, rejects paths that escape the working directory. Used by all file tools and `apply_patch`.
 
-**`all_tools()`** returns the standard set. The `agent` tool is added separately by the CLI with a wired-up spawn function.
+**`all_tools()`** returns all built-in tools except `agent` (which is wired separately by the CLI with a spawn function).
 
-### `crates/agent` — Agent Loop
+### `crates/agent` - Agent Loop
 
 | File | Purpose |
 |---|---|
-| `loop.rs` | **`Agent` struct** — the core orchestrator. Holds provider, tools, config, message history, permission state. `run()` method implements the turn loop: send messages → stream response → accumulate text + tool calls → execute tools → repeat until done, max turns, or cancellation. Supports `cancel()` via `AtomicBool`. |
-| `compact.rs` | Auto-compaction: when messages exceed ~80k tokens or 40 messages, summarizes older messages (keeping last 10) via an LLM call. Uses a dedicated compaction prompt. |
-| `lib.rs` | `spawn_subagent()` (same-process tokio task with BypassPermissions), `make_agent_tool()` (constructs `AgentTool` with spawn callback), `build_system_prompt()` (assembles system prompt with tool descriptions, permissions, platform info, date) |
+| `loop.rs` | `Agent` struct - core orchestrator. Holds provider, tools, config, message history, permission state. `run()` method: send messages, stream response, accumulate text + tool calls, execute tools, repeat until done/max turns/cancellation. Supports `cancel()` via `AtomicBool`. |
+| `compact.rs` | Auto-compaction: when messages exceed ~80k tokens or 40 messages, summarizes older messages (keeping last 10) via an LLM call. |
+| `lib.rs` | `spawn_subagent()` (same-process tokio task, BypassPermissions), `make_agent_tool()` (constructs `AgentTool` with spawn callback), `build_system_prompt()` (assembles system prompt with tool descriptions, permissions, platform info, date, optional plan-with-tasks instructions). |
 
 **Agent loop flow:**
 1. Add user message to history
@@ -97,97 +102,76 @@ cli → agent → provider
 6. If no tool calls: return final text
 
 **Permission system** (tiered check in `check_permission_tiered`):
-1. Bypass mode → allow all
-2. Plan mode → read-only only
-3. ReadOnly/None tools → auto-allow
-4. AcceptEdits + Write → auto-allow
+1. Bypass mode - allow all
+2. Plan mode - read-only only
+3. ReadOnly/None tools - auto-allow
+4. AcceptEdits + Write - auto-allow
 5. Permanent allowlist (from `~/.rusty/settings.json`)
 6. Session allowlist (runtime)
 7. Interactive callback (TUI prompt)
 8. Default: deny
 
-### `crates/tui` — Terminal UI
+### `crates/tui` - Terminal UI
 
 | File | Purpose |
 |---|---|
-| `app.rs` | `AppState` — all UI state (input buffer, cursor position, messages, streaming state, permission prompts, history navigation, scroll offset). `AgentEvent` enum for agent→UI communication (TextDelta, ThinkingDelta, ToolCallStart, ToolCallDelta, ToolResult, Done, Error). Key handling logic with command history. |
-| `ui.rs` | Ratatui rendering: chat area with markdown support (bold, italic, code blocks, tables with box-drawing characters), input box with cursor, status bar (model, permissions, token usage), permission prompt overlay. Message roles are color-coded. |
-| `lib.rs` | Generic `run()` function (unused by CLI — CLI implements its own loop for tighter control) |
+| `app.rs` | `AppState` (input buffer, cursor, messages, streaming state, permission prompts, history navigation, scroll). `AgentEvent` enum (TextDelta, ThinkingDelta, ToolCallStart, ToolCallDelta, ToolResult, Done, Error). `SlashCommand` enum with tab-completion. Key handling with command history. |
+| `ui.rs` | Ratatui rendering: chat area with markdown support (bold, italic, code blocks, tables with box-drawing), input box with cursor, status bar (model, permissions, token usage), permission prompt overlay. Color-coded roles. |
+| `lib.rs` | Generic `run()` function (unused by CLI, which implements its own loop). |
 
-**UI features:**
-- Message history with user/assistant/system roles (color-coded)
-- Streaming text display with cursor indicator
-- Thinking/reasoning display (dimmed, italic)
-- Table rendering with box-drawing characters
-- Inline markdown: `**bold**`, `*italic*`, `` `code` ``
-- Command history (Up/Down arrows)
-- Permission prompt overlay (y/n/a/d/Esc)
-- Esc cancels streaming
+**Slash commands** (available in both TUI and headless stdin modes):
 
-### `crates/cli` — Binary Entry Point
+| Command | Alias | Description |
+|---|---|---|
+| `/help` | `/h`, `/?` | List available commands |
+| `/init` | | Generate AGENTS.md for the current codebase |
+| `/resume` | `/r` | Resume a saved session (interactive picker in TUI) |
+| `/sessions` | `/s` | List saved sessions |
+| `/compact` | | Force conversation compaction |
+| `/clear` | | Clear screen |
+| `/copy` | `/c` | Copy last assistant response to clipboard |
+| `/model` | `/m` | Show current model |
+| `/rename` | | Rename current session |
+| `/quit` | `/exit`, `/q` | Exit (saves session) |
+
+### `crates/cli` - Binary Entry Point
 
 `main.rs` handles:
 
-1. **CLI args** (clap): `--prompt`, `--model`, `--preset` (xiaomi/kimi/openai/ollama/deepseek), `--api-key`, `--api-base`, `--cwd`, `--permissions` (default/accept-edits/bypass/plan), `--resume`, `--list-sessions`, `--headless`, `--max-turns`, `--max-tokens`, `--temperature`, `--verbose`
-2. **Config resolution**: preset defaults → `~/.rusty/settings.json` → CLI flags (later overrides earlier). Presets define `api_base`, `default_model`, and `default_permission_mode`.
-3. **Three run modes:**
-   - **TUI mode** (default): full terminal UI with streaming, permission prompts, session save on exit
+1. **CLI args** (clap): `--prompt`, `--model`, `--preset`, `--api-key`, `--api-base`, `--cwd`, `--permissions`, `--plan-with-tasks`, `--resume`, `--list-sessions`, `--headless`, `--max-turns`, `--max-tokens`, `--temperature`, `--thinking-budget`, `--verbose`, `--setup`
+
+2. **First-run detection**: If `~/.rusty/settings.json` does not exist, the setup wizard launches automatically before any other logic. `--setup` forces the wizard explicitly.
+
+3. **Credential resolution**: `CredentialManager::resolve_api_key(&settings)` handles the full chain (env vars, keyring, settings file). If no key is found and no subcommand was given, the wizard launches as a fallback.
+
+4. **Config resolution**: preset defaults, then `~/.rusty/settings.json`, then CLI flags (later wins). Presets define `api_base` and `default_model`.
+
+5. **Three run modes:**
+   - **TUI mode** (default): full terminal UI with streaming, permission prompts, slash commands, session save on exit
    - **Headless mode** (`--prompt`): single prompt, print response, save session
-   - **Stdin mode** (`--headless`): interactive line-by-line REPL without TUI
+   - **Stdin mode** (`--headless`): interactive line-by-line REPL with slash commands, no TUI
 
 ---
 
 ## Key Architectural Patterns
 
-1. **Streaming-first**: All LLM interaction uses SSE streaming. The provider yields `Stream<Item = Result<StreamEvent, RustyError>>` which the agent loop consumes event-by-event.
-2. **Callback-based UI**: The agent accepts optional callbacks (`TextCallback`, `ThinkingCallback`, `ToolCallback`) for real-time UI updates during streaming.
-3. **Permission as value**: Permissions are data (`PermissionDecision`) flowing through a tiered check system, not booleans. The bash classifier examines command names and flags to determine read-only vs write.
-4. **Sub-agents as tokio tasks**: The `agent` tool spawns a new `Agent` instance in a separate tokio task with BypassPermissions, using `SubAgentFn` callback.
+1. **Streaming-first**: All LLM interaction uses SSE streaming. The provider yields `Stream<Item = Result<StreamEvent, RustyError>>` consumed event-by-event by the agent loop.
+
+2. **Callback-based UI**: The agent accepts optional callbacks (`TextCallback`, `ThinkingCallback`, `ToolCallback`, `PermissionCallback`) for real-time UI updates during streaming.
+
+3. **Permission as data**: Permissions are `PermissionDecision` values flowing through a tiered check system. The bash classifier examines command names and flags to determine read-only vs write/execute.
+
+4. **Sub-agents as tokio tasks**: The `agent` tool spawns a new `Agent` instance in a separate tokio task with BypassPermissions. Sub-agents get all tools except the agent tool (prevents recursive spawning).
+
 5. **Auto-compaction**: Long conversations are automatically summarized (keeping last 10 messages) to stay within context limits (~80k tokens or 40 messages threshold).
-6. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume`.
+
+6. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume` or `/resume`.
+
 7. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory.
+
 8. **Wire format conversion**: Internal `Message`/`ToolDefinition` types are converted to/from OpenAI wire format via helpers in `provider/types.rs`. Supports reasoning content (`reasoning_content` field for MiMo/DeepSeek models).
 
----
-
-## Building & Running
-
-```bash
-# Build
-cargo build --release
-
-# Run with preset
-cargo run -- --preset xiaomi --api-key YOUR_KEY
-
-# Run with specific model
-cargo run -- --model gpt-4o --api-key YOUR_KEY
-
-# Non-interactive
-cargo run -- --preset xiaomi --prompt "Explain this codebase"
-
-# Headless stdin mode
-cargo run -- --preset xiaomi --headless
-
-# Resume session
-cargo run -- --resume SESSION_ID
-
-# List sessions
-cargo run -- --list-sessions
-```
-
----
-
-## Testing
-
-Tests are inline (in-module `#[cfg(test)]`). Run with:
-
-```bash
-cargo test --workspace
-```
-
-Notable test coverage:
-- `crates/core/src/permissions.rs`: bash command classification (read-only vs write)
-- `crates/provider/src/openai.rs`: SSE parsing, delta accumulation, stream completion, error handling
+9. **Tiered credential management**: `CredentialManager` resolves API keys through env vars, OS keyring, and settings file. The setup wizard can store keys in the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) or in the settings file.
 
 ---
 
@@ -198,59 +182,107 @@ Notable test coverage:
 ```json
 {
   "api_key": "sk-...",
-  "api_base": "https://api.example.com/v1",
+  "api_base": "https://api.xiaomimimo.com/v1",
   "default_model": "mimo-v2.5-pro",
   "allowed_tools": [
     "bash:git status",
     "bash:cargo check"
-  ]
+  ],
+  "credential_store": "keyring"
 }
 ```
 
 ### Environment Variables
 
-- `OPENAI_API_KEY` — API key (can also be passed via `--api-key`)
-- `RUSTY_API_KEY` — Alternative API key (lower priority than `OPENAI_API_KEY`)
-- `OPENAI_BASE_URL` — API base URL (can also be set via settings or preset)
-- `RUST_LOG` — Logging level (e.g., `debug`, `info`, `warn`)
+| Variable | Purpose |
+|---|---|
+| `OPENAI_API_KEY` | API key (clap `env` binding) |
+| `RUSTY_API_KEY` | Alternative API key (higher priority than `OPENAI_API_KEY` in `CredentialManager`) |
+| `OPENAI_BASE_URL` | API base URL |
+| `RUST_LOG` | Logging level (`debug`, `info`, `warn`) |
+
+### Credential Resolution Order
+
+`CredentialManager::resolve_api_key()` checks in this order:
+1. `RUSTY_API_KEY` env var
+2. `OPENAI_API_KEY` env var
+3. OS keyring (if `credential_store` is `Keyring`)
+4. `api_key` field in `~/.rusty/settings.json`
+
+Empty strings are treated as absent at every stage.
 
 ### Presets
 
-Presets define default configurations for different providers:
+| Preset | API Base | Default Model |
+|---|---|---|
+| `xiaomi` | `https://token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5-pro` |
+| `kimi` | `https://api.moonshot.cn/v1` | `kimi-k2.6` |
+| `openai` | `https://api.openai.com/v1` | `gpt-4o` |
+| `deepseek` | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| `ollama` | `http://localhost:11434/v1` | `llama3` |
 
-| Preset | API Base | Default Model | Notes |
-|--------|----------|---------------|-------|
-| `xiaomi` | `https://token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5-pro` | Xiaomi MiMo |
-| `kimi` | `https://api.moonshot.cn/v1` | `kimi-k2.6` | Moonshot/Kimi |
-| `openai` | `https://api.openai.com/v1` | `gpt-4o` | OpenAI |
-| `ollama` | `http://localhost:11434/v1` | `llama3` | Local Ollama |
-| `deepseek` | `https://api.deepseek.com/v1` | `deepseek-chat` | DeepSeek |
+Note: The setup wizard uses slightly different default models for some providers (e.g., `kimi-k2`, `gpt-4.1`, `qwen3:8b` for Ollama). CLI presets take precedence when `--preset` is used.
 
 ---
 
 ## Error Handling
 
-The codebase uses a custom `RustyError` enum with `thiserror` for structured error handling. Key error variants:
+`RustyError` enum with `thiserror`:
 
-- `Api` / `ApiStatus` — LLM API errors
-- `Auth` — Authentication failures
-- `PermissionDenied` — Tool permission denied
-- `RateLimit { retry_after }` — Rate limiting with optional retry-after seconds
-- `ContextWindowExceeded` — Message history too long
-- `MaxTokensReached` — Response hit token limit
-- `Cancelled` — User cancelled operation
+| Variant | Meaning |
+|---|---|
+| `Api` / `ApiStatus` | LLM API errors |
+| `Auth` | Authentication failures |
+| `PermissionDenied` | Tool permission denied |
+| `RateLimit { retry_after }` | Rate limiting with optional retry-after seconds |
+| `ContextWindowExceeded` | Message history too long |
+| `MaxTokensReached` | Response hit token limit |
+| `Cancelled` | User cancelled operation |
+| `Config` | Configuration errors (including keyring failures) |
 
 Errors are classified as retryable (`is_retryable()`) for automatic retry logic in the provider.
 
 ---
 
-## Development Workflow
+## Building and Running
 
-1. **Code changes**: Edit files in `crates/` subdirectories
-2. **Check compilation**: `cargo check --workspace`
-3. **Run tests**: `cargo test --workspace`
-4. **Build release**: `cargo build --release`
-5. **Test manually**: `./target/release/rusty --preset xiaomi --api-key YOUR_KEY`
+```bash
+# Build
+cargo build --release
+
+# Run (auto-launches setup wizard on first run)
+./target/release/rusty
+
+# Run with preset
+./target/release/rusty --preset xiaomi --api-key YOUR_KEY
+
+# Explicit setup wizard
+./target/release/rusty --setup
+
+# Non-interactive
+./target/release/rusty --preset xiaomi --prompt "Explain this codebase"
+
+# Headless stdin mode
+./target/release/rusty --preset xiaomi --headless
+
+# Plan mode with task tracking
+./target/release/rusty --plan-with-tasks
+
+# Resume session
+./target/release/rusty --resume SESSION_ID
+
+# List sessions
+./target/release/rusty --list-sessions
+```
+
+### Development
+
+```bash
+cargo check --workspace
+cargo test --workspace
+cargo fmt
+cargo clippy
+```
 
 ### Adding a New Tool
 
@@ -267,122 +299,7 @@ Errors are classified as retryable (`is_retryable()`) for automatic retry logic 
 
 ---
 
-## Performance Notes
-
-- **Streaming**: Responses stream in real-time via SSE
-- **Async**: All I/O is async via Tokio
-- **Memory**: Messages are cloned for each LLM call (consider Arc for large histories)
-- **Rate limiting**: Built-in exponential backoff for API rate limits
-- **Compaction**: Auto-summarization prevents context window overflow
-
----
-
-## Security Considerations
-
-- **Path sandboxing**: File operations are restricted to the working directory
-- **Permission system**: Tiered permissions prevent unauthorized tool execution
-- **API key handling**: Keys are never logged or persisted in session files
-- **Command classification**: Bash commands are classified as read-only or write/execute
-
----
-
-## Future Improvements
-
-Potential areas for enhancement:
-
-1. **Plugin system**: Dynamic tool loading
-2. **Multi-model support**: Switch models mid-conversation
-3. **Persistent context**: Long-term memory across sessions
-4. **Collaborative editing**: Multiple agents working on same codebase
-5. **Web UI**: Browser-based interface
-6. **Mobile support**: Touch-friendly TUI
-7. **Performance profiling**: Built-in metrics
-8. **Custom themes**: User-configurable UI colors
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-1. **API key not found**: Set `OPENAI_API_KEY` environment variable or use `--api-key`
-2. **Rate limiting**: Increase delay between requests or use a different API key
-3. **Context window exceeded**: Use `--resume` to continue sessions or let auto-compaction handle it
-4. **Permission denied**: Check permission mode (`--permissions`) and allowlist
-5. **Build failures**: Ensure Rust toolchain is up-to-date (`rustup update`)
-
-### Debug Logging
-
-Enable debug logging with:
-
-```bash
-RUST_LOG=debug cargo run -- --preset xiaomi --api-key YOUR_KEY
-```
-
-### Session Recovery
-
-Sessions are automatically saved to `~/.rusty/sessions/`. Resume with:
-
-```bash
-cargo run -- --resume SESSION_ID
-```
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass: `cargo test --workspace`
-6. Submit a pull request
-
-### Code Style
-
-- Follow Rust naming conventions
-- Use `cargo fmt` for formatting
-- Use `cargo clippy` for linting
-- Document public APIs with doc comments
-- Keep functions focused and small
-
----
-
-## License
-
-MIT License — see `Cargo.toml` for details.
-
----
-
-## Quick Reference
-
-### Essential Commands
-
-```bash
-# Build and run
-cargo build --release && ./target/release/rusty --preset xiaomi --api-key KEY
-
-# Development
-cargo check --workspace
-cargo test --workspace
-cargo fmt
-cargo clippy
-
-# Session management
-./target/release/rusty --list-sessions
-./target/release/rusty --resume SESSION_ID
-```
-
-### Key Files
-
-- **Entry point**: `crates/cli/src/main.rs`
-- **Agent loop**: `crates/agent/src/loop.rs`
-- **Tool definitions**: `crates/tools/src/lib.rs`
-- **Configuration**: `crates/core/src/config.rs`
-- **Permissions**: `crates/core/src/permissions.rs`
-- **TUI rendering**: `crates/tui/src/ui.rs`
-
-### Data Flow
+## Data Flow
 
 ```
 User Input → CLI → Agent Loop → LLM Provider → Streaming Response
@@ -392,6 +309,23 @@ TUI Display ← Agent Events ← Tool Execution ← Tool Calls
 
 ---
 
-*Last updated: May 2026*
-*Codebase version: 0.1.0*
+## Key Files
+
+| Purpose | Path |
+|---|---|
+| Entry point | `crates/cli/src/main.rs` |
+| Agent loop | `crates/agent/src/loop.rs` |
+| Tool definitions | `crates/tools/src/lib.rs` |
+| Configuration | `crates/core/src/config.rs` |
+| Credentials | `crates/core/src/credentials.rs` |
+| Setup wizard | `crates/core/src/setup_wizard.rs` |
+| Permissions | `crates/core/src/permissions.rs` |
+| TUI rendering | `crates/tui/src/ui.rs` |
+| TUI state | `crates/tui/src/app.rs` |
+| Provider | `crates/provider/src/openai.rs` |
+
+---
+
+*Last updated: July 2026*
+*Version: 0.1.0*
 *Rust edition: 2021*
