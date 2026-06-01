@@ -41,6 +41,9 @@ pub async fn run(
 
     let mut app = AppState::default();
     app.status.model = model.to_string();
+    app.working_dir = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.to_str().map(String::from));
 
     // Start with a dummy channel that's already closed
     let (_dummy_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();

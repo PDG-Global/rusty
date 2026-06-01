@@ -325,6 +325,8 @@ pub struct AppState {
     pub history_idx: Option<usize>,
     pub messages: Vec<ChatMessage>,
     pub status: StatusInfo,
+    /// Working directory to display in the status bar.
+    pub working_dir: Option<String>,
     pub streaming_text: String,
     pub thinking_text: String,
     pub is_streaming: bool,
@@ -357,6 +359,8 @@ pub struct AppState {
     pub pasted_content: BTreeMap<String, PastedContent>,
     /// Counter for generating unique paste IDs
     pub paste_counter: usize,
+    /// Pinned todo list text shown at bottom of chat area
+    pub pinned_todos: Option<String>,
 }
 
 pub struct PendingTool {
@@ -419,6 +423,8 @@ impl Default for AppState {
             thinking_expanded: false,
             pasted_content: BTreeMap::new(),
             paste_counter: 0,
+            pinned_todos: None,
+            working_dir: None,
         }
     }
 }
@@ -927,6 +933,25 @@ impl AppState {
             }
             self.streaming_text.push_str(&done_header);
         }
+
+        // For todowrite, show the full task list so the user can see their todos
+        if name == "todowrite" && !output.trim().is_empty() {
+            if !self.streaming_text.ends_with('\n') {
+                self.streaming_text.push('\n');
+            }
+            for line in output.lines() {
+                self.streaming_text.push_str(&format!("    {line}\n"));
+            }
+
+            // Update pinned todos: keep visible while any task is not completed/cancelled
+            let has_active = output.contains("[ ]") || output.contains("[~]");
+            if has_active {
+                self.pinned_todos = Some(output.trim().to_string());
+            } else {
+                self.pinned_todos = None;
+            }
+        }
+
         self.needs_redraw = true;
     }
 
@@ -1146,6 +1171,17 @@ fn tool_output_summary(name: &str, output: &str) -> String {
                 }
             }
             format!("{line_count} matches")
+        }
+        "todowrite" => {
+            // "Todo List (2/4 completed)"
+            if let Some(first) = trimmed.lines().next() {
+                if let Some(start) = first.find('(') {
+                    if let Some(end) = first[start..].find(')') {
+                        return first[start + 1..start + end].to_string();
+                    }
+                }
+            }
+            format!("{line_count} lines")
         }
         "agent" => {
             format!("{line_count} lines")

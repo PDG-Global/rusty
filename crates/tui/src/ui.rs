@@ -23,18 +23,37 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
     let content_rows = text_len.div_ceil(inner_width).max(1);
     let input_height = (content_rows as u16 + 2).clamp(3, 8);
 
+    // Dynamically size the todo panel based on content
+    let todo_height = if let Some(ref todos) = app.pinned_todos {
+        let line_count = todos.lines().count() as u16;
+        // 2 for borders + content lines, capped at 12
+        (line_count + 2).min(12)
+    } else {
+        0
+    };
+
+    let mut constraints = vec![Constraint::Min(1)]; // Chat area
+    if todo_height > 0 {
+        constraints.push(Constraint::Length(todo_height)); // Todo panel
+    }
+    constraints.push(Constraint::Length(input_height)); // Input area
+    constraints.push(Constraint::Length(1)); // Status bar
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),              // Chat area
-            Constraint::Length(input_height), // Input area (dynamic)
-            Constraint::Length(1),            // Status bar
-        ])
+        .constraints(constraints)
         .split(area);
 
-    draw_chat(app, chunks[0], buf);
-    draw_input(app, chunks[1], buf);
-    draw_status(app, chunks[2], buf);
+    let mut idx = 0;
+    draw_chat(app, chunks[idx], buf);
+    idx += 1;
+    if todo_height > 0 {
+        draw_todos(app, chunks[idx], buf);
+        idx += 1;
+    }
+    draw_input(app, chunks[idx], buf);
+    idx += 1;
+    draw_status(app, chunks[idx], buf);
 
     // Overlay session picker if active
     if app.session_picker.is_some() {
@@ -898,6 +917,63 @@ fn strip_inline_markdown(text: &str) -> String {
     out
 }
 
+fn draw_todos(app: &AppState, area: Rect, buf: &mut Buffer) {
+    let block = Block::default()
+        .title(Span::styled(
+            " ☑ Tasks ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = block.inner(area);
+    ratatui::widgets::Widget::render(block, area, buf);
+
+    if let Some(ref todos) = app.pinned_todos {
+        let mut lines: Vec<Line> = Vec::new();
+        for todo_line in todos.lines() {
+            let styled = if todo_line.contains("[x]") || todo_line.contains("[X]") {
+                Line::from(Span::styled(
+                    format!("  {todo_line}"),
+                    Style::default().fg(Color::Green),
+                ))
+            } else if todo_line.contains("[~]") {
+                Line::from(Span::styled(
+                    format!("  {todo_line}"),
+                    Style::default().fg(Color::Yellow),
+                ))
+            } else if todo_line.contains("[ ]") {
+                Line::from(Span::styled(
+                    format!("  {todo_line}"),
+                    Style::default().fg(Color::White),
+                ))
+            } else {
+                Line::from(Span::styled(
+                    format!("  {todo_line}"),
+                    Style::default().fg(Color::DarkGray),
+                ))
+            };
+            lines.push(styled);
+        }
+
+        // Render the lines, trimming from top if they exceed available space
+        let visible_height = inner.height as usize;
+        let start = if lines.len() > visible_height {
+            lines.len() - visible_height
+        } else {
+            0
+        };
+        for (i, line) in lines[start..].iter().enumerate() {
+            if i as u16 >= inner.height {
+                break;
+            }
+            buf.set_line(inner.x, inner.y + i as u16, line, inner.width);
+        }
+    }
+}
+
 fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     let is_slash = app.input.starts_with('/');
     let has_queued = app.queued_message.is_some();
@@ -1019,8 +1095,38 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     let think_style = Style::default().fg(Color::Gray);
     let think_span = match app.status.thinking_level {
-        Some(level) => Span::styled(format!("| think:{} ", level.short_label()), think_style),
+        Some(level) => Span::styled(format!("| thinking: {level}"), think_style),
         None => Span::styled("", think_style),
+    };
+
+    let cwd_display = app
+        .working_dir
+        .as_deref()
+        .map(|d| {
+            // Show a short version: use ~ for home dir
+            let display = match std::env::var("HOME") {
+                Ok(home) => {
+                    let home_prefix = format!("{}/", home);
+                    match d.strip_prefix(&home_prefix) {
+                        Some(rel) => format!("~/{}", rel),
+                        None => d.to_string(),
+                    }
+                }
+                Err(_) => d.to_string(),
+            };
+            // Truncate if too long
+            if display.len() > 40 {
+                format!("…{}", &display[display.len() - 39..])
+            } else {
+                display
+            }
+        })
+        .unwrap_or_default();
+
+    let cwd_span = if cwd_display.is_empty() {
+        Span::styled("", separator_style)
+    } else {
+        Span::styled(format!("| {cwd_display}"), separator_style)
     };
 
     let spans = vec![
@@ -1030,8 +1136,9 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         Span::styled(format!("completion: {} ", app.status.output_tokens), token_style),
         Span::styled(format!("({}%) ", usage_pct.min(999)), token_style),
         Span::styled("| ", separator_style),
-        Span::styled(state_text, state_style),
+        Span::styled(format!("{state_text} "), state_style),
         think_span,
+        cwd_span,
     ];
     let paragraph = Paragraph::new(Line::from(spans));
     Widget::render(&paragraph, area, buf);
