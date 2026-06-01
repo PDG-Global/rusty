@@ -60,7 +60,7 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
         let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
         for y in area.y..area.y + area.height {
             for x in area.x..area.x + area.width {
-                buf[(x, y)].set_style(dim_style);
+                buf[(x, y)].set_char(' ').set_style(dim_style);
             }
         }
         let picker_area = centered_rect(80, 16, area);
@@ -72,7 +72,7 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
         let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
         for y in area.y..area.y + area.height {
             for x in area.x..area.x + area.width {
-                buf[(x, y)].set_style(dim_style);
+                buf[(x, y)].set_char(' ').set_style(dim_style);
             }
         }
         let picker_area = centered_rect(60, 20, area);
@@ -1322,6 +1322,72 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
 }
 
 /// Create a centered rectangle with the given percentage width and fixed height.
+/// Calculate the display width of a string in terminal columns.
+/// Handles wide characters (CJK, emoji) that occupy 2 columns.
+fn unicode_display_width(s: &str) -> usize {
+    s.chars().map(|c| {
+        // Common wide Unicode ranges: CJK, fullwidth, some emoji
+        let cp = c as u32;
+        if (0x1100..=0x115F).contains(&cp)
+            || (0x2E80..=0x303E).contains(&cp)
+            || (0x3040..=0x33BF).contains(&cp)
+            || (0x3400..=0x4DBF).contains(&cp)
+            || (0x4E00..=0x9FFF).contains(&cp)
+            || (0xA000..=0xA4CF).contains(&cp)
+            || (0xAC00..=0xD7AF).contains(&cp)
+            || (0xF900..=0xFAFF).contains(&cp)
+            || (0xFE10..=0xFE6F).contains(&cp)
+            || (0xFF01..=0xFF60).contains(&cp)
+            || (0xFFE0..=0xFFE6).contains(&cp)
+            || (0x20000..=0x2FFFD).contains(&cp)
+            || (0x30000..=0x3FFFD).contains(&cp)
+            || (0x1F000..=0x1FAFF).contains(&cp)  // emoji
+            || (0x2600..=0x27BF).contains(&cp)     // misc symbols
+            || (0xFE00..=0xFE0F).contains(&cp)     // variation selectors
+        {
+            2
+        } else {
+            1
+        }
+    }).sum()
+}
+
+/// Truncate a string to fit within a given display width (terminal columns).
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut result = String::new();
+    for c in s.chars() {
+        let cp = c as u32;
+        let w = if (0x1100..=0x115F).contains(&cp)
+            || (0x2E80..=0x303E).contains(&cp)
+            || (0x3040..=0x33BF).contains(&cp)
+            || (0x3400..=0x4DBF).contains(&cp)
+            || (0x4E00..=0x9FFF).contains(&cp)
+            || (0xA000..=0xA4CF).contains(&cp)
+            || (0xAC00..=0xD7AF).contains(&cp)
+            || (0xF900..=0xFAFF).contains(&cp)
+            || (0xFE10..=0xFE6F).contains(&cp)
+            || (0xFF01..=0xFF60).contains(&cp)
+            || (0xFFE0..=0xFFE6).contains(&cp)
+            || (0x20000..=0x2FFFD).contains(&cp)
+            || (0x30000..=0x3FFFD).contains(&cp)
+            || (0x1F000..=0x1FAFF).contains(&cp)
+            || (0x2600..=0x27BF).contains(&cp)
+            || (0xFE00..=0xFE0F).contains(&cp)
+        {
+            2
+        } else {
+            1
+        };
+        if width + w > max_width {
+            break;
+        }
+        result.push(c);
+        width += w;
+    }
+    result
+}
+
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     let popup_height = height.min(area.height);
     let popup_width = (area.width * percent_x / 100).min(area.width);
@@ -1530,7 +1596,7 @@ fn draw_file_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
                 Style::default().fg(Color::White)
             };
 
-            let icon = if entry.is_dir { "📁 " } else { "📄 " };
+            let icon = if entry.is_dir { "▸ " } else { "  " };
             let cursor = if is_selected { "> " } else { "  " };
             let mut display_path = entry.display.clone();
             if entry.is_dir {
@@ -1538,9 +1604,12 @@ fn draw_file_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
             }
 
             // Truncate if too long
-            let max_len = inner.width.saturating_sub(6) as usize; // account for icon + cursor
-            if display_path.len() > max_len {
-                display_path = format!("{}...", &display_path[..max_len.saturating_sub(3)]);
+            let prefix_width = 5usize; // cursor(2) + icon(2) + space(1)
+            let max_path_cols = inner.width.saturating_sub(prefix_width as u16) as usize;
+            let path_cols = unicode_display_width(&display_path);
+            if path_cols > max_path_cols {
+                display_path = truncate_to_width(&display_path, max_path_cols.saturating_sub(3));
+                display_path.push_str("...");
             }
 
             lines.push(Line::from(vec![
