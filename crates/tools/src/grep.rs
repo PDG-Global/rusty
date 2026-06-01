@@ -67,15 +67,26 @@ impl Tool for GrepTool {
         if search_path.is_file() {
             search_file(&search_path, &re, &ctx.working_dir, &mut results);
         } else {
+            const SKIP_DIRS: &[&str] = &[
+                "node_modules", "target", "__pycache__", ".git", ".svn", ".hg",
+                "dist", "build", ".next", ".nuxt", ".cache", "vendor", "venv",
+                ".venv", "env", ".tox", ".mypy_cache", ".pytest_cache",
+                "coverage", ".turbo", ".parcel-cache",
+            ];
+
             let walker = walkdir::WalkDir::new(&search_path)
                 .follow_links(false)
                 .into_iter();
 
             for entry in walker.filter_entry(|e| {
-                !e.file_name()
-                    .to_str()
-                    .map(|s| s.starts_with('.'))
-                    .unwrap_or(false)
+                let name = e.file_name().to_str().unwrap_or("");
+                if name.starts_with('.') {
+                    return false;
+                }
+                if e.file_type().is_dir() && SKIP_DIRS.contains(&name) {
+                    return false;
+                }
+                true
             }) {
                 let entry = match entry {
                     Ok(e) => e,

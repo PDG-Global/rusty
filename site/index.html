@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>rusty - a tiny AI coding agent</title>
+  <meta name="description" content="An under 10MB self-contained AI coding agent binary. Runs open source frontier models like MiMo, DeepSeek, and Kimi. Built in Rust.">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #fafaf9;
+      --bg-elevated: #ffffff;
+      --bg-surface: #f5f4f3;
+      --border: #e7e5e4;
+      --border-strong: #d6d3d1;
+      --text-primary: #1c1917;
+      --text-secondary: #57534e;
+      --text-muted: #a8a29e;
+      --accent: #d97706;
+      --accent-dim: #b45309;
+      --accent-glow: rgba(217, 119, 6, 0.06);
+      --accent-text: #92400e;
+      --mono: 'Menlo', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    }
+
+    html {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      scroll-behavior: smooth;
+    }
+
+    body { line-height: 1.6; }
+
+    a {
+      color: var(--accent-text);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    a:hover { color: var(--accent); }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 2rem;
+    }
+
+    /* Nav */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--border);
+      background: rgba(250, 250, 249, 0.88);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+    }
+    .nav-brand {
+      font-family: var(--mono);
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    .nav-brand span { color: var(--accent); }
+    .nav-links {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+      list-style: none;
+    }
+    .nav-links a {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .nav-links a:hover { color: var(--text-primary); }
+
+    /* Hero */
+    .hero {
+      padding: 6rem 0 5rem;
+    }
+    .hero-eyebrow {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--accent);
+      letter-spacing: 0.08em;
+      margin-bottom: 1.5rem;
+    }
+    .hero h1 {
+      font-size: clamp(2.5rem, 5vw, 3.75rem);
+      font-weight: 700;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+      color: var(--text-primary);
+      max-width: 720px;
+      margin-bottom: 1.5rem;
+    }
+    .hero p {
+      font-size: 1.125rem;
+      line-height: 1.7;
+      color: var(--text-secondary);
+      max-width: 540px;
+      margin-bottom: 2.5rem;
+    }
+    .hero-install {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 0.75rem 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .hero-install:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .hero-install code { color: var(--text-primary); }
+    .hero-install .copy-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-left: 0.5rem;
+    }
+
+    /* Metrics strip */
+    .metrics {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 3rem 0;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+    }
+    .metric-value {
+      font-family: var(--mono);
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.03em;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+    .metric-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    /* Section headers */
+    .section {
+      padding: 5rem 0;
+    }
+    .section-header {
+      margin-bottom: 3rem;
+    }
+    .section-header h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 0.75rem;
+    }
+    .section-header p {
+      color: var(--text-secondary);
+      max-width: 50ch;
+      font-size: 1rem;
+    }
+
+    /* Features */
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .feature {
+      background: var(--bg-elevated);
+      padding: 2rem;
+    }
+    .feature-icon {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+      letter-spacing: 0.06em;
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+    }
+    .feature h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin-bottom: 0.5rem;
+    }
+    .feature p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* Models */
+    .models-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+    }
+    .model-card {
+      padding: 1.5rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .model-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .model-name {
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 0.25rem;
+    }
+    .model-maker {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+    .model-desc {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .models-note {
+      margin-top: 1.5rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .models-note a {
+      color: var(--accent-text);
+      text-decoration: underline;
+      text-decoration-color: var(--border-strong);
+      text-underline-offset: 3px;
+    }
+
+    /* Terminal block */
+    .terminal {
+      background: #1e1e1e;
+      border: 1px solid #2d2d2d;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid #2d2d2d;
+    }
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #3a3a3a;
+    }
+    .terminal-title {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: #6a6a6a;
+      margin-left: 0.5rem;
+    }
+    .terminal-body {
+      padding: 1.25rem 1.5rem;
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      line-height: 1.8;
+      overflow-x: auto;
+      color: #cccccc;
+    }
+    .terminal-body .prompt { color: #e8943a; }
+    .terminal-body .cmd { color: #e4e4e7; }
+    .terminal-body .comment { color: #6a6a6a; }
+    .terminal-body .output { color: #9a9a9a; }
+    .terminal-body .highlight { color: #e8943a; }
+
+    /* Comparison */
+    .comparison-wrap {
+      overflow-x: auto;
+    }
+    .comparison {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    .comparison th {
+      text-align: left;
+      font-weight: 600;
+      padding: 0.75rem 1rem;
+      border-bottom: 2px solid var(--border-strong);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .comparison td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+    .comparison tr:last-child td { border-bottom: none; }
+    .comparison td:first-child {
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+    .comparison .highlight-row td {
+      background: var(--accent-glow);
+    }
+    .comparison .highlight-row td:first-child {
+      color: var(--accent-text);
+      font-weight: 700;
+    }
+    .comparison .good { color: #16a34a; }
+    .comparison .warn { color: var(--accent); }
+
+    /* Platforms */
+    .platforms-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    .platform {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 1.25rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      transition: border-color 0.2s;
+    }
+    .platform:hover { border-color: var(--accent); }
+    .platform-icon {
+      font-family: var(--mono);
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      width: 2rem;
+      text-align: center;
+    }
+    .platform-name {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .platform-arch {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    /* Philosophy */
+    .philosophy {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 4rem 0;
+    }
+    .philosophy-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 2.5rem;
+    }
+    .philosophy h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      max-width: 480px;
+    }
+    .philosophy-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    .philosophy-list li {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .philosophy-list .check {
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      margin-top: 0.15rem;
+      flex-shrink: 0;
+    }
+    .philosophy-list .text {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .philosophy-list .text strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    /* Footer */
+    footer {
+      padding: 3rem 0;
+      border-top: 1px solid var(--border);
+    }
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .footer-left {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .footer-links {
+      display: flex;
+      gap: 1.5rem;
+      list-style: none;
+    }
+    .footer-links a {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .footer-links a:hover { color: var(--text-primary); }
+
+    /* Animations */
+    @media (prefers-reduced-motion: no-preference) {
+      .fade-in {
+        opacity: 0;
+        transform: translateY(16px);
+        animation: fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      .fade-in:nth-child(2) { animation-delay: 0.08s; }
+      .fade-in:nth-child(3) { animation-delay: 0.16s; }
+      .fade-in:nth-child(4) { animation-delay: 0.24s; }
+      .fade-in:nth-child(5) { animation-delay: 0.32s; }
+      @keyframes fadeUp {
+        to { opacity: 1; transform: translateY(0); }
+      }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .container { padding: 0 1.25rem; }
+      .hero { padding: 5rem 0 4rem; }
+      .hero h1 { font-size: 2.25rem; }
+      .metrics-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+      .features-grid { grid-template-columns: 1fr; }
+      .models-grid { grid-template-columns: 1fr 1fr; }
+      .philosophy-grid { gap: 2rem; }
+      .comparison { font-size: 0.8rem; }
+      .comparison th, .comparison td { padding: 0.6rem 0.75rem; }
+      .footer-inner { flex-direction: column; gap: 1.5rem; text-align: center; }
+      .nav-links { gap: 1rem; }
+    }
+    @media (max-width: 480px) {
+      .models-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <div class="container">
+      <div class="nav-brand"><span>$</span> rusty</div>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#models">Models</a></li>
+        <li><a href="#quickstart">Quickstart</a></li>
+        <li><a href="https://github.com/anthropics/claude-code" target="_blank" rel="noopener">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <div class="container">
+      <div class="hero-eyebrow fade-in">open source &middot; written in rust</div>
+      <h1 class="fade-in">A coding agent built for open source models.</h1>
+      <p class="fade-in">Under 10MB. Zero dependencies. Runs frontier open source models like MiMo, DeepSeek, and Kimi from a single binary in your terminal.</p>
+      <button class="hero-install fade-in" onclick="copyInstall(this)" aria-label="Copy install command">
+        <code>curl -sSf https://rusty.dev/install.sh | sh</code>
+        <span class="copy-label">copy</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="metrics">
+    <div class="container">
+      <div class="metrics-grid">
+        <div class="fade-in">
+          <div class="metric-value">&lt;10MB</div>
+          <div class="metric-label">Self-contained binary</div>
+        </div>
+        <div class="fade-in">
+          <div class="metric-value">5+</div>
+          <div class="metric-label">Supported models</div>
+        </div>
+        <div class="fade-in">
+          <div class="metric-value">0</div>
+          <div class="metric-label">Runtime dependencies</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-header fade-in">
+        <h2>What it does</h2>
+        <p>An agent that reads your code, runs commands, edits files, and reasons through problems. Works with any OpenAI-compatible API endpoint.</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature fade-in">
+          <div class="feature-icon">terminal</div>
+          <h3>Shell execution</h3>
+          <p>Runs commands with a tiered permission system. Read-only operations auto-approve. Write operations prompt you inline.</p>
+        </div>
+        <div class="feature fade-in">
+          <div class="feature-icon">files</div>
+          <h3>File operations</h3>
+          <p>Read, write, and edit files with surgical precision. Shows you what changed before committing.</p>
+        </div>
+        <div class="feature fade-in">
+          <div class="feature-icon">reason</div>
+          <h3>Transparent reasoning</h3>
+          <p>Visible thinking tokens let you watch the agent work through problems step by step. No black boxes.</p>
+        </div>
+        <div class="feature fade-in">
+          <div class="feature-icon">secure</div>
+          <h3>Sandboxed by default</h3>
+          <p>File access is restricted to your working directory. Destructive commands and write operations require explicit approval.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="models">
+    <div class="container">
+      <div class="section-header fade-in">
+        <h2>Runs the best open source models</h2>
+        <p>No vendor lock-in. Point rusty at any OpenAI-compatible endpoint and start coding. These are the models we test against.</p>
+      </div>
+      <div class="models-grid">
+        <div class="model-card fade-in">
+          <div class="model-name">MiMo</div>
+          <div class="model-maker">Xiaomi</div>
+          <div class="model-desc">Strong reasoning and code generation with visible thinking tokens.</div>
+        </div>
+        <div class="model-card fade-in">
+          <div class="model-name">DeepSeek</div>
+          <div class="model-maker">DeepSeek AI</div>
+          <div class="model-desc">Excellent at code understanding and multi-step problem solving.</div>
+        </div>
+        <div class="model-card fade-in">
+          <div class="model-name">Kimi</div>
+          <div class="model-maker">Moonshot AI</div>
+          <div class="model-desc">Long context, strong tool use, and reliable instruction following.</div>
+        </div>
+        <div class="model-card fade-in">
+          <div class="model-name">GLM</div>
+          <div class="model-maker">Zhipu AI</div>
+          <div class="model-desc">Balanced performance across code, reasoning, and general tasks.</div>
+        </div>
+        <div class="model-card fade-in">
+          <div class="model-name">MiniMax</div>
+          <div class="model-maker">MiniMax</div>
+          <div class="model-desc">Fast inference with competitive coding ability.</div>
+        </div>
+      </div>
+      <p class="models-note fade-in">Also works with GPT-4o, Claude, Mistral, Qwen, and any other OpenAI-compatible API. <a href="#quickstart">Set your endpoint</a> and go.</p>
+    </div>
+  </section>
+
+  <section class="section" id="quickstart">
+    <div class="container">
+      <div class="section-header fade-in">
+        <h2>Get started in seconds</h2>
+        <p>One command to install. Point it at your model. That's it.</p>
+      </div>
+      <div class="terminal fade-in">
+        <div class="terminal-bar">
+          <div class="terminal-dot"></div>
+          <div class="terminal-dot"></div>
+          <div class="terminal-dot"></div>
+          <span class="terminal-title">zsh</span>
+        </div>
+        <div class="terminal-body">
+          <div><span class="comment"># Install rusty</span></div>
+          <div><span class="prompt">$ </span><span class="cmd">curl -sSf https://rusty.dev/install.sh | sh</span></div>
+          <div>&nbsp;</div>
+          <div><span class="comment"># Point it at your model</span></div>
+          <div><span class="prompt">$ </span><span class="cmd">export OPENAI_API_BASE=https://api.deepseek.com/v1</span></div>
+          <div><span class="prompt">$ </span><span class="cmd">export OPENAI_API_KEY=your-key</span></div>
+          <div>&nbsp;</div>
+          <div><span class="comment"># Start coding</span></div>
+          <div><span class="prompt">$ </span><span class="cmd">rusty</span></div>
+          <div>&nbsp;</div>
+          <div><span class="output">  rusty v0.1.0 &middot; ready</span></div>
+          <div><span class="output">  model: deepseek-coder &middot; permissions: read-only</span></div>
+          <div>&nbsp;</div>
+          <div><span class="output">  <span class="highlight">&gt;</span> explain the structure of this project</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="section-header fade-in">
+        <h2>How it compares</h2>
+        <p>Most AI coding tools ship a 200MB+ runtime. rusty is a single static binary that runs natively.</p>
+      </div>
+      <div class="comparison-wrap fade-in">
+        <table class="comparison">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Binary size</th>
+              <th>Dependencies</th>
+              <th>Model flexibility</th>
+              <th>Cross-platform</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="highlight-row">
+              <td>rusty</td>
+              <td class="good">&lt;10MB</td>
+              <td class="good">None</td>
+              <td class="good">Any OpenAI-compat</td>
+              <td class="good">macOS, Linux, FreeBSD</td>
+            </tr>
+            <tr>
+              <td>Node-based agents</td>
+              <td class="warn">200MB+</td>
+              <td class="warn">Node.js, npm</td>
+              <td>Usually locked</td>
+              <td>Where Node runs</td>
+            </tr>
+            <tr>
+              <td>Python-based agents</td>
+              <td class="warn">150MB+</td>
+              <td class="warn">Python, pip, venv</td>
+              <td>Usually locked</td>
+              <td>Where Python runs</td>
+            </tr>
+            <tr>
+              <td>Container agents</td>
+              <td>500MB+</td>
+              <td>Docker</td>
+              <td>Varies</td>
+              <td>Where Docker runs</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="platforms">
+    <div class="container">
+      <div class="section-header fade-in">
+        <h2>Download</h2>
+        <p>Pre-built binaries for every supported platform. No installer needed.</p>
+      </div>
+      <div class="platforms-grid">
+        <a href="#" class="platform fade-in">
+          <div class="platform-icon">&#63743;</div>
+          <div>
+            <div class="platform-name">macOS</div>
+            <div class="platform-arch">aarch64 &middot; x86_64</div>
+          </div>
+        </a>
+        <a href="#" class="platform fade-in">
+          <div class="platform-icon">&#120041;</div>
+          <div>
+            <div class="platform-name">Linux</div>
+            <div class="platform-arch">x86_64 &middot; aarch64</div>
+          </div>
+        </a>
+        <a href="#" class="platform fade-in">
+          <div class="platform-icon">&#120069;</div>
+          <div>
+            <div class="platform-name">FreeBSD</div>
+            <div class="platform-arch">x86_64</div>
+          </div>
+        </a>
+        <a href="#" class="platform fade-in">
+          <div class="platform-icon">&#120057;</div>
+          <div>
+            <div class="platform-name">Windows</div>
+            <div class="platform-arch">x86_64 (preview)</div>
+          </div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="philosophy">
+    <div class="container">
+      <div class="philosophy-grid">
+        <div class="fade-in">
+          <h2>Built on principles, not features.</h2>
+        </div>
+        <ul class="philosophy-list">
+          <li class="fade-in">
+            <span class="check">01</span>
+            <span class="text"><strong>One binary, zero config.</strong> Drop it in your PATH and go. No package managers, no runtime installs, no config files to edit.</span>
+          </li>
+          <li class="fade-in">
+            <span class="check">02</span>
+            <span class="text"><strong>Model-agnostic by design.</strong> Works with any OpenAI-compatible endpoint. Switch models by changing an environment variable.</span>
+          </li>
+          <li class="fade-in">
+            <span class="check">03</span>
+            <span class="text"><strong>Your keys, your data.</strong> No telemetry. No proxy. No account required. Your API key stays local.</span>
+          </li>
+          <li class="fade-in">
+            <span class="check">04</span>
+            <span class="text"><strong>Security is the default.</strong> File access is sandboxed. Destructive operations require explicit approval. You see every command before it runs.</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-left">&copy; 2026 PDG Global Limited &middot; AGPL-3.0</div>
+        <ul class="footer-links">
+          <li><a href="https://github.com/anthropics/claude-code">GitHub</a></li>
+          <li><a href="#features">Docs</a></li>
+          <li><a href="#quickstart">Install</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    function copyInstall(btn) {
+      const cmd = btn.querySelector('code').textContent;
+      navigator.clipboard.writeText(cmd).then(() => {
+        const label = btn.querySelector('.copy-label');
+        label.textContent = 'copied';
+        setTimeout(() => { label.textContent = 'copy'; }, 2000);
+      });
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.style.animationPlayState = 'running';
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.15 });
+
+      document.querySelectorAll('.fade-in').forEach(el => {
+        el.style.animationPlayState = 'paused';
+        observer.observe(el);
+      });
+    }
+  </script>
+
+</body>
+</html>

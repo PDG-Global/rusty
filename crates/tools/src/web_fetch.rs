@@ -12,6 +12,12 @@ pub struct WebFetchTool {
     client: reqwest::Client,
 }
 
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebFetchTool {
     pub fn new() -> Self {
         Self {

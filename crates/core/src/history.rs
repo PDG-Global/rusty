@@ -10,6 +10,8 @@ use crate::Message;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSession {
     pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub messages: Vec<Message>,
@@ -21,6 +23,7 @@ impl ConversationSession {
     pub fn new(model: String, working_dir: String) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
+            name: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             messages: Vec::new(),
@@ -69,7 +72,51 @@ impl ConversationSession {
                 }
             }
         }
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         Ok(sessions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ConversationSession::new ─────────────────────────────────────
+
+    #[test]
+    fn new_session_has_correct_model_and_dir() {
+        let session = ConversationSession::new("test-model".into(), "/tmp/work".into());
+        assert_eq!(session.model, "test-model");
+        assert_eq!(session.working_dir, "/tmp/work");
+        assert!(session.name.is_none());
+        assert!(session.messages.is_empty());
+        assert!(!session.id.is_empty());
+    }
+
+    #[test]
+    fn new_session_has_valid_uuid() {
+        let session = ConversationSession::new("m".into(), "d".into());
+        // Should parse as a valid UUID
+        assert!(uuid::Uuid::parse_str(&session.id).is_ok());
+    }
+
+    #[test]
+    fn new_session_timestamps_are_recent() {
+        let before = chrono::Utc::now();
+        let session = ConversationSession::new("m".into(), "d".into());
+        let after = chrono::Utc::now();
+
+        assert!(session.created_at >= before);
+        assert!(session.created_at <= after);
+        // Allow up to 1ms difference — timestamps are set via separate Utc::now() calls
+        let diff = (session.created_at - session.updated_at).num_microseconds().unwrap_or(0).abs();
+        assert!(diff < 1000, "created_at and updated_at differ by {diff}μs");
+    }
+
+    #[test]
+    fn new_sessions_have_unique_ids() {
+        let s1 = ConversationSession::new("m".into(), "d".into());
+        let s2 = ConversationSession::new("m".into(), "d".into());
+        assert_ne!(s1.id, s2.id);
     }
 }

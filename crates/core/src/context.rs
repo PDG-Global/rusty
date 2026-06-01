@@ -55,7 +55,7 @@ pub async fn build_system_context(working_dir: &Path) -> String {
     parts.join("\n")
 }
 
-/// Build user context: date, CLAUDE.md / RUSTY.md files
+/// Build user context: date, AGENTS.md / CLAUDE.md / RUSTY.md files
 pub async fn build_user_context(working_dir: &Path, no_claude_md: bool) -> String {
     let mut parts = Vec::new();
 
@@ -77,10 +77,10 @@ pub async fn build_user_context(working_dir: &Path, no_claude_md: bool) -> Strin
 async fn discover_md_files(working_dir: &Path) -> String {
     let mut contents = Vec::new();
 
-    // Walk up from working_dir to root, collecting CLAUDE.md / RUSTY.md
+    // Walk up from working_dir to root, collecting project instruction files
     let mut dir = Some(working_dir.to_path_buf());
     while let Some(d) = dir {
-        for name in &["CLAUDE.md", "RUSTY.md"] {
+        for name in &["AGENTS.md", "CLAUDE.md", "RUSTY.md"] {
             let path = d.join(name);
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 contents.push(format!("# {} ({})\n{}", name, path.display(), content));
@@ -89,11 +89,13 @@ async fn discover_md_files(working_dir: &Path) -> String {
         dir = d.parent().map(|p| p.to_path_buf());
     }
 
-    // Also check ~/.rusty/CLAUDE.md
+    // Also check ~/.rusty/ instruction files
     if let Some(home) = dirs::home_dir() {
-        let path = home.join(".rusty").join("CLAUDE.md");
-        if let Ok(content) = tokio::fs::read_to_string(&path).await {
-            contents.push(format!("# CLAUDE.md ({})\n{}", path.display(), content));
+        for name in &["AGENTS.md", "CLAUDE.md"] {
+            let path = home.join(".rusty").join(name);
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                contents.push(format!("# {} ({})\n{}", name, path.display(), content));
+            }
         }
     }
 

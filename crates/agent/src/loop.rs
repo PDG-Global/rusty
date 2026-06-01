@@ -18,12 +18,45 @@ use tracing::{debug, warn};
 
 use crate::compact::maybe_compact;
 
+/// Max characters for a tool result stored in conversation history.
+/// Large outputs are truncated to prevent context bloat.
+const MAX_TOOL_OUTPUT_CHARS: usize = 16_000;
+
+/// Max retries for transient/retryable API errors.
+const MAX_RETRIES: u32 = 3;
+
+/// Truncate text at a line boundary to keep output readable.
+/// Unlike a raw byte-slice, this never cuts mid-line or mid-UTF8 char.
+fn smart_truncate_output(text: &str, max_chars: usize) -> String {
+    if text.len() <= max_chars {
+        return text.to_string();
+    }
+
+    let slice = &text[..max_chars];
+    let cut_at = slice.rfind('\n').unwrap_or(max_chars);
+
+    format!(
+        "{}\n\n... (output truncated, showing {} of {} chars)",
+        &text[..cut_at],
+        cut_at,
+        text.len(),
+    )
+}
+
 /// Callback for streaming text deltas to the UI
 pub type TextCallback = Box<dyn Fn(&str) + Send + Sync>;
 /// Callback for streaming thinking/reasoning deltas
 pub type ThinkingCallback = Box<dyn Fn(&str) + Send + Sync>;
-/// Callback for tool execution status
-pub type ToolCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Status of a tool execution, sent to the TUI
+pub enum ToolStatus {
+    Running { arguments: String },
+    Done { output: String },
+    Error { output: String },
+}
+
+/// Callback for tool execution status — receives name and status
+pub type ToolCallback = Box<dyn Fn(&str, ToolStatus) + Send + Sync>;
 /// Callback for token usage updates
 pub type UsageCallback = Box<dyn Fn(u32, u32) + Send + Sync>;
 /// Callback for permission requests — receives a request, returns a decision future
@@ -97,6 +130,16 @@ impl Agent {
         &mut self.messages
     }
 
+    /// Force-compact the conversation history, summarizing older messages.
+    /// Returns true if compaction actually happened.
+    pub async fn compact(&mut self) -> Result<bool, RustyError> {
+        // Take messages out to avoid borrow conflicts with provider
+        let mut msgs = std::mem::take(&mut self.messages);
+        let result = crate::compact::force_compact(&mut msgs, &*self.provider, &self.system_prompt).await;
+        self.messages = msgs;
+        result
+    }
+
     pub fn total_usage(&self) -> &UsageInfo {
         &self.total_usage
     }
@@ -115,6 +158,17 @@ impl Agent {
         for turn in 0..self.max_turns {
             debug!("Agent turn {}/{}", turn + 1, self.max_turns);
 
+            // Warn when approaching max turns
+            if turn == self.max_turns.saturating_sub(3) && self.max_turns > 5 {
+                warn!("Approaching max turns limit ({}/{})", turn + 1, self.max_turns);
+                if let Some(cb) = on_text {
+                    cb(&format!(
+                        "\n[Note: Approaching turn limit ({}/{}). Wrapping up soon.]\n\n",
+                        turn + 1, self.max_turns
+                    ));
+                }
+            }
+
             // Maybe compact before sending
             maybe_compact(&mut self.messages, &*self.provider, &self.system_prompt).await?;
 
@@ -130,10 +184,10 @@ impl Agent {
             };
 
             debug!("Calling LLM API (model: {}, messages: {})", self.config.model, self.messages.len());
-            let mut stream = match self.provider.create_message_stream(request).await {
+            let mut stream = match self.call_with_retry(&request, on_text).await {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!("LLM API call failed: {e}");
+                    warn!("LLM API call failed after retries: {e}");
                     return Err(e);
                 }
             };
@@ -190,6 +244,23 @@ impl Agent {
                 }
             }
 
+            // Estimate tokens if the provider didn't report usage
+            // (common with OpenAI-compatible providers that don't support stream_options)
+            {
+                let total_chars: usize = self.messages.iter().map(|m| m.get_all_text().len()).sum();
+                let estimated_input = (total_chars / 4) as u32;
+                let estimated_output = (assistant_text.len() / 4) as u32;
+                if estimated_input > self.total_usage.input_tokens {
+                    self.total_usage.input_tokens = estimated_input;
+                }
+                if estimated_output > self.total_usage.output_tokens {
+                    self.total_usage.output_tokens = estimated_output;
+                }
+                if let Some(cb) = on_usage {
+                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens);
+                }
+            }
+
             // Build assistant message
             let mut blocks = Vec::new();
             if !assistant_text.is_empty() {
@@ -220,7 +291,9 @@ impl Agent {
 
                 for tc in &tool_calls {
                     if let Some(cb) = on_tool {
-                        cb(&tc.name, "running");
+                        cb(&tc.name, ToolStatus::Running {
+                            arguments: tc.arguments.clone(),
+                        });
                     }
 
                     let result = self.execute_tool(&tc.name, &tc.arguments, &ctx).await;
@@ -231,20 +304,34 @@ impl Agent {
                     };
 
                     if let Some(cb) = on_tool {
-                        cb(&tc.name, if tool_result.is_error { "error" } else { "done" });
+                        if tool_result.is_error {
+                            cb(&tc.name, ToolStatus::Error {
+                                output: tool_result.content.clone(),
+                            });
+                        } else {
+                            cb(&tc.name, ToolStatus::Done {
+                                output: tool_result.content.clone(),
+                            });
+                        }
                     }
+
+                    // Truncate large tool outputs before storing in history.
+                    // Use line-boundary-aware truncation to keep output readable.
+                    let stored_content = if tool_result.content.len() > MAX_TOOL_OUTPUT_CHARS {
+                        
+                        smart_truncate_output(&tool_result.content, MAX_TOOL_OUTPUT_CHARS)
+                    } else {
+                        tool_result.content.clone()
+                    };
 
                     self.messages.push(Message::user_blocks(vec![
                         ContentBlock::ToolResult {
                             tool_use_id: tc.id.clone(),
-                            content: tool_result.content,
+                            content: stored_content,
                             is_error: Some(tool_result.is_error),
                         },
                     ]));
                 }
-
-                // Pause between tool rounds to avoid rate limiting
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
                 // Continue the loop — the model needs to see tool results
                 continue;
@@ -271,9 +358,92 @@ impl Agent {
             }
         }
 
-        Err(RustyError::Other(
-            "Max turns exceeded without completion".into(),
-        ))
+        // Hit max turns — ask the model to summarize progress
+        warn!("Max turns ({}) exceeded, requesting summary", self.max_turns);
+        if let Some(cb) = on_text {
+            cb("\n\n[Turn limit reached. Please summarize what was accomplished and what remains.]\n\n");
+        }
+
+        let summary_request = MessageRequest {
+            model: self.config.model.clone(),
+            system: Some(self.system_prompt.clone()),
+            messages: {
+                let mut msgs = self.messages.clone();
+                msgs.push(Message::user(
+                    "The turn limit has been reached. Please provide a brief summary of what was accomplished and what tasks remain incomplete. Be concise."
+                ));
+                msgs
+            },
+            tools: vec![],
+            max_tokens: 1024,
+            temperature: self.config.temperature,
+        };
+
+        let mut stream = match self.provider.create_message_stream(summary_request).await {
+            Ok(s) => s,
+            Err(e) => return Err(e),
+        };
+
+        let mut summary = String::new();
+        while let Some(event) = stream.next().await {
+            match event? {
+                StreamEvent::TextDelta(text) => {
+                    summary.push_str(&text);
+                    if let Some(cb) = on_text {
+                        cb(&text);
+                    }
+                }
+                StreamEvent::Done { .. } => break,
+                _ => {}
+            }
+        }
+
+        if !summary.is_empty() {
+            self.messages.push(Message::assistant(&summary));
+        }
+        Ok(summary)
+    }
+
+    /// Call the LLM API with automatic retry for transient errors.
+    /// Retries up to MAX_RETRIES times for rate limits and server errors.
+    async fn call_with_retry(
+        &self,
+        request: &MessageRequest,
+        on_text: Option<&TextCallback>,
+    ) -> Result<Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, RustyError>> + Send>>, RustyError>
+    {
+        let mut last_err = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_secs(2u64.pow(attempt - 1));
+                debug!("Retrying LLM API call (attempt {}/{}) after {delay:?}", attempt, MAX_RETRIES);
+                if let Some(cb) = on_text {
+                    cb(&format!("\n[Retrying API call (attempt {}/{})...]\n", attempt + 1, MAX_RETRIES + 1));
+                }
+                tokio::time::sleep(delay).await;
+            }
+
+            match self.provider.create_message_stream(request.clone()).await {
+                Ok(stream) => return Ok(stream),
+                Err(e) => {
+                    if e.is_retryable() && attempt < MAX_RETRIES {
+                        // For rate limits, use the retry_after hint
+                        if let RustyError::RateLimit { retry_after: Some(secs) } = &e {
+                            let delay = std::time::Duration::from_secs(*secs);
+                            debug!("Rate limited, waiting {delay:?} before retry");
+                            tokio::time::sleep(delay).await;
+                        }
+                        warn!("Retryable API error (attempt {}): {e}", attempt + 1);
+                        last_err = Some(e);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| RustyError::Api("Max retries exceeded".into())))
     }
 
     async fn execute_tool(
@@ -401,4 +571,56 @@ struct ToolCallState {
     id: String,
     name: String,
     arguments: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── smart_truncate_output ────────────────────────────────────────
+
+    #[test]
+    fn truncate_short_text_unchanged() {
+        let text = "hello";
+        assert_eq!(smart_truncate_output(text, 100), "hello");
+    }
+
+    #[test]
+    fn truncate_exact_length_unchanged() {
+        let text = "abcde";
+        assert_eq!(smart_truncate_output(text, 5), "abcde");
+    }
+
+    #[test]
+    fn truncate_at_line_boundary() {
+        let text = "line1\nline2\nline3";
+        // max_chars=12 → slice = "line1\nline2\n", rfind('\n') = 11
+        let result = smart_truncate_output(text, 12);
+        assert!(result.contains("line1\nline2"));
+        assert!(result.contains("truncated"));
+    }
+
+    #[test]
+    fn truncate_no_newlines_cuts_at_max() {
+        let text = "abcdefghijklmnop";
+        let result = smart_truncate_output(text, 8);
+        // No '\n' found → cut_at = 8
+        assert!(result.starts_with("abcdefgh"));
+        assert!(result.contains("truncated"));
+    }
+
+    #[test]
+    fn truncate_preserves_utf8() {
+        // "café" is 5 bytes in UTF-8 (é = 2 bytes)
+        let text = "café\nline2";
+        let result = smart_truncate_output(text, 6);
+        // Should not panic on UTF-8 boundary
+        assert!(result.contains("café"));
+    }
+
+    #[test]
+    fn truncate_empty_text() {
+        let result = smart_truncate_output("", 100);
+        assert_eq!(result, "");
+    }
 }

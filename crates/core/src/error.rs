@@ -54,7 +54,8 @@ impl RustyError {
             self,
             RustyError::RateLimit { .. }
                 | RustyError::ApiStatus {
-                    status_code: 529, ..
+                    status_code: 429 | 500 | 502 | 503 | 504 | 529,
+                    ..
                 }
         )
     }
@@ -64,5 +65,60 @@ impl RustyError {
             self,
             RustyError::ContextWindowExceeded | RustyError::MaxTokensReached
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_retryable ─────────────────────────────────────────────────
+
+    #[test]
+    fn is_retryable_rate_limit() {
+        assert!(RustyError::RateLimit { retry_after: None }.is_retryable());
+        assert!(RustyError::RateLimit { retry_after: Some(30) }.is_retryable());
+    }
+
+    #[test]
+    fn is_retryable_server_errors() {
+        for code in [429, 500, 502, 503, 504, 529] {
+            assert!(
+                RustyError::ApiStatus { status_code: code, message: "err".into() }.is_retryable(),
+                "status {code} should be retryable"
+            );
+        }
+    }
+
+    #[test]
+    fn is_retryable_false_for_non_retryable() {
+        assert!(!RustyError::Api("boom".into()).is_retryable());
+        assert!(!RustyError::ApiStatus { status_code: 400, message: "bad".into() }.is_retryable());
+        assert!(!RustyError::ApiStatus { status_code: 401, message: "unauth".into() }.is_retryable());
+        assert!(!RustyError::Auth("no".into()).is_retryable());
+        assert!(!RustyError::PermissionDenied("no".into()).is_retryable());
+        assert!(!RustyError::Tool("fail".into()).is_retryable());
+        assert!(!RustyError::Http("err".into()).is_retryable());
+        assert!(!RustyError::ContextWindowExceeded.is_retryable());
+        assert!(!RustyError::MaxTokensReached.is_retryable());
+        assert!(!RustyError::Cancelled.is_retryable());
+        assert!(!RustyError::Config("bad".into()).is_retryable());
+        assert!(!RustyError::Other("x".into()).is_retryable());
+    }
+
+    // ── is_context_limit ─────────────────────────────────────────────
+
+    #[test]
+    fn is_context_limit_true_variants() {
+        assert!(RustyError::ContextWindowExceeded.is_context_limit());
+        assert!(RustyError::MaxTokensReached.is_context_limit());
+    }
+
+    #[test]
+    fn is_context_limit_false_variants() {
+        assert!(!RustyError::Api("x".into()).is_context_limit());
+        assert!(!RustyError::RateLimit { retry_after: None }.is_context_limit());
+        assert!(!RustyError::Tool("x".into()).is_context_limit());
+        assert!(!RustyError::Cancelled.is_context_limit());
     }
 }

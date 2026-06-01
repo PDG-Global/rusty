@@ -47,9 +47,9 @@ cli → agent → provider
 | `config.rs` | `Config` (runtime config with model, api_key, api_base, max_tokens, temperature, working_dir, permission_mode), `Settings` (persisted `~/.rusty/settings.json` with theme, default_model, permanent permissions), `add_permanent_permission()` |
 | `permissions.rs` | `PermissionMode` (Default/AcceptEdits/Bypass/Plan), `PermissionLevel` (None/ReadOnly/Write/Execute), `PermissionRequest`/`PermissionDecision`, bash command classifier (`classify_bash_command` categorizes commands as ReadOnly/Write/Execute based on executable name and flags), `build_tool_description`, `make_allow_key` |
 | `error.rs` | `RustyError` enum with `thiserror`: Api, ApiStatus, Auth, PermissionDenied, Tool, Io, Json, Http, RateLimit (with retry_after), ContextWindowExceeded, MaxTokensReached, Cancelled, Config, Other. Helpers: `is_retryable()`, `is_context_limit()` |
-| `context.rs` | `build_system_context()` (platform info, git branch/commit, environment), `build_user_context()` (reads `~/.rusty/CLAUDE.md` for user instructions, includes current date) |
+| `context.rs` | `build_system_context()` (platform info, working directory, git status, recent commits, sandbox notice), `build_user_context()` (discovers `AGENTS.md`/`CLAUDE.md`/`RUSTY.md` files walking up from working dir to root, plus `~/.rusty/` global files, includes current date) |
 | `history.rs` | `ConversationSession` — save/load/list sessions in `~/.rusty/sessions/` as JSON files with id, messages, model, timestamps |
-| `cost.rs` | Token cost calculation utilities (pricing per model) |
+| `cost.rs` | `CostTracker` — thread-safe token usage tracking (input/output totals) |
 
 ### `crates/provider` — LLM API Client
 
@@ -197,9 +197,10 @@ Notable test coverage:
 
 ```json
 {
+  "api_key": "sk-...",
+  "api_base": "https://api.example.com/v1",
   "default_model": "mimo-v2.5-pro",
-  "theme": "dark",
-  "permanent_permissions": [
+  "allowed_tools": [
     "bash:git status",
     "bash:cargo check"
   ]
@@ -209,6 +210,8 @@ Notable test coverage:
 ### Environment Variables
 
 - `OPENAI_API_KEY` — API key (can also be passed via `--api-key`)
+- `RUSTY_API_KEY` — Alternative API key (lower priority than `OPENAI_API_KEY`)
+- `OPENAI_BASE_URL` — API base URL (can also be set via settings or preset)
 - `RUST_LOG` — Logging level (e.g., `debug`, `info`, `warn`)
 
 ### Presets
@@ -217,8 +220,8 @@ Presets define default configurations for different providers:
 
 | Preset | API Base | Default Model | Notes |
 |--------|----------|---------------|-------|
-| `xiaomi` | `https://api.xiaomimimo.com/v1` | `mimo-v2.5-pro` | Xiaomi MiMo |
-| `kimi` | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` | Moonshot/Kimi |
+| `xiaomi` | `https://token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5-pro` | Xiaomi MiMo |
+| `kimi` | `https://api.moonshot.cn/v1` | `kimi-k2.6` | Moonshot/Kimi |
 | `openai` | `https://api.openai.com/v1` | `gpt-4o` | OpenAI |
 | `ollama` | `http://localhost:11434/v1` | `llama3` | Local Ollama |
 | `deepseek` | `https://api.deepseek.com/v1` | `deepseek-chat` | DeepSeek |

@@ -47,3 +47,81 @@ impl CostTracker {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── CostTracker::new ─────────────────────────────────────────────
+
+    #[test]
+    fn new_tracker_starts_at_zero() {
+        let tracker = CostTracker::new();
+        assert_eq!(tracker.total_input(), 0);
+        assert_eq!(tracker.total_output(), 0);
+    }
+
+    #[test]
+    fn default_tracker_starts_at_zero() {
+        let tracker = CostTracker::default();
+        assert_eq!(tracker.total_input(), 0);
+        assert_eq!(tracker.total_output(), 0);
+    }
+
+    // ── CostTracker::add_usage ───────────────────────────────────────
+
+    #[test]
+    fn add_usage_accumulates() {
+        let tracker = CostTracker::new();
+        tracker.add_usage(&UsageInfo {
+            input_tokens: 100,
+            output_tokens: 50,
+        });
+        assert_eq!(tracker.total_input(), 100);
+        assert_eq!(tracker.total_output(), 50);
+    }
+
+    #[test]
+    fn add_usage_multiple_calls_sum() {
+        let tracker = CostTracker::new();
+        tracker.add_usage(&UsageInfo {
+            input_tokens: 100,
+            output_tokens: 50,
+        });
+        tracker.add_usage(&UsageInfo {
+            input_tokens: 200,
+            output_tokens: 75,
+        });
+        assert_eq!(tracker.total_input(), 300);
+        assert_eq!(tracker.total_output(), 125);
+    }
+
+    #[test]
+    fn add_usage_with_zero_tokens() {
+        let tracker = CostTracker::new();
+        tracker.add_usage(&UsageInfo {
+            input_tokens: 0,
+            output_tokens: 0,
+        });
+        assert_eq!(tracker.total_input(), 0);
+        assert_eq!(tracker.total_output(), 0);
+    }
+
+    // ── CostTracker::summary ─────────────────────────────────────────
+
+    #[test]
+    fn summary_zero() {
+        let tracker = CostTracker::new();
+        assert_eq!(tracker.summary(), "tokens: 0 in / 0 out");
+    }
+
+    #[test]
+    fn summary_with_usage() {
+        let tracker = CostTracker::new();
+        tracker.add_usage(&UsageInfo {
+            input_tokens: 1234,
+            output_tokens: 5678,
+        });
+        assert_eq!(tracker.summary(), "tokens: 1234 in / 5678 out");
+    }
+}

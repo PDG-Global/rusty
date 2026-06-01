@@ -10,6 +10,30 @@ use tracing::debug;
 
 use crate::{Tool, ToolContext, ToolResult};
 
+/// Maximum characters for bash output before truncation.
+/// Truncation happens at line boundaries to keep output readable.
+const MAX_BASH_OUTPUT: usize = 10_000;
+
+/// Truncate text at a line boundary, keeping the first `max_chars` characters
+/// worth of complete lines. Appends a truncation notice with total size.
+fn smart_truncate(text: &str, max_chars: usize) -> String {
+    if text.len() <= max_chars {
+        return text.to_string();
+    }
+
+    // Find the last newline before the limit
+    let slice = &text[..max_chars];
+    let cut_at = slice.rfind('\n').unwrap_or(max_chars);
+
+    format!(
+        "{}\n\n... (output truncated, showing {} of {} chars — {} lines omitted)",
+        &text[..cut_at],
+        cut_at,
+        text.len(),
+        text[cut_at..].lines().count(),
+    )
+}
+
 pub struct BashTool;
 
 #[async_trait]
@@ -74,13 +98,13 @@ impl Tool for BashTool {
 
         let mut result = String::new();
         if !stdout.is_empty() {
-            result.push_str(&stdout);
+            result.push_str(&smart_truncate(&stdout, MAX_BASH_OUTPUT));
         }
         if !stderr.is_empty() {
             if !result.is_empty() {
                 result.push('\n');
             }
-            result.push_str(&format!("STDERR:\n{stderr}"));
+            result.push_str(&format!("STDERR:\n{}", smart_truncate(&stderr, MAX_BASH_OUTPUT)));
         }
         if result.is_empty() {
             result = format!("(exit code: {exit_code})");

@@ -95,6 +95,7 @@ impl LlmProvider for OpenAiProvider {
             temperature: request.temperature,
             tools: oai_tools,
             stream_options: None,
+            reasoning_budget: self.config.thinking_budget,
         };
 
         let endpoint = self.endpoint();
@@ -149,6 +150,7 @@ impl LlmProvider for OpenAiProvider {
             temperature: request.temperature,
             tools: oai_tools,
             stream_options: Some(StreamOptions { include_usage: true }),
+            reasoning_budget: self.config.thinking_budget,
         };
 
         let endpoint = self.endpoint();
@@ -381,5 +383,96 @@ fn status_to_error_from_parts(status: u16, body: &str) -> RustyError {
             status_code: status,
             message: body.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── status_to_error_from_parts ───────────────────────────────────
+
+    #[test]
+    fn status_401_is_auth_error() {
+        let err = status_to_error_from_parts(401, "Unauthorized");
+        assert!(matches!(err, RustyError::Auth(_)));
+        assert!(err.to_string().contains("401"));
+    }
+
+    #[test]
+    fn status_403_is_auth_error() {
+        let err = status_to_error_from_parts(403, "Forbidden");
+        assert!(matches!(err, RustyError::Auth(_)));
+        assert!(err.to_string().contains("403"));
+    }
+
+    #[test]
+    fn status_429_is_rate_limit() {
+        let err = status_to_error_from_parts(429, "Too Many Requests");
+        assert!(matches!(err, RustyError::RateLimit { retry_after: None }));
+    }
+
+    #[test]
+    fn status_529_is_rate_limit() {
+        let err = status_to_error_from_parts(529, "Overloaded");
+        assert!(matches!(err, RustyError::RateLimit { retry_after: None }));
+    }
+
+    #[test]
+    fn status_500_is_api_status() {
+        let err = status_to_error_from_parts(500, "Internal Server Error");
+        match err {
+            RustyError::ApiStatus { status_code, message } => {
+                assert_eq!(status_code, 500);
+                assert_eq!(message, "Internal Server Error");
+            }
+            _ => panic!("expected ApiStatus"),
+        }
+    }
+
+    #[test]
+    fn status_0_is_api_status() {
+        let err = status_to_error_from_parts(0, "unknown");
+        assert!(matches!(err, RustyError::ApiStatus { status_code: 0, .. }));
+    }
+
+    #[test]
+    fn body_preserved_in_error_message() {
+        let err = status_to_error_from_parts(500, "detailed error body");
+        assert!(err.to_string().contains("detailed error body"));
+    }
+
+    // ── endpoint ─────────────────────────────────────────────────────
+
+    #[test]
+    fn endpoint_appends_chat_completions() {
+        let provider = make_provider("https://api.example.com/v1");
+        assert_eq!(provider.endpoint(), "https://api.example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn endpoint_strips_trailing_slash() {
+        let provider = make_provider("https://api.example.com/v1/");
+        assert_eq!(provider.endpoint(), "https://api.example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn endpoint_strips_multiple_trailing_slashes() {
+        let provider = make_provider("https://api.example.com/v1///");
+        assert_eq!(provider.endpoint(), "https://api.example.com/v1/chat/completions");
+    }
+
+    fn make_provider(api_base: &str) -> OpenAiProvider {
+        OpenAiProvider {
+            client: reqwest::Client::new(),
+            config: ProviderConfig {
+                api_key: "test-key".to_string(),
+                api_base: api_base.to_string(),
+                model: "test-model".to_string(),
+                max_tokens: 4096,
+                temperature: None,
+                thinking_budget: None,
+            },
+        }
     }
 }

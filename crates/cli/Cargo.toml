@@ -26,3 +26,4 @@ uuid.workspace = true
 chrono.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
+arboard.workspace = true

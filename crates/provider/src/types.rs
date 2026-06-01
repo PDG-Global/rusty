@@ -19,6 +19,8 @@ pub struct OaiRequest {
     pub tools: Vec<OaiTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_budget: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -303,4 +305,317 @@ pub fn oai_response_to_rusty(resp: &OaiResponse) -> (Vec<ContentBlock>, String) 
     };
 
     (blocks, stop_reason)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusty_core::ContentBlock;
+
+    fn make_response(finish_reason: Option<&str>, content: Option<&str>) -> OaiResponse {
+        OaiResponse {
+            choices: vec![OaiChoice {
+                message: OaiResponseMessage {
+                    role: Some("assistant".to_string()),
+                    content: content.map(|s| s.to_string()),
+                    tool_calls: None,
+                },
+                finish_reason: finish_reason.map(|s| s.to_string()),
+            }],
+            usage: None,
+        }
+    }
+
+    // ── stop reason mapping ──────────────────────────────────────────
+
+    #[test]
+    fn stop_reason_tool_calls_maps_to_tool_use() {
+        let resp = make_response(Some("tool_calls"), None);
+        let (_, reason) = oai_response_to_rusty(&resp);
+        assert_eq!(reason, "tool_use");
+    }
+
+    #[test]
+    fn stop_reason_stop_maps_to_end_turn() {
+        let resp = make_response(Some("stop"), Some("done"));
+        let (_, reason) = oai_response_to_rusty(&resp);
+        assert_eq!(reason, "end_turn");
+    }
+
+    #[test]
+    fn stop_reason_length_maps_to_max_tokens() {
+        let resp = make_response(Some("length"), Some("truncated"));
+        let (_, reason) = oai_response_to_rusty(&resp);
+        assert_eq!(reason, "max_tokens");
+    }
+
+    #[test]
+    fn stop_reason_none_defaults_to_end_turn() {
+        let resp = make_response(None, Some("hi"));
+        let (_, reason) = oai_response_to_rusty(&resp);
+        assert_eq!(reason, "end_turn");
+    }
+
+    #[test]
+    fn stop_reason_unknown_passthrough() {
+        let resp = make_response(Some("content_filter"), Some("hi"));
+        let (_, reason) = oai_response_to_rusty(&resp);
+        assert_eq!(reason, "content_filter");
+    }
+
+    // ── content extraction ───────────────────────────────────────────
+
+    #[test]
+    fn text_content_extracted() {
+        let resp = make_response(Some("stop"), Some("Hello world"));
+        let (blocks, _) = oai_response_to_rusty(&resp);
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "Hello world"),
+            _ => panic!("expected Text block"),
+        }
+    }
+
+    #[test]
+    fn empty_choices_returns_empty() {
+        let resp = OaiResponse {
+            choices: vec![],
+            usage: None,
+        };
+        let (blocks, reason) = oai_response_to_rusty(&resp);
+        assert!(blocks.is_empty());
+        assert_eq!(reason, "end_turn");
+    }
+
+    #[test]
+    fn empty_content_skipped() {
+        let resp = make_response(Some("stop"), Some(""));
+        let (blocks, _) = oai_response_to_rusty(&resp);
+        assert!(blocks.is_empty());
+    }
+
+    // ── tool call extraction ─────────────────────────────────────────
+
+    #[test]
+    fn tool_calls_parsed_from_response() {
+        let resp = OaiResponse {
+            choices: vec![OaiChoice {
+                message: OaiResponseMessage {
+                    role: Some("assistant".to_string()),
+                    content: None,
+                    tool_calls: Some(vec![OaiToolCall {
+                        id: "call_123".to_string(),
+                        call_type: "function".to_string(),
+                        function: OaiFunctionCall {
+                            name: "bash".to_string(),
+                            arguments: r#"{"command":"ls"}"#.to_string(),
+                        },
+                    }]),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: None,
+        };
+        let (blocks, reason) = oai_response_to_rusty(&resp);
+        assert_eq!(reason, "tool_use");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            ContentBlock::ToolUse { id, name, input } => {
+                assert_eq!(id, "call_123");
+                assert_eq!(name, "bash");
+                assert_eq!(input["command"], "ls");
+            }
+            _ => panic!("expected ToolUse block"),
+        }
+    }
+
+    #[test]
+    fn text_and_tool_calls_together() {
+        let resp = OaiResponse {
+            choices: vec![OaiChoice {
+                message: OaiResponseMessage {
+                    role: Some("assistant".to_string()),
+                    content: Some("Let me check.".to_string()),
+                    tool_calls: Some(vec![OaiToolCall {
+                        id: "c1".to_string(),
+                        call_type: "function".to_string(),
+                        function: OaiFunctionCall {
+                            name: "file_read".to_string(),
+                            arguments: r#"{"path":"/tmp/a"}"#.to_string(),
+                        },
+                    }]),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: None,
+        };
+        let (blocks, _) = oai_response_to_rusty(&resp);
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(&blocks[0], ContentBlock::Text { text } if text == "Let me check."));
+        assert!(matches!(&blocks[1], ContentBlock::ToolUse { name, .. } if name == "file_read"));
+    }
+
+    #[test]
+    fn malformed_tool_arguments_falls_back_to_null() {
+        let resp = OaiResponse {
+            choices: vec![OaiChoice {
+                message: OaiResponseMessage {
+                    role: Some("assistant".to_string()),
+                    content: None,
+                    tool_calls: Some(vec![OaiToolCall {
+                        id: "bad".to_string(),
+                        call_type: "function".to_string(),
+                        function: OaiFunctionCall {
+                            name: "bash".to_string(),
+                            arguments: "not-json!!!".to_string(),
+                        },
+                    }]),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: None,
+        };
+        let (blocks, _) = oai_response_to_rusty(&resp);
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            ContentBlock::ToolUse { input, .. } => {
+                assert_eq!(*input, serde_json::Value::Null);
+            }
+            _ => panic!("expected ToolUse block"),
+        }
+    }
+
+    // ── rusty_messages_to_oai ────────────────────────────────────────
+
+    #[test]
+    fn user_text_message() {
+        let msgs = vec![rusty_core::Message::user("hello world")];
+        let oai = rusty_messages_to_oai(&msgs);
+        assert_eq!(oai.len(), 1);
+        assert_eq!(oai[0].role, "user");
+        assert_eq!(oai[0].content.as_deref(), Some("hello world"));
+        assert!(oai[0].tool_calls.is_none());
+        assert!(oai[0].tool_call_id.is_none());
+    }
+
+    #[test]
+    fn assistant_text_message() {
+        let msgs = vec![rusty_core::Message::assistant("hi there")];
+        let oai = rusty_messages_to_oai(&msgs);
+        assert_eq!(oai.len(), 1);
+        assert_eq!(oai[0].role, "assistant");
+        assert_eq!(oai[0].content.as_deref(), Some("hi there"));
+        assert!(oai[0].tool_calls.is_none());
+    }
+
+    #[test]
+    fn assistant_with_tool_use_blocks() {
+        let msgs = vec![rusty_core::Message {
+            role: rusty_core::Role::Assistant,
+            content: rusty_core::MessageContent::Blocks(vec![
+                rusty_core::ContentBlock::Text {
+                    text: "Let me run it".to_string(),
+                },
+                rusty_core::ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "bash".to_string(),
+                    input: serde_json::json!({"command": "ls"}),
+                },
+            ]),
+        }];
+        let oai = rusty_messages_to_oai(&msgs);
+        assert_eq!(oai.len(), 1);
+        assert_eq!(oai[0].role, "assistant");
+        assert_eq!(oai[0].content.as_deref(), Some("Let me run it"));
+        let calls = oai[0].tool_calls.as_ref().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].function.name, "bash");
+    }
+
+    #[test]
+    fn user_tool_result_message() {
+        let msgs = vec![rusty_core::Message {
+            role: rusty_core::Role::User,
+            content: rusty_core::MessageContent::Blocks(vec![
+                rusty_core::ContentBlock::ToolResult {
+                    tool_use_id: "call_1".to_string(),
+                    content: "file contents here".to_string(),
+                    is_error: None,
+                },
+            ]),
+        }];
+        let oai = rusty_messages_to_oai(&msgs);
+        assert_eq!(oai.len(), 1);
+        assert_eq!(oai[0].role, "tool");
+        assert_eq!(oai[0].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(oai[0].content.as_deref(), Some("file contents here"));
+    }
+
+    #[test]
+    fn tool_result_with_error_gets_prefix() {
+        let msgs = vec![rusty_core::Message {
+            role: rusty_core::Role::User,
+            content: rusty_core::MessageContent::Blocks(vec![
+                rusty_core::ContentBlock::ToolResult {
+                    tool_use_id: "call_err".to_string(),
+                    content: "permission denied".to_string(),
+                    is_error: Some(true),
+                },
+            ]),
+        }];
+        let oai = rusty_messages_to_oai(&msgs);
+        assert_eq!(oai[0].content.as_deref(), Some("ERROR: permission denied"));
+    }
+
+    #[test]
+    fn multiple_tool_results_become_separate_messages() {
+        let msgs = vec![rusty_core::Message {
+            role: rusty_core::Role::User,
+            content: rusty_core::MessageContent::Blocks(vec![
+                rusty_core::ContentBlock::ToolResult {
+                    tool_use_id: "c1".to_string(),
+                    content: "result 1".to_string(),
+                    is_error: None,
+                },
+                rusty_core::ContentBlock::ToolResult {
+                    tool_use_id: "c2".to_string(),
+                    content: "result 2".to_string(),
+                    is_error: None,
+                },
+            ]),
+        }];
+        let oai = rusty_messages_to_oai(&msgs);
+        assert_eq!(oai.len(), 2);
+        assert_eq!(oai[0].tool_call_id.as_deref(), Some("c1"));
+        assert_eq!(oai[1].tool_call_id.as_deref(), Some("c2"));
+    }
+
+    #[test]
+    fn empty_messages_list() {
+        let oai = rusty_messages_to_oai(&[]);
+        assert!(oai.is_empty());
+    }
+
+    // ── rusty_tools_to_oai ───────────────────────────────────────────
+
+    #[test]
+    fn tools_converted_correctly() {
+        let tools = vec![rusty_core::ToolDefinition {
+            name: "bash".to_string(),
+            description: "Run a shell command".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        }];
+        let oai = rusty_tools_to_oai(&tools);
+        assert_eq!(oai.len(), 1);
+        assert_eq!(oai[0].tool_type, "function");
+        assert_eq!(oai[0].function.name, "bash");
+        assert_eq!(oai[0].function.description, "Run a shell command");
+    }
+
+    #[test]
+    fn empty_tools_list() {
+        let oai = rusty_tools_to_oai(&[]);
+        assert!(oai.is_empty());
+    }
 }

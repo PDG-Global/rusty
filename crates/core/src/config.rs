@@ -8,6 +8,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::permissions::PermissionMode;
 
+/// Where API credentials are stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialStore {
+    /// Stored in the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service).
+    Keyring,
+    /// Stored in `~/.rusty/settings.json` (fallback for environments without a keyring).
+    SettingsFile,
+}
+
+impl Default for CredentialStore {
+    fn default() -> Self {
+        Self::SettingsFile
+    }
+}
+
+impl std::fmt::Display for CredentialStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Keyring => write!(f, "OS Keyring"),
+            Self::SettingsFile => write!(f, "settings file"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub api_key: Option<String>,
@@ -23,6 +48,9 @@ pub struct Config {
     pub auto_compact: bool,
     pub thinking_budget: Option<u32>,
     pub temperature: Option<f32>,
+    /// When true, instructs the model to actively use `todowrite` for task tracking.
+    /// Implies Plan permission mode (read-only + todowrite).
+    pub plan_with_tasks: bool,
 }
 
 impl Default for Config {
@@ -41,6 +69,7 @@ impl Default for Config {
             auto_compact: true,
             thinking_budget: None,
             temperature: None,
+            plan_with_tasks: false,
         }
     }
 }
@@ -80,6 +109,7 @@ impl Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Settings {
     pub api_key: Option<String>,
     pub api_base: Option<String>,
@@ -89,19 +119,11 @@ pub struct Settings {
     /// Tool names that are permanently allowed without prompting
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    /// Where API credentials are stored (keyring or settings file).
+    #[serde(default)]
+    pub credential_store: CredentialStore,
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            api_key: None,
-            api_base: None,
-            default_model: None,
-            permissions: HashMap::new(),
-            allowed_tools: Vec::new(),
-        }
-    }
-}
 
 impl Settings {
     pub async fn load() -> anyhow::Result<Self> {
@@ -141,4 +163,139 @@ pub async fn add_permanent_permission(tool_key: &str) -> anyhow::Result<()> {
         settings.save().await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Config::default ──────────────────────────────────────────────
+
+    #[test]
+    fn default_config_has_expected_values() {
+        let cfg = Config::default();
+        assert_eq!(cfg.model, "mimo-v2.5-pro");
+        assert_eq!(cfg.max_tokens, 16384);
+        assert_eq!(cfg.max_turns, 50);
+        assert!(cfg.api_key.is_none());
+        assert!(cfg.api_base.is_none());
+        assert!(!cfg.verbose);
+        assert!(!cfg.no_claude_md);
+        assert!(cfg.auto_compact);
+        assert!(cfg.system_prompt.is_none());
+        assert!(cfg.append_system_prompt.is_none());
+        assert!(cfg.thinking_budget.is_none());
+        assert!(cfg.temperature.is_none());
+        assert!(!cfg.plan_with_tasks);
+    }
+
+    // ── Config::resolve_api_key ──────────────────────────────────────
+
+    #[test]
+    fn resolve_api_key_prefers_explicit() {
+        let cfg = Config {
+            api_key: Some("explicit-key".into()),
+            ..Config::default()
+        };
+        assert_eq!(cfg.resolve_api_key().as_deref(), Some("explicit-key"));
+    }
+
+    // ── Config::resolve_api_base ─────────────────────────────────────
+
+    #[test]
+    fn resolve_api_base_prefers_explicit() {
+        let cfg = Config {
+            api_base: Some("https://custom.api/v1".into()),
+            ..Config::default()
+        };
+        assert_eq!(cfg.resolve_api_base(), "https://custom.api/v1");
+    }
+
+    #[test]
+    fn resolve_api_base_defaults_to_xiaomi() {
+        // When no explicit base and no env var, should return the default
+        let cfg = Config {
+            api_base: None,
+            ..Config::default()
+        };
+        // We can't easily unset env vars in tests, but we can verify
+        // the default value is well-formed
+        let base = cfg.resolve_api_base();
+        assert!(base.starts_with("https://"), "base should be HTTPS: {base}");
+        assert!(base.ends_with("/v1") || base.contains("/v1/"), "base should point to v1: {base}");
+    }
+
+    // ── Config::path helpers ─────────────────────────────────────────
+
+    #[test]
+    fn config_dir_ends_with_dot_rusty() {
+        let dir = Config::config_dir();
+        assert_eq!(dir.file_name().unwrap().to_str().unwrap(), ".rusty");
+    }
+
+    #[test]
+    fn settings_path_contains_settings_json() {
+        let path = Config::settings_path();
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "settings.json");
+    }
+
+    #[test]
+    fn sessions_dir_contains_sessions() {
+        let path = Config::sessions_dir();
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "sessions");
+    }
+
+    #[test]
+    fn memory_dir_contains_memory() {
+        let path = Config::memory_dir();
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "memory");
+    }
+
+    // ── Settings::is_tool_allowed ────────────────────────────────────
+
+    #[test]
+    fn is_tool_allowed_true_for_allowed_tool() {
+        let settings = Settings {
+            allowed_tools: vec!["bash".into(), "file_read".into()],
+            ..Settings::default()
+        };
+        assert!(settings.is_tool_allowed("bash"));
+        assert!(settings.is_tool_allowed("file_read"));
+    }
+
+    #[test]
+    fn is_tool_allowed_false_for_missing_tool() {
+        let settings = Settings {
+            allowed_tools: vec!["bash".into()],
+            ..Settings::default()
+        };
+        assert!(!settings.is_tool_allowed("file_write"));
+        assert!(!settings.is_tool_allowed(""));
+    }
+
+    #[test]
+    fn is_tool_allowed_false_for_empty_list() {
+        let settings = Settings::default();
+        assert!(!settings.is_tool_allowed("anything"));
+    }
+
+    // ── Settings::allowed_tools_set ──────────────────────────────────
+
+    #[test]
+    fn allowed_tools_set_returns_correct_items() {
+        let settings = Settings {
+            allowed_tools: vec!["bash".into(), "file_read".into(), "bash".into()],
+            ..Settings::default()
+        };
+        let set = settings.allowed_tools_set();
+        assert_eq!(set.len(), 2); // deduplicates
+        assert!(set.contains("bash"));
+        assert!(set.contains("file_read"));
+    }
+
+    #[test]
+    fn allowed_tools_set_empty_for_default() {
+        let settings = Settings::default();
+        assert!(settings.allowed_tools_set().is_empty());
+    }
 }

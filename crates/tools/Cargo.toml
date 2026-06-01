@@ -19,3 +19,6 @@ glob.workspace = true
 regex.workspace = true
 similar.workspace = true
 reqwest.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

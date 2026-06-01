@@ -8,7 +8,9 @@ use app::{AgentEvent, AppState, MessageRole};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
@@ -29,7 +31,11 @@ pub async fn run(
 ) -> Result<(), anyhow::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -42,7 +48,11 @@ pub async fn run(
     let result = run_loop(&mut terminal, &mut app, &mut agent_rx, &on_input).await;
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        crossterm::event::DisableBracketedPaste
+    )?;
     terminal.show_cursor()?;
 
     result
@@ -87,6 +97,17 @@ async fn run_loop(
                         app.handle_key(key);
                     }
                 }
+                Event::Paste(text)
+                    if !app.is_streaming => {
+                        // Insert pasted text at cursor position, replacing newlines with spaces
+                        let sanitized: String = text
+                            .chars()
+                            .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                            .collect();
+                        app.input.insert_str(app.cursor_pos, &sanitized);
+                        app.cursor_pos += sanitized.len();
+                        app.needs_redraw = true;
+                    }
                 Event::Resize(_, _) => {
                     app.needs_redraw = true;
                 }
@@ -110,11 +131,11 @@ async fn run_loop(
                     AgentEvent::Error(msg) => {
                         app.push_error(&msg);
                     }
-                    AgentEvent::ToolStart(name) => {
-                        app.tool_started(&name);
+                    AgentEvent::ToolStart { name, arguments } => {
+                        app.tool_started(&name, &arguments);
                     }
-                    AgentEvent::ToolDone(name, is_error) => {
-                        app.tool_finished(&name, is_error);
+                    AgentEvent::ToolDone { name, is_error, output } => {
+                        app.tool_finished(&name, is_error, &output);
                     }
                     AgentEvent::Usage { input_tokens, output_tokens } => {
                         app.status.input_tokens = input_tokens;
