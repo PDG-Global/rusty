@@ -17,7 +17,7 @@ A lightweight AI coding agent that runs in your terminal. Connects to OpenAI-com
 - Tiered permission system (bypass, accept-edits, plan, default)
 - Interactive first-run setup wizard
 - API key management with OS keyring support (macOS Keychain, Windows Credential Manager, Linux Secret Service)
-- Multiple API presets (Xiaomi MiMo, Kimi/Moonshot, OpenAI, Ollama, DeepSeek)
+- Multiple API presets (Xiaomi MiMo, Kimi, OpenAI, Ollama, DeepSeek)
 
 ## Installation
 

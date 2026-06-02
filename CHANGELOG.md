@@ -20,7 +20,7 @@
 
 ### Features
 
-- **Model registry**: Hierarchical model entries with groups (Xiaomi, Moonshot, DeepSeek, etc.), per-model API keys, and multiple available models per provider. Registry takes priority over legacy flat settings for model selection.
+- **Model registry**: Hierarchical model entries with groups (Xiaomi, Kimi, DeepSeek, etc.), per-model API keys, and multiple available models per provider. Registry takes priority over legacy flat settings for model selection.
 - **Provider factory**: `create_provider()` maps `ProviderType` to concrete `LlmProvider` implementations. Currently all providers use the OpenAI-compatible protocol.
 - **Settings TUI**: `/settings` slash command opens a tabbed overlay with Models and General tabs for browsing, switching models, and adjusting runtime settings in-session.
 - **Task tracking is now default behavior**: The todowrite system prompt instructions and incomplete-task nudging are active in all modes. `--plan-with-tasks` is now a convenience alias for `--permissions plan`.

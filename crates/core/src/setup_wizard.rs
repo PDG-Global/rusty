@@ -18,7 +18,7 @@ pub struct ProviderPreset {
     pub name: &'static str,
     /// Registry identifier used for `active_model` and per-model API keys.
     pub entry_name: &'static str,
-    /// Provider group for hierarchical display: "Xiaomi", "Moonshot", etc.
+    /// Provider group for hierarchical display: "Xiaomi", "Kimi", etc.
     pub group: &'static str,
     pub api_base: &'static str,
     pub default_model: &'static str,
@@ -612,8 +612,8 @@ mod tests {
         let presets = ProviderPreset::all();
         assert_eq!(presets[0].name, "Xiaomi MiMo (Global)");
         assert_eq!(presets[1].name, "Xiaomi MiMo (China)");
-        assert_eq!(presets[2].name, "Moonshot (Global)");
-        assert_eq!(presets[3].name, "Moonshot (China)");
+        assert_eq!(presets[2].name, "Kimi (Global)");
+        assert_eq!(presets[3].name, "Kimi (China)");
         assert_eq!(presets[4].name, "DeepSeek (Global)");
         assert_eq!(presets[5].name, "DeepSeek (China)");
         assert_eq!(presets[6].name, "Zhipu GLM (Global)");
@@ -647,7 +647,7 @@ mod tests {
     fn provider_presets_have_groups() {
         let presets = ProviderPreset::all();
         assert_eq!(presets[0].group, "Xiaomi MiMo");
-        assert_eq!(presets[2].group, "Moonshot");
+        assert_eq!(presets[2].group, "Kimi");
         assert_eq!(presets[4].group, "DeepSeek");
         assert_eq!(presets[10].group, "OpenAI");
     }

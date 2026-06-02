@@ -522,7 +522,7 @@ pub enum SettingsTab {
 /// Group headers are not selectable — only model entries are.
 #[derive(Debug, Clone)]
 pub enum DisplayRow {
-    /// A group header (e.g. "Moonshot", "DeepSeek"). Not selectable.
+    /// A group header (e.g. "Kimi", "DeepSeek"). Not selectable.
     GroupHeader { name: String, count: usize },
     /// A model entry. The `usize` indexes into `SettingsState.models`.
     ModelEntry(usize),

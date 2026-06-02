@@ -19,7 +19,7 @@ use rusty_core::{ProviderType, ThinkingLevel};
 /// the settings overlay.
 pub fn default_model_list() -> Vec<ModelEntry> {
     vec![
-        // ── Moonshot ─────────────────────────────────────────────────────
+        // ── Kimi ─────────────────────────────────────────────────────────
         ModelEntry {
             group: "Kimi".into(),
             name: "kimi-global".into(),
