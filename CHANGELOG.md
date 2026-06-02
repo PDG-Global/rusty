@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.1.2 (2026-06-02)
+
+### Features
+
+- **Writing style rules**: System prompt now enforces consistent writing style: no emojis, British English spelling, no em-dashes, clear and concise phrasing, match existing tone.
+- **Bracketed paste support**: Terminal events are now drained in a batch loop with dedicated paste_mode, preventing mid-paste message sends in the TUI.
+
+### Fixes
+
+- **Token usage tracking**: Input tokens no longer double-count across conversation turns. The API's prompt_tokens value is now used as the authoritative context size.
+- **Token estimation**: Auto-compaction token estimation now includes system prompt and tool definition overhead, preventing delayed compaction in tool-heavy conversations.
+
+### Removed
+
+- Removed stale `build-release.sh` script.
+
 ## v0.1.1 (2026-06-02)
 
 ### Features

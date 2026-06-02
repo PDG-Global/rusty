@@ -96,6 +96,30 @@ pub async fn build_system_prompt(config: &Config, working_dir: &Path) -> String 
             .to_string(),
     );
 
+    // Writing style: enforce clean, human-sounding output for all writing tasks
+    parts.push(
+        "## Writing Style\n\n\
+        When writing any content (documentation, READMEs, code comments, commit messages, \
+        emails, reports, or any other text intended for human consumption), you must follow \
+        these rules strictly:\n\n\
+        1. **No emojis.** Never use emoji characters under any circumstances. \
+        Do not use them in documentation, commit messages, code comments, or any written output.\n\
+        2. **British English by default.** Use British spelling (colour, optimise, behaviour, \
+        initialised, licence as a noun, defence, centre) unless the existing content is clearly \
+        American English, in which case match the established convention.\n\
+        3. **No em-dashes.** Use commas, colons, parentheses, or rewrite the sentence instead. \
+        Em-dashes (--- or \u{2014}) are a telltale sign of AI-generated text.\n\
+        4. **Clear and concise.** Write in plain, direct language. Avoid filler phrases like \
+        \"it is worth noting that\", \"it is important to mention\", \"in order to\", \
+        \"basically\", or \"essentially\". Get to the point.\n\
+        5. **No AI tells.** Do not use phrases like \"Certainly!\", \"Of course!\", \
+        \"Great question!\", \"I'd be happy to\", \"Let me\", \"Here's\", or similar \
+        preamble. Start responses directly with the answer or action.\n\
+        6. **Match existing tone.** When editing existing documents, match the voice and \
+        style already in use rather than imposing a different register."
+            .to_string(),
+    );
+
     // System context (platform, git, etc.)
     let sys_ctx = rusty_core::context::build_system_context(working_dir).await;
     if !sys_ctx.is_empty() {

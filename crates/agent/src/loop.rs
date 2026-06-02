@@ -335,6 +335,7 @@ impl Agent {
             let mut assistant_text = String::new();
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
             let mut stop_reason = None;
+            let mut got_api_usage = false;
 
             loop {
                 let next_event = if let Some(c) = cancel {
@@ -379,10 +380,14 @@ impl Agent {
                         tc.arguments.push_str(&arguments_delta);
                     }
                     StreamEvent::Usage(usage) => {
-                        self.total_usage.input_tokens += usage.input_tokens;
-                        self.total_usage.output_tokens += usage.output_tokens;
-                        // Track current turn's input_tokens (not accumulated) — this is the actual context size
+                        got_api_usage = true;
+                        // Use the API's prompt_tokens as the authoritative context size.
+                        // Don't accumulate input_tokens across turns — each turn's prompt_tokens
+                        // already includes all prior messages, so accumulating would double-count.
                         self.current_context_tokens = usage.input_tokens;
+                        // For total_usage, track the max context seen (not a sum)
+                        self.total_usage.input_tokens = usage.input_tokens;
+                        self.total_usage.output_tokens += usage.output_tokens;
                         if let Some(cb) = on_usage {
                             cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens);
                         }
@@ -397,12 +402,17 @@ impl Agent {
                 }
             }
 
-            // Estimate tokens if the provider didn't report usage
+            // Estimate tokens only if the provider didn't report usage
             // (common with OpenAI-compatible providers that don't support stream_options)
-            {
-                let total_chars: usize = self.messages.iter().map(|m| m.get_all_text().len()).sum();
-                let estimated_input = (total_chars / 4) as u32;
+            if !got_api_usage {
+                let messages_chars: usize = self.messages.iter().map(|m| m.get_all_text().len()).sum();
+                let system_chars = self.system_prompt.len();
+                let tool_chars: usize = self.tools.values().map(|t| {
+                    t.name().len() + t.description().len() + t.input_schema().to_string().len()
+                }).sum();
+                let estimated_input = ((messages_chars + system_chars + tool_chars) / 4) as u32;
                 let estimated_output = (assistant_text.len() / 4) as u32;
+                self.current_context_tokens = estimated_input;
                 if estimated_input > self.total_usage.input_tokens {
                     self.total_usage.input_tokens = estimated_input;
                 }
@@ -410,8 +420,7 @@ impl Agent {
                     self.total_usage.output_tokens = estimated_output;
                 }
                 if let Some(cb) = on_usage {
-                    // In the estimation path, estimated_input approximates the full context size
-                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, estimated_input);
+                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens);
                 }
             }
 

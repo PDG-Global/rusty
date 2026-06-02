@@ -1346,12 +1346,13 @@ async fn tui_main_loop(
 
         // Poll terminal events (always, even during agent processing)
         if event::poll(Duration::from_millis(16))? {
+            loop {
             match event::read()? {
                 Event::Key(key) => {
                     // Handle session picker Enter specially
                     if key.code == KeyCode::Enter && app.session_picker.is_some() {
                         handle_session_picker_select(app, cmd_tx, working_dir).await;
-                        continue;
+                        break;
                     }
 
                     // Handle Enter — send message or queue while streaming
@@ -1359,6 +1360,7 @@ async fn tui_main_loop(
                         && !app.input.is_empty()
                         && app.permission_prompt.is_none()
                         && app.session_picker.is_none()
+                        && !app.paste_mode
                     {
                         let input = app.input.clone();
 
@@ -1430,19 +1432,13 @@ async fn tui_main_loop(
                         && app.session_picker.is_none()
                         && !app.is_renaming =>
                 {
-                    // Insert pasted text at cursor position, replacing newlines with spaces
-                    let sanitized: String = text
-                        .chars()
-                        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
-                        .collect();
-                    let byte_pos = app.cursor_pos;
-                    if byte_pos <= app.input.len() {
-                        app.input.insert_str(byte_pos, &sanitized);
-                        app.cursor_pos += sanitized.len();
-                        app.needs_redraw = true;
-                    }
+                    app.handle_bracketed_paste(text);
                 }
                 _ => {}
+            }
+            if !event::poll(Duration::ZERO)? {
+                break;
+            }
             }
         }
 
