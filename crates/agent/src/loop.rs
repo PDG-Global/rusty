@@ -36,8 +36,11 @@ fn smart_truncate_output(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
 
-    let slice = &text[..max_chars];
-    let cut_at = slice.rfind('\n').unwrap_or(max_chars);
+    // Find a safe byte boundary at or before max_chars to avoid panicking
+    // when max_chars falls in the middle of a multi-byte UTF-8 character.
+    let safe = text.floor_char_boundary(max_chars);
+    let slice = &text[..safe];
+    let cut_at = slice.rfind('\n').unwrap_or(safe);
 
     format!(
         "{}\n\n... (output truncated, showing {} of {} chars)",
@@ -814,6 +817,24 @@ mod tests {
         let result = smart_truncate_output(text, 6);
         // Should not panic on UTF-8 boundary
         assert!(result.contains("café"));
+    }
+
+    #[test]
+    fn truncate_mid_utf8_char_does_not_panic() {
+        // Each CJK character is 3 bytes in UTF-8.
+        // max_chars=5 lands in the middle of the second char (bytes 3..5).
+        // Before the fix this would panic with "byte index N is not a char boundary".
+        let text = "你好世界test";
+        let result = smart_truncate_output(text, 5);
+        assert!(result.contains("truncated"));
+    }
+
+    #[test]
+    fn truncate_emoji_mid_char() {
+        // Emoji are 4 bytes. max_chars=6 lands mid-emoji (bytes 4..6).
+        let text = "hi😀😀😀end";
+        let result = smart_truncate_output(text, 6);
+        assert!(result.contains("truncated"));
     }
 
     #[test]

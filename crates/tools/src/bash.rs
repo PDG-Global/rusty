@@ -21,9 +21,11 @@ fn smart_truncate(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
 
-    // Find the last newline before the limit
-    let slice = &text[..max_chars];
-    let cut_at = slice.rfind('\n').unwrap_or(max_chars);
+    // Find a safe byte boundary at or before max_chars to avoid panicking
+    // when max_chars lands inside a multi-byte UTF-8 character.
+    let safe = text.floor_char_boundary(max_chars);
+    let slice = &text[..safe];
+    let cut_at = slice.rfind('\n').unwrap_or(safe);
 
     format!(
         "{}\n\n... (output truncated, showing {} of {} chars — {} lines omitted)",

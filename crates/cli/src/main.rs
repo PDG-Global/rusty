@@ -227,7 +227,8 @@ async fn main() -> Result<()> {
                     .map(|m| {
                         let text = m.get_all_text();
                         if text.len() > 60 {
-                            format!("{}...", &text[..60])
+                            let safe = text.floor_char_boundary(60);
+                            format!("{}...", &text[..safe])
                         } else {
                             text
                         }
@@ -1612,7 +1613,8 @@ async fn handle_slash_command(
                                     let text = m.get_all_text();
                                     let first_line = text.lines().next().unwrap_or(&text);
                                     if first_line.len() > 50 {
-                                        format!("{}...", &first_line[..50])
+                                        let safe = first_line.floor_char_boundary(50);
+                                        format!("{}...", &first_line[..safe])
                                     } else {
                                         first_line.to_string()
                                     }

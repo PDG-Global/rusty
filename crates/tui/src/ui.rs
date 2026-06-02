@@ -1316,7 +1316,8 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
             };
             // Truncate if too long
             if display.len() > 40 {
-                format!("…{}", &display[display.len() - 39..])
+                let safe = display.floor_char_boundary(display.len() - 39);
+                format!("…{}", &display[safe..])
             } else {
                 display
             }
@@ -1658,13 +1659,15 @@ fn draw_session_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
         };
 
         let model_display = if session.model.len() > 14 {
-            format!("{}...", &session.model[..14])
+            let safe = session.model.floor_char_boundary(14);
+            format!("{}...", &session.model[..safe])
         } else {
             format!("{:14}", session.model)
         };
 
         let preview_display = if session.preview.len() > 30 {
-            format!("{}...", &session.preview[..30])
+            let safe = session.preview.floor_char_boundary(30);
+            format!("{}...", &session.preview[..safe])
         } else {
             session.preview.clone()
         };

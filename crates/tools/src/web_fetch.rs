@@ -166,10 +166,13 @@ impl Tool for WebFetchTool {
             .map_err(|e| RustyError::Tool(format!("Failed to read response: {e}")))?;
 
         let truncated = if body.len() > max_length {
+            // Floor to a valid UTF-8 char boundary to avoid panicking on
+            // multi-byte characters (CJK, emoji, accented, etc.).
+            let safe = body.floor_char_boundary(max_length);
             format!(
                 "{}...\n\n[Truncated: showing {} of {} chars]",
-                &body[..max_length],
-                max_length,
+                &body[..safe],
+                safe,
                 body.len()
             )
         } else {
