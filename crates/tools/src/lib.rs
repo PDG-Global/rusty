@@ -25,6 +25,11 @@ pub struct ToolContext {
 
 /// Resolve a path against the working directory and validate it stays within the sandbox.
 /// Returns the canonicalized absolute path, or an error if it escapes the working directory.
+///
+/// **Security note:** This function avoids `path.exists()` before `canonicalize()` to
+/// eliminate a TOCTOU (time-of-check-time-of-use) race window. Instead, it attempts
+/// `canonicalize()` directly and falls back to parent-only canonicalization if the
+/// file doesn't exist yet.
 pub fn resolve_path(path_str: &str, working_dir: &Path) -> Result<PathBuf, RustyError> {
     let raw = PathBuf::from(path_str);
     let joined = if raw.is_absolute() {
@@ -33,25 +38,25 @@ pub fn resolve_path(path_str: &str, working_dir: &Path) -> Result<PathBuf, Rusty
         working_dir.join(raw)
     };
 
-    // Canonicalize to resolve .., symlinks, etc.
-    // If the file doesn't exist yet, canonicalize the parent and append the filename.
-    let canonical = if joined.exists() {
-        joined
-            .canonicalize()
-            .map_err(|e| RustyError::Tool(format!("Cannot resolve path '{}': {e}", path_str)))?
-    } else {
-        // For new files, canonicalize the parent directory
-        let parent = joined.parent().unwrap_or(Path::new("."));
-        let file_name = joined
-            .file_name()
-            .ok_or_else(|| RustyError::Tool(format!("Invalid path: '{}'", path_str)))?;
-        let canon_parent = parent.canonicalize().map_err(|e| {
-            RustyError::Tool(format!(
-                "Cannot resolve parent directory for '{}': {e}",
-                path_str
-            ))
-        })?;
-        canon_parent.join(file_name)
+    // Attempt canonicalization directly — no preceding exists() check.
+    // This eliminates the TOCTOU window where a symlink could be created
+    // between the check and the canonicalize call.
+    let canonical = match joined.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            // File doesn't exist yet — canonicalize the parent and append filename.
+            let parent = joined.parent().unwrap_or(Path::new("."));
+            let file_name = joined
+                .file_name()
+                .ok_or_else(|| RustyError::Tool(format!("Invalid path: '{}'", path_str)))?;
+            let canon_parent = parent.canonicalize().map_err(|e| {
+                RustyError::Tool(format!(
+                    "Cannot resolve parent directory for '{}': {e}",
+                    path_str
+                ))
+            })?;
+            canon_parent.join(file_name)
+        }
     };
 
     let canon_working = working_dir.canonicalize().map_err(|e| {
@@ -67,6 +72,41 @@ pub fn resolve_path(path_str: &str, working_dir: &Path) -> Result<PathBuf, Rusty
     }
 
     Ok(canonical)
+}
+
+/// Post-write validation: verify the file at `path` hasn't been replaced by a symlink
+/// that points outside the sandbox.
+///
+/// Call this **after** a file write/edit/patch completes. If a TOCTOU attacker swapped the
+/// file for a symlink between resolution and write, this catches it by re-resolving the
+/// path and confirming it still lands within `working_dir`.
+///
+/// Returns `Ok(canonical_path)` if safe, or `Err` if the resolved path escapes the sandbox.
+pub fn verify_no_symlink_escape(path: &Path, working_dir: &Path) -> Result<PathBuf, RustyError> {
+    // Re-canonicalize — this now follows any symlinks that may have been created.
+    let resolved = path.canonicalize().map_err(|e| {
+        RustyError::Tool(format!(
+            "Post-write verification failed: cannot canonicalize '{}': {e}",
+            path.display()
+        ))
+    })?;
+
+    let canon_working = working_dir.canonicalize().map_err(|e| {
+        RustyError::Tool(format!("Cannot resolve working directory: {e}"))
+    })?;
+
+    if !resolved.starts_with(&canon_working) {
+        return Err(RustyError::Tool(format!(
+            "SECURITY: file at '{}' resolved to '{}' which is outside the working directory ({}). \
+             The file may have been replaced by a symlink. Write has been completed but the \
+             path should be investigated.",
+            path.display(),
+            resolved.display(),
+            canon_working.display()
+        )));
+    }
+
+    Ok(resolved)
 }
 
 #[derive(Debug, Clone)]
@@ -224,6 +264,30 @@ mod tests {
             let p = result.unwrap();
             assert!(p.ends_with("not_yet_created.txt"));
             assert!(p.starts_with(wd.canonicalize().unwrap()));
+        });
+    }
+
+    // ── resolve_path: symlink escape attempts ────────────────────────
+
+    #[test]
+    #[cfg(unix)]
+    fn resolve_symlink_escape_rejected() {
+        with_temp_dir(|wd| {
+            // Create a target file outside the working directory
+            let outside = tempfile::NamedTempFile::new().expect("temp file outside sandbox");
+            fs::write(outside.path(), "escaped!").unwrap();
+
+            // Create a symlink inside the working directory pointing outside
+            let link = wd.join("sneaky_link");
+            std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+
+            let result = resolve_path("sneaky_link", wd);
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("outside the working directory"),
+                "Expected 'outside' error, got: {msg}"
+            );
         });
     }
 

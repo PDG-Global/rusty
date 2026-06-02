@@ -62,6 +62,9 @@ impl Tool for FileWriteTool {
             .await
             .map_err(|e| RustyError::Tool(format!("Failed to write {}: {e}", path.display())))?;
 
+        // TOCTOU post-write check: verify the written file hasn't been swapped for an escaping symlink.
+        crate::verify_no_symlink_escape(&path, &ctx.working_dir)?;
+
         let line_count = content.lines().count();
         Ok(ToolResult::success(format!(
             "Wrote {} ({} lines)",

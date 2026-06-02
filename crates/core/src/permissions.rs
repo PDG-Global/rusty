@@ -67,12 +67,23 @@ pub enum BashClassification {
     Write,
 }
 
+/// Returns true if the command contains shell metacharacters that could enable
+/// command substitution (backticks, $()).
+fn contains_command_substitution(cmd: &str) -> bool {
+    cmd.contains('`') || cmd.contains("$(")
+}
+
 /// Classify whether a bash command is read-only or write/execute.
 pub fn classify_bash_command(command: &str) -> BashClassification {
     let trimmed = command.trim();
 
     // Redirects always mean write
     if trimmed.contains('>') || trimmed.contains(">>") {
+        return BashClassification::Write;
+    }
+
+    // Command substitution (backticks, $()) can execute arbitrary commands
+    if contains_command_substitution(trimmed) {
         return BashClassification::Write;
     }
 
@@ -108,7 +119,7 @@ fn split_shell_operators(cmd: &str) -> Vec<String> {
                 continue;
             }
         }
-        if chars[i] == '|' || chars[i] == ';' {
+        if chars[i] == '|' || chars[i] == ';' || chars[i] == '\n' {
             parts.push(current.clone());
             current.clear();
             i += 1;
@@ -138,11 +149,35 @@ fn classify_single_command(cmd: &str) -> BashClassification {
         | "pwd" | "which" | "env" | "printenv" | "whoami" | "date" | "uname"
         | "file" | "stat" | "du" | "df" | "tree" | "less" | "more" | "type"
         | "command" | "help" | "man" | "info" | "true" | "false" | "test" | "["
-        | "diff" | "comm" | "sort" | "uniq" | "cut" | "tr" | "sed" | "awk"
-        | "xargs" | "tee" | "basename" | "dirname" | "realpath" | "readlink"
+        | "diff" | "comm" | "sort" | "uniq" | "cut" | "tr"
+        | "basename" | "dirname" | "realpath" | "readlink"
         | "hostname" | "id" | "groups" | "tty" | "stty" | "clear" | "history"
         | "strings" | "hexdump" | "od" | "xxd" | "md5sum" | "sha256sum" => {
             return BashClassification::ReadOnly;
+        }
+        // sed: read-only unless -i (in-place edit)
+        "sed" => {
+            if parts.iter().any(|a| *a == "-i" || a.starts_with("-i")) {
+                return BashClassification::Write;
+            }
+            return BashClassification::ReadOnly;
+        }
+        // awk: read-only in typical usage; hard to detect all write patterns
+        // but safe for the common case (no redirection in the program text)
+        "awk" | "gawk" | "mawk" => {
+            let full = parts[1..].join(" ");
+            if full.contains('>') || full.contains("`") || full.contains("$(") {
+                return BashClassification::Write;
+            }
+            return BashClassification::ReadOnly;
+        }
+        // xargs: always write — it executes whatever command is piped into it
+        "xargs" => {
+            return BashClassification::Write;
+        }
+        // tee: always write — its purpose is to write to files
+        "tee" => {
+            return BashClassification::Write;
         }
         _ => {}
     }
@@ -172,6 +207,14 @@ fn classify_single_command(cmd: &str) -> BashClassification {
         return classify_docker_subcommand(&parts[1..]);
     }
 
+    // rustfmt: read-only with --check, write without
+    if bin == "rustfmt" {
+        if parts.iter().any(|a| *a == "--check") {
+            return BashClassification::ReadOnly;
+        }
+        return BashClassification::Write;
+    }
+
     // node/python with --version or --help is read-only
     if bin == "node" || bin == "python" || bin == "python3" || bin == "ruby" || bin == "perl" {
         if parts.len() > 1
@@ -193,12 +236,38 @@ fn classify_git_subcommand(args: &[&str]) -> BashClassification {
         None => return BashClassification::ReadOnly, // bare `git` is harmless
     };
 
+    // git config: read-only for `git config --get/list`, write for --global/--system/--edit/set
+    if sub == "config" {
+        let rest = &args[1..];
+        if rest.iter().any(|a| {
+            matches!(
+                *a,
+                "--global" | "--system" | "--edit" | "--replace-all" | "--unset" | "--unset-all"
+            ) || a.starts_with("--global=")
+                || a.starts_with("--system=")
+        }) {
+            return BashClassification::Write;
+        }
+        // `git config key value` (setting a value) has 2+ non-flag args
+        let non_flags: Vec<&str> = rest.iter().copied().filter(|a| !a.starts_with('-')).collect();
+        if non_flags.len() >= 2 {
+            return BashClassification::Write;
+        }
+        return BashClassification::ReadOnly;
+    }
+
+    // git bisect modifies .git/ state
+    if sub == "bisect" {
+        return BashClassification::Write;
+    }
+
     match sub {
+        // Read-only git subcommands
         "status" | "log" | "diff" | "show" | "branch" | "tag" | "remote"
         | "blame" | "shortlog" | "describe" | "rev-parse" | "rev-list"
         | "ls-files" | "ls-remote" | "ls-tree" | "cat-file" | "for-each-ref"
         | "symbolic-ref" | "name-rev" | "count-objects" | "version"
-        | "config" | "help" | "archive" | "grep" | "bisect" => {
+        | "help" | "archive" | "grep" => {
             BashClassification::ReadOnly
         }
         _ => BashClassification::Write,
@@ -211,8 +280,16 @@ fn classify_cargo_subcommand(args: &[&str]) -> BashClassification {
         None => return BashClassification::ReadOnly,
     };
 
+    // cargo fmt without --check modifies files in-place
+    if sub == "fmt" {
+        if args[1..].iter().any(|a| *a == "--check") {
+            return BashClassification::ReadOnly;
+        }
+        return BashClassification::Write;
+    }
+
     match sub {
-        "check" | "clippy" | "test" | "doc" | "fmt" | "tree" | "metadata"
+        "check" | "clippy" | "test" | "doc" | "tree" | "metadata"
         | "version" | "help" | "search" | "verify-project" | "locate-project"
         | "manifest" | "read-manifest" | "rustc" | "rustdoc" => {
             BashClassification::ReadOnly

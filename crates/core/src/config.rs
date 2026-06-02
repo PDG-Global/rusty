@@ -273,6 +273,19 @@ pub async fn add_permanent_permission(tool_key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Remove a tool name from the permanent allowlist in ~/.rusty/settings.json.
+/// Returns `true` if the tool was found and removed, `false` if it wasn't in the list.
+pub async fn remove_permanent_permission(tool_key: &str) -> anyhow::Result<bool> {
+    let mut settings = Settings::load().await.unwrap_or_default();
+    let before = settings.allowed_tools.len();
+    settings.allowed_tools.retain(|t| t != tool_key);
+    let removed = settings.allowed_tools.len() < before;
+    if removed {
+        settings.save().await?;
+    }
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

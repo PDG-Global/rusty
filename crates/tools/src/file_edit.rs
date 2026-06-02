@@ -83,6 +83,9 @@ impl Tool for FileEditTool {
             .await
             .map_err(|e| RustyError::Tool(format!("Failed to write {}: {e}", path.display())))?;
 
+        // TOCTOU post-write check: verify the edited file hasn't been swapped for an escaping symlink.
+        crate::verify_no_symlink_escape(&path, &ctx.working_dir)?;
+
         // Show a brief diff
         let diff = similar::TextDiff::from_lines(&content, &new_content);
         let summary: String = diff

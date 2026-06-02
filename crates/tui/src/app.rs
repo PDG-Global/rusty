@@ -206,6 +206,8 @@ pub enum SlashCommand {
     Model,
     /// /rename — rename the current session
     Rename,
+    /// /permissions — manage allowed tools (always-approve list)
+    Permissions,
 }
 
 impl SlashCommand {
@@ -223,6 +225,8 @@ impl SlashCommand {
             "/model" | "/m" => Some(SlashCommand::Model),
             "/rename" => Some(SlashCommand::Rename),
             _ if trimmed.starts_with("/rename ") => Some(SlashCommand::Rename),
+            "/permissions" | "/perms" => Some(SlashCommand::Permissions),
+            _ if trimmed.starts_with("/permissions ") || trimmed.starts_with("/perms ") => Some(SlashCommand::Permissions),
             _ => None,
         }
     }
@@ -238,6 +242,7 @@ impl SlashCommand {
             ("/copy", "Copy last assistant response to clipboard"),
             ("/model", "Show current model name"),
             ("/rename", "Rename the current session"),
+            ("/permissions", "Manage always-approved tools list"),
             ("/quit", "Exit rusty"),
         ]
     }
@@ -948,7 +953,7 @@ impl AppState {
     fn autocomplete_slash(&mut self) {
         let partial = self.input.trim().to_lowercase();
         let commands = [
-            "/help", "/init", "/resume", "/sessions", "/compact", "/clear", "/copy", "/model", "/rename", "/quit",
+            "/help", "/init", "/resume", "/sessions", "/compact", "/clear", "/copy", "/model", "/rename", "/permissions", "/quit",
         ];
         let matches: Vec<&str> = commands
             .iter()

@@ -600,6 +600,31 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
                     }
                     continue;
                 }
+                Some(rusty_tui::app::SlashCommand::Permissions) => {
+                    let settings = rusty_core::Settings::load().await.unwrap_or_default();
+                    let args = line.strip_prefix("/permissions").or_else(|| line.strip_prefix("/perms")).unwrap_or("").trim();
+                    if args.starts_with("remove ") {
+                        let tool_key = args.strip_prefix("remove ").unwrap().trim();
+                        if tool_key.is_empty() {
+                            println!("Usage: /permissions remove <tool_key>");
+                        } else {
+                            match rusty_core::remove_permanent_permission(tool_key).await {
+                                Ok(true) => println!("Removed '{tool_key}' from always-approve list."),
+                                Ok(false) => println!("'{tool_key}' was not in the always-approve list."),
+                                Err(e) => println!("Error: {e}"),
+                            }
+                        }
+                    } else if settings.allowed_tools.is_empty() {
+                        println!("No tools in always-approve list.");
+                    } else {
+                        println!("Always-approved tools:");
+                        for tool in &settings.allowed_tools {
+                            println!("  • {tool}");
+                        }
+                        println!("\nUse /permissions remove <tool_key> to revoke.");
+                    }
+                    continue;
+                }
                 Some(rusty_tui::app::SlashCommand::Resume) => {
                     let sessions = ConversationSession::list().await?;
                     if sessions.is_empty() {
@@ -1453,6 +1478,47 @@ async fn handle_slash_command(
                 app.session_name = Some(new_name.to_string());
                 app.push_system(&format!("Session renamed to: {new_name}"));
             }
+            app.input.clear();
+            app.cursor_pos = 0;
+            app.needs_redraw = true;
+        }
+        rusty_tui::app::SlashCommand::Permissions => {
+            let settings = rusty_core::Settings::load().await.unwrap_or_default();
+            let input = app.input.clone();
+            let args = input
+                .strip_prefix("/permissions")
+                .or_else(|| input.strip_prefix("/perms"))
+                .unwrap_or("")
+                .trim();
+
+            if args.starts_with("remove ") {
+                let tool_key = args.strip_prefix("remove ").unwrap().trim();
+                if tool_key.is_empty() {
+                    app.push_system("Usage: /permissions remove <tool_key>");
+                } else {
+                    match rusty_core::remove_permanent_permission(tool_key).await {
+                        Ok(true) => {
+                            app.push_system(&format!("Removed '{tool_key}' from always-approve list."))
+                        }
+                        Ok(false) => {
+                            app.push_system(&format!(
+                                "'{tool_key}' was not in the always-approve list."
+                            ))
+                        }
+                        Err(e) => app.push_system(&format!("Error: {e}")),
+                    }
+                }
+            } else if settings.allowed_tools.is_empty() {
+                app.push_system("No tools in always-approve list.");
+            } else {
+                let mut msg = String::from("Always-approved tools:\n");
+                for tool in &settings.allowed_tools {
+                    msg.push_str(&format!("  • {tool}\n"));
+                }
+                msg.push_str("\nUse /permissions remove <tool_key> to revoke.");
+                app.push_system(&msg);
+            }
+
             app.input.clear();
             app.cursor_pos = 0;
             app.needs_redraw = true;

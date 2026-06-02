@@ -78,6 +78,8 @@ impl Tool for ApplyPatchTool {
                     tokio::fs::write(&full_path, content).await.map_err(|e| {
                         RustyError::Tool(format!("Failed to write {}: {e}", full_path.display()))
                     })?;
+                    // TOCTOU post-write check
+                    crate::verify_no_symlink_escape(&full_path, &ctx.working_dir)?;
                     results.push(format!("  Added {}", path));
                 }
                 PatchOp::UpdateFile { path, hunks } => {
@@ -96,6 +98,9 @@ impl Tool for ApplyPatchTool {
                     tokio::fs::write(&full_path, &new_content).await.map_err(|e| {
                         RustyError::Tool(format!("Failed to write {}: {e}", full_path.display()))
                     })?;
+
+                    // TOCTOU post-write check
+                    crate::verify_no_symlink_escape(&full_path, &ctx.working_dir)?;
 
                     let diff = similar::TextDiff::from_lines(&original, &new_content);
                     let changes = diff
