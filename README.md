@@ -80,7 +80,7 @@ rusty --preset xiaomi --api-key YOUR_KEY --headless
 rusty --plan-with-tasks
 ```
 
-This enables read-only permissions and instructs the model to use the todowrite tool for structured task planning.
+This enables read-only permissions. Task tracking via the todowrite tool is always active; this flag is a convenience alias for `--permissions plan`.
 
 ### Resume a session
 
@@ -186,6 +186,8 @@ Available in TUI and headless stdin modes:
 | `/copy` | `/c` | Copy last response to clipboard |
 | `/model` | `/m` | Show current model |
 | `/rename` | | Rename current session |
+| `/permissions` | `/perms` | Manage always-approved tools list |
+| `/settings` | | Open settings/model registry TUI |
 | `/quit` | `/exit`, `/q` | Exit (saves session) |
 
 ## Tools

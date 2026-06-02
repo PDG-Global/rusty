@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rusty — Lightweight, Statically Compiled Terminal AI Agent</title>
+    <title>Rusty - Lightweight, Statically Compiled Terminal AI Agent</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -112,7 +112,7 @@
     <section class="relative py-20 sm:py-28 px-6 bg-white overflow-hidden">
         <div class="max-w-4xl mx-auto text-left relative z-10">
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-mono mb-8 bg-zinc-50 text-zinc-600 border-zinc-200/80">
-                <span>v0.1.0-alpha</span>
+                <span>v0.1.1</span>
                 <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
                 <span>Portable Static Binary</span>
             </div>
@@ -228,7 +228,7 @@
                 
                 <div class="text-zinc-400 font-light">// Environment audit complete. Launching Setup Wizard...</div>
                 
-                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.0-alpha</div>
+                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.1</div>
                 <div class="text-zinc-500">Settings database `~/.rusty/settings.json` not found. Entering safe first-run sequence.</div>
                 
                 <div class="space-y-1">
@@ -359,7 +359,7 @@
                                 <tr class="hover:bg-zinc-50/30 transition-colors">
                                     <td class="p-4 font-medium text-zinc-800">macOS WindowServer Load</td>
                                     <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~0.0% (99% Saved)</td>
-                                    <td class="p-4 text-zinc-500">25% – 50% CPU spikes (2+ sessions)</td>
+                                    <td class="p-4 text-zinc-500">25% - 50% CPU spikes (2+ sessions)</td>
                                     <td class="p-4 text-zinc-500">Variable (High on Tcl/Tk or Electron GUI)</td>
                                 </tr>
                                 <tr class="hover:bg-zinc-50/30 transition-colors">
@@ -656,20 +656,33 @@
             cli: [
                 { name: "-p, --prompt <TEXT>", type: "String", desc: "Launches the agent in non-interactive mode to process a specific, single task directly." },
                 { name: "--permissions <MODE>", type: "default | accept-edits | bypass | plan", desc: "Configures access boundaries. 'plan' triggers fully read-only code exploration." },
-                { name: "--plan-with-tasks", type: "Flag", desc: "Forces secure plan permissions and processes execution tasks via the localized 'todowrite' tool." },
+                { name: "--plan-with-tasks", type: "Flag", desc: "Convenience alias for --permissions plan. Task tracking via todowrite is always active." },
                 { name: "--setup", type: "Flag", desc: "Launches the secure interactive offline configuration wizard to link providers and keyring." },
                 { name: "--resume <SESSION_ID>", type: "String", desc: "Reloads chat memory buffers and localized context snapshots of a past workspace session." }
             ],
             tools: [
+                { name: "file_read", params: "path, offset?, limit?", desc: "Reads file contents with optional line offset and limit. Sandboxed to working directory." },
+                { name: "file_write", params: "path, content", desc: "Creates or overwrites files. Auto-creates parent directories. Sandboxed to working directory." },
                 { name: "file_edit", params: "path, old_text, new_text", desc: "Conducts surgical finding-and-replacing text updates. Inhibits complete model file rewrites." },
                 { name: "apply_patch", params: "path, patch", desc: "Parses, verifies, and applies system-compliant Git unified diff patches directly." },
-                { name: "bash", params: "command", desc: "Runs designated commands inside shell. Prompts user interactively on file modifications." },
-                { name: "todowrite", params: "action, tasks", desc: "Maps, updates, and checks off target task list arrays directly in the project environment." }
+                { name: "bash", params: "command", desc: "Runs designated commands inside shell. Read-only commands bypass write permissions automatically." },
+                { name: "grep", params: "pattern, path?, include?", desc: "Regex search across files with optional glob filtering. Caps at 200 results." },
+                { name: "glob", params: "pattern", desc: "File pattern matching to discover files by extension, name, or path structure." },
+                { name: "web_fetch", params: "url, max_length?", desc: "Fetches URL content via HTTP with configurable length limit. Read-only operation." },
+                { name: "todowrite", params: "tasks", desc: "Structured task list management. Accepts items with content, status, and priority. Persists across conversation." }
             ],
             commands: [
+                { name: "/help", alias: "/h, /?", desc: "Displays the list of available slash commands and their descriptions." },
                 { name: "/init", alias: "None", desc: "Scans project code files and compiles structural target workspace configurations to AGENTS.md." },
-                { name: "/compact", alias: "None", desc: "Compresses local conversation histories to maintain optimal context boundary footprints." },
+                { name: "/resume", alias: "/r", desc: "Restores a previously saved conversation session with full message history and context." },
                 { name: "/sessions", alias: "/s", desc: "Returns a clean catalog of active or historical session identifiers on the machine." },
+                { name: "/compact", alias: "None", desc: "Compresses local conversation histories to maintain optimal context boundary footprints." },
+                { name: "/clear", alias: "None", desc: "Clears the terminal display while preserving the active conversation state." },
+                { name: "/copy", alias: "/c", desc: "Copies the most recent assistant response to the system clipboard." },
+                { name: "/model", alias: "/m", desc: "Displays the currently active model identifier for the session." },
+                { name: "/rename", alias: "None", desc: "Assigns a human-readable label to the current conversation session." },
+                { name: "/permissions", alias: "/perms", desc: "Manages the always-approved tools allowlist for the current session." },
+                { name: "/settings", alias: "None", desc: "Opens the interactive TUI for provider configuration and model registry management." },
                 { name: "/quit", alias: "/q, /exit", desc: "Saves remaining local checkpoint buffers and cleanly terminates active terminal agent loops." }
             ]
         };
