@@ -61,8 +61,8 @@ pub enum ToolStatus {
 
 /// Callback for tool execution status — receives name and status
 pub type ToolCallback = Box<dyn Fn(&str, ToolStatus) + Send + Sync>;
-/// Callback for token usage updates
-pub type UsageCallback = Box<dyn Fn(u32, u32) + Send + Sync>;
+/// Callback for token usage updates — receives (total_input, total_output, current_context_tokens)
+pub type UsageCallback = Box<dyn Fn(u32, u32, u32) + Send + Sync>;
 /// Callback for thinking level changes
 pub type ThinkingLevelCallback = Box<dyn Fn(Option<ThinkingLevel>) + Send + Sync>;
 /// Callback for permission requests — receives a request, returns a decision future
@@ -121,6 +121,9 @@ pub struct Agent {
     messages: Vec<Message>,
     system_prompt: String,
     total_usage: UsageInfo,
+    /// The input token count from the most recent API call (current context size).
+    /// Unlike `total_usage.input_tokens`, this is NOT accumulated across turns.
+    current_context_tokens: u32,
     permission_mode: PermissionMode,
     max_turns: u32,
     permission_callback: Option<PermissionCallback>,
@@ -162,6 +165,7 @@ impl Agent {
             messages: Vec::new(),
             system_prompt,
             total_usage: UsageInfo::default(),
+            current_context_tokens: 0,
             permission_mode: PermissionMode::Default,
             max_turns: 50,
             permission_callback: None,
@@ -286,6 +290,16 @@ impl Agent {
             let context_pct = estimated_tokens as f64 / context_window as f64;
             let base_level = self.config.resolve_thinking_level();
             let effective_level = dynamic_thinking_level(base_level, context_pct, turn as u32);
+            // If there are incomplete tasks, ensure at least Normal thinking
+            let has_active_tasks = self.has_incomplete_tasks();
+            let effective_level = if has_active_tasks {
+                match effective_level {
+                    ThinkingLevel::Minimal => ThinkingLevel::Normal,
+                    other => other,
+                }
+            } else {
+                effective_level
+            };
             let thinking_budget = Some(level_to_budget(effective_level));
 
             if effective_level != base_level {
@@ -367,8 +381,10 @@ impl Agent {
                     StreamEvent::Usage(usage) => {
                         self.total_usage.input_tokens += usage.input_tokens;
                         self.total_usage.output_tokens += usage.output_tokens;
+                        // Track current turn's input_tokens (not accumulated) — this is the actual context size
+                        self.current_context_tokens = usage.input_tokens;
                         if let Some(cb) = on_usage {
-                            cb(self.total_usage.input_tokens, self.total_usage.output_tokens);
+                            cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens);
                         }
                     }
                     StreamEvent::Done { stop_reason: sr } => {
@@ -394,7 +410,8 @@ impl Agent {
                     self.total_usage.output_tokens = estimated_output;
                 }
                 if let Some(cb) = on_usage {
-                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens);
+                    // In the estimation path, estimated_input approximates the full context size
+                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, estimated_input);
                 }
             }
 
@@ -487,10 +504,9 @@ impl Agent {
             // Check stop reason
             match stop_reason.as_deref() {
                 Some("end_turn") | None => {
-                    // If we're in task-tracking mode and there are incomplete tasks,
-                    // nudge the model to continue instead of letting it stop.
-                    if self.config.plan_with_tasks
-                        && self.task_nudge_count < 3
+                    // If there are incomplete tasks, nudge the model to continue
+                    // instead of letting it stop.
+                    if self.task_nudge_count < 3
                         && self.has_incomplete_tasks()
                     {
                         warn!(

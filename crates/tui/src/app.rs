@@ -163,7 +163,7 @@ pub enum AgentEvent {
     ToolDone { name: String, is_error: bool, output: String },
     ResponseComplete(String),
     Error(String),
-    Usage { input_tokens: u32, output_tokens: u32 },
+    Usage { input_tokens: u32, output_tokens: u32, current_context_tokens: u32 },
     ThinkingLevel(Option<rusty_core::ThinkingLevel>),
     ModelChanged(String),
 }
@@ -188,6 +188,174 @@ pub enum TuiCommand {
     SetThinkingLevel(Option<rusty_core::ThinkingLevel>),
     /// Set permission mode
     SetPermissionMode(rusty_core::PermissionMode),
+    /// Add a new model entry to settings
+    AddModel(rusty_core::ModelEntry),
+    /// Update an existing model entry (old_name, new_entry)
+    UpdateModel(String, rusty_core::ModelEntry),
+    /// Delete a model entry by name
+    DeleteModel(String),
+    /// Set API key for a model (name, key)
+    SetModelApiKey(String, String),
+}
+
+/// Mode for the model form popup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelFormMode {
+    Add,
+    Edit(String), // Edit stores the original name for update
+}
+
+/// Editable fields in the model form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFormField {
+    Name,
+    ModelId,
+    Provider,
+    ApiBase,
+    ApiKey,
+    MaxTokens,
+    Temperature,
+    ThinkingBudget,
+}
+
+impl ModelFormField {
+    pub const ALL: [ModelFormField; 8] = [
+        ModelFormField::Name,
+        ModelFormField::ModelId,
+        ModelFormField::Provider,
+        ModelFormField::ApiBase,
+        ModelFormField::ApiKey,
+        ModelFormField::MaxTokens,
+        ModelFormField::Temperature,
+        ModelFormField::ThinkingBudget,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::ModelId => "Model ID",
+            Self::Provider => "Provider",
+            Self::ApiBase => "API Base URL",
+            Self::ApiKey => "API Key",
+            Self::MaxTokens => "Max Tokens",
+            Self::Temperature => "Temperature",
+            Self::ThinkingBudget => "Thinking Budget",
+        }
+    }
+}
+
+/// State for the model add/edit form popup.
+#[derive(Debug, Clone)]
+pub struct ModelFormState {
+    pub mode: ModelFormMode,
+    pub current_field: usize,
+    pub field_buffers: [String; 8],
+    pub field_cursors: [usize; 8],
+    pub error: Option<String>,
+    pub confirm_delete: bool,
+}
+
+impl ModelFormState {
+    /// Create a blank form for adding a new model.
+    pub fn new_add() -> Self {
+        Self {
+            mode: ModelFormMode::Add,
+            current_field: 0,
+            field_buffers: [
+                String::new(),       // Name
+                String::new(),       // Model ID
+                "OpenAI".to_string(), // Provider (default)
+                String::new(),       // API Base
+                String::new(),       // API Key
+                "16384".to_string(), // Max Tokens
+                String::new(),       // Temperature
+                String::new(),       // Thinking Budget
+            ],
+            field_cursors: [0, 0, 7, 0, 0, 5, 0, 0], // cursor after "OpenAI" and "16384"
+            error: None,
+            confirm_delete: false,
+        }
+    }
+
+    /// Create a form pre-filled from an existing model entry for editing.
+    pub fn new_edit(entry: &crate::model_registry::ModelEntry) -> Self {
+        Self {
+            mode: ModelFormMode::Edit(entry.name.clone()),
+            current_field: 0,
+            field_buffers: [
+                entry.name.clone(),
+                entry.model.clone(),
+                entry.provider.to_string(),
+                entry.api_base.clone(),
+                String::new(), // API key not shown for security
+                entry.max_tokens.to_string(),
+                entry.temperature.map(|t| format!("{t}")).unwrap_or_default(),
+                entry.thinking_budget.map(|t| t.to_string()).unwrap_or_default(),
+            ],
+            field_cursors: [
+                entry.name.len(),
+                entry.model.len(),
+                entry.provider.to_string().len(),
+                entry.api_base.len(),
+                0,
+                entry.max_tokens.to_string().len(),
+                entry.temperature.map(|t| format!("{t}").len()).unwrap_or(0),
+                entry.thinking_budget.map(|t| t.to_string().len()).unwrap_or(0),
+            ],
+            error: None,
+            confirm_delete: false,
+        }
+    }
+
+    /// Validate the form and return a ModelEntry if valid.
+    pub fn build_entry(&self) -> Result<rusty_core::ModelEntry, String> {
+        let name = self.field_buffers[0].trim().to_string();
+        let model_id = self.field_buffers[1].trim().to_string();
+        let api_base = self.field_buffers[3].trim().to_string();
+        let max_tokens_str = self.field_buffers[5].trim().to_string();
+        let temp_str = self.field_buffers[6].trim().to_string();
+        let budget_str = self.field_buffers[7].trim().to_string();
+
+        if name.is_empty() {
+            return Err("Name is required".into());
+        }
+        if model_id.is_empty() {
+            return Err("Model ID is required".into());
+        }
+        if api_base.is_empty() {
+            return Err("API Base URL is required".into());
+        }
+
+        let max_tokens: u32 = if max_tokens_str.is_empty() {
+            16384
+        } else {
+            max_tokens_str.parse().map_err(|_| "Max Tokens must be a number")?
+        };
+
+        let temperature: Option<f32> = if temp_str.is_empty() {
+            None
+        } else {
+            Some(temp_str.parse().map_err(|_| "Temperature must be a number")?)
+        };
+
+        let thinking_budget: Option<u32> = if budget_str.is_empty() {
+            None
+        } else {
+            Some(budget_str.parse().map_err(|_| "Thinking Budget must be a number")?)
+        };
+
+        Ok(rusty_core::ModelEntry {
+            group: String::new(),
+            name,
+            provider: rusty_core::ProviderType::OpenAI,
+            api_base,
+            model: model_id,
+            available_models: Vec::new(),
+            max_tokens,
+            temperature,
+            thinking_budget,
+        })
+    }
 }
 
 /// Slash commands the user can invoke
@@ -747,12 +915,18 @@ pub struct AppState {
     /// Set by the Enter handler in the Models tab — the TUI main loop
     /// picks this up and sends `TuiCommand::SwitchModel` to the agent task.
     pub model_switch_requested: Option<String>,
+    /// Model form popup state (add/edit model).
+    pub model_form: Option<ModelFormState>,
     /// Set by the Enter handler in the General tab — the TUI main loop
     /// picks this up and sends `TuiCommand::SetThinkingLevel` to the agent task.
     pub thinking_level_change_requested: Option<Option<rusty_core::ThinkingLevel>>,
     /// Set by the Enter handler in the General tab — the TUI main loop
     /// picks this up and sends `TuiCommand::SetPermissionMode` to the agent task.
     pub permission_mode_change_requested: Option<rusty_core::PermissionMode>,
+    /// Queue of commands dispatched by key handlers that the main event loop
+    /// picks up and sends to the agent task (needed because key handlers
+    /// borrow `self` mutably so we can't send directly).
+    pub pending_commands: std::collections::VecDeque<TuiCommand>,
 }
 
 pub struct PendingTool {
@@ -781,6 +955,7 @@ pub struct StatusInfo {
     pub model: String,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    pub current_context_tokens: u32,
     pub is_processing: bool,
     pub thinking_level: Option<rusty_core::ThinkingLevel>,
 }
@@ -822,8 +997,10 @@ impl Default for AppState {
             last_key_time: None,
             paste_mode: false,
             model_switch_requested: None,
+            model_form: None,
             thinking_level_change_requested: None,
             permission_mode_change_requested: None,
+            pending_commands: std::collections::VecDeque::new(),
         }
     }
 }
@@ -996,6 +1173,138 @@ impl AppState {
             return;
         }
 
+        // If model form is active, handle it exclusively
+        if let Some(ref mut form) = self.model_form {
+            // If in delete confirmation mode
+            if form.confirm_delete {
+                match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        if let ModelFormMode::Edit(ref name) = form.mode {
+                            let model_name = name.clone();
+                            self.model_form = None;
+                            self.pending_commands.push_back(TuiCommand::DeleteModel(model_name));
+                        }
+                        self.needs_redraw = true;
+                    }
+                    _ => {
+                        form.confirm_delete = false;
+                        self.needs_redraw = true;
+                    }
+                }
+                return;
+            }
+
+            match key.code {
+                KeyCode::Esc => {
+                    self.model_form = None;
+                    self.needs_redraw = true;
+                }
+                KeyCode::Tab | KeyCode::Down => {
+                    form.current_field = (form.current_field + 1) % ModelFormField::ALL.len();
+                    form.error = None;
+                    self.needs_redraw = true;
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    form.current_field = if form.current_field == 0 {
+                        ModelFormField::ALL.len() - 1
+                    } else {
+                        form.current_field - 1
+                    };
+                    form.error = None;
+                    self.needs_redraw = true;
+                }
+                KeyCode::Left => {
+                    let cursor = &mut form.field_cursors[form.current_field];
+                    *cursor = cursor.saturating_sub(1);
+                    self.needs_redraw = true;
+                }
+                KeyCode::Right => {
+                    let buf_len = form.field_buffers[form.current_field].len();
+                    let cursor = &mut form.field_cursors[form.current_field];
+                    if *cursor < buf_len {
+                        *cursor += 1;
+                    }
+                    self.needs_redraw = true;
+                }
+                KeyCode::Char('d') if form.mode != ModelFormMode::Add && form.current_field == 0 => {
+                    // 'd' on Name field in edit mode triggers delete confirmation
+                    form.confirm_delete = true;
+                    self.needs_redraw = true;
+                }
+                KeyCode::Enter => {
+                    // Submit the form
+                    match form.build_entry() {
+                        Ok(entry) => {
+                            let api_key = form.field_buffers[4].trim().to_string();
+                            let model_name = entry.name.clone();
+                            let old_name = match &form.mode {
+                                ModelFormMode::Edit(name) => Some(name.clone()),
+                                ModelFormMode::Add => None,
+                            };
+                            self.model_form = None;
+                            if let Some(old) = old_name {
+                                self.pending_commands.push_back(TuiCommand::UpdateModel(old, entry));
+                            } else {
+                                self.pending_commands.push_back(TuiCommand::AddModel(entry));
+                            }
+                            if !api_key.is_empty() {
+                                self.pending_commands.push_back(TuiCommand::SetModelApiKey(model_name, api_key));
+                            }
+                            self.needs_redraw = true;
+                        }
+                        Err(e) => {
+                            form.error = Some(e);
+                            self.needs_redraw = true;
+                        }
+                    }
+                }
+                KeyCode::Char(c) => {
+                    // Provider field is read-only
+                    if ModelFormField::ALL[form.current_field] == ModelFormField::Provider {
+                        return;
+                    }
+                    let buf = &mut form.field_buffers[form.current_field];
+                    let cursor = form.field_cursors[form.current_field];
+                    if cursor <= buf.len() {
+                        buf.insert(cursor, c);
+                        form.field_cursors[form.current_field] += c.len_utf8();
+                        form.error = None;
+                        self.needs_redraw = true;
+                    }
+                }
+                KeyCode::Backspace => {
+                    let cursor = form.field_cursors[form.current_field];
+                    if cursor > 0 {
+                        let buf = &mut form.field_buffers[form.current_field];
+                        let prev = buf[..cursor]
+                            .char_indices()
+                            .last()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        buf.drain(prev..cursor);
+                        form.field_cursors[form.current_field] = prev;
+                        form.error = None;
+                        self.needs_redraw = true;
+                    }
+                }
+                KeyCode::Delete => {
+                    let cursor = form.field_cursors[form.current_field];
+                    let buf = &mut form.field_buffers[form.current_field];
+                    if cursor < buf.len() {
+                        let next = buf[cursor..]
+                            .char_indices()
+                            .nth(1)
+                            .map(|(i, _)| cursor + i)
+                            .unwrap_or(buf.len());
+                        buf.drain(cursor..next);
+                        self.needs_redraw = true;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // If settings overlay is active, handle it exclusively
         if let Some(ref mut settings) = self.settings_overlay {
             match key.code {
@@ -1054,6 +1363,44 @@ impl AppState {
                     if settings.active_tab == SettingsTab::Models {
                         settings.toggle_expand();
                         self.needs_redraw = true;
+                    }
+                    return;
+                }
+                KeyCode::Char('a') => {
+                    // Add new model (only in Models tab)
+                    if settings.active_tab == SettingsTab::Models {
+                        self.model_form = Some(ModelFormState::new_add());
+                        self.settings_overlay = None;
+                        self.needs_redraw = true;
+                    }
+                    return;
+                }
+                KeyCode::Char('e') => {
+                    // Edit selected model (only in Models tab)
+                    if settings.active_tab == SettingsTab::Models {
+                        if let Some(entry) = settings.selected_model() {
+                            let entry_clone = entry.clone();
+                            self.model_form = Some(ModelFormState::new_edit(&entry_clone));
+                            self.settings_overlay = None;
+                            self.needs_redraw = true;
+                        }
+                    }
+                    return;
+                }
+                KeyCode::Char('d') => {
+                    // Delete selected model (only in Models tab)
+                    if settings.active_tab == SettingsTab::Models {
+                        if let Some(entry) = settings.selected_model() {
+                            let name = entry.name.clone();
+                            // Check if it's the active model
+                            if settings.active_model_name == name {
+                                // Cannot delete active model — could show error but for now just ignore
+                                self.needs_redraw = true;
+                            } else {
+                                self.pending_commands.push_back(TuiCommand::DeleteModel(name));
+                                self.needs_redraw = true;
+                            }
+                        }
                     }
                     return;
                 }

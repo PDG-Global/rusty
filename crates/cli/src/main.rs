@@ -959,9 +959,9 @@ async fn run_tui(
                         let _ = tx_tool.send(AgentTaskEvent::Event(event));
                     });
                     let tx_usage = event_tx.clone();
-                    let usage_cb: rusty_agent::r#loop::UsageCallback = Box::new(move |input_tokens, output_tokens| {
+                    let usage_cb: rusty_agent::r#loop::UsageCallback = Box::new(move |input_tokens, output_tokens, current_context_tokens| {
                         let _ = tx_usage.send(AgentTaskEvent::Event(
-                            rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens },
+                            rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, current_context_tokens },
                         ));
                     });
                     let tx_thinking_level = event_tx.clone();
@@ -1195,6 +1195,54 @@ async fn run_tui(
                                 ));
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
+                            Some(rusty_tui::app::TuiCommand::AddModel(entry)) => {
+                                let mut s = Settings::load().await.unwrap_or_default();
+                                if s.models.iter().any(|m| m.name == entry.name) {
+                                    let _ = event_tx.send(AgentTaskEvent::Event(
+                                        rusty_tui::app::AgentEvent::Error(format!("Model '{}' already exists.", entry.name)),
+                                    ));
+                                } else {
+                                    s.models.push(entry.clone());
+                                    let _ = s.save().await;
+                                    let _ = event_tx.send(AgentTaskEvent::Event(
+                                        rusty_tui::app::AgentEvent::ResponseComplete(format!("Model '{}' added.", entry.name)),
+                                    ));
+                                }
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::UpdateModel(old_name, entry)) => {
+                                let mut s = Settings::load().await.unwrap_or_default();
+                                if let Some(idx) = s.models.iter().position(|m| m.name == old_name) {
+                                    s.models[idx] = entry.clone();
+                                    let _ = s.save().await;
+                                    let _ = event_tx.send(AgentTaskEvent::Event(
+                                        rusty_tui::app::AgentEvent::ResponseComplete(format!("Model '{}' updated.", entry.name)),
+                                    ));
+                                } else {
+                                    let _ = event_tx.send(AgentTaskEvent::Event(
+                                        rusty_tui::app::AgentEvent::Error(format!("Model '{}' not found.", old_name)),
+                                    ));
+                                }
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::DeleteModel(name)) => {
+                                let mut s = Settings::load().await.unwrap_or_default();
+                                s.models.retain(|m| m.name != name);
+                                let _ = s.save().await;
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::ResponseComplete(format!("Model '{}' deleted.", name)),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::SetModelApiKey(name, key)) => {
+                                let mut s = Settings::load().await.unwrap_or_default();
+                                s.set_model_api_key(&name, &key);
+                                let _ = s.save().await;
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::ResponseComplete(format!("API key set for '{}'.", name)),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
                             Some(rusty_tui::app::TuiCommand::Cancel) => {}
                             None => {
                                 if let Some((handle, _)) = current_run.take() {
@@ -1425,9 +1473,10 @@ async fn tui_main_loop(
                     rusty_tui::app::AgentEvent::ToolDone { name, is_error, output } => {
                         app.tool_finished(&name, is_error, &output);
                     }
-                    rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens } => {
+                    rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, current_context_tokens } => {
                         app.status.input_tokens = input_tokens;
                         app.status.output_tokens = output_tokens;
+                        app.status.current_context_tokens = current_context_tokens;
                         app.needs_redraw = true;
                     }
                     rusty_tui::app::AgentEvent::ThinkingLevel(level) => {

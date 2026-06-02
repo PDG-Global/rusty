@@ -460,6 +460,11 @@ impl Settings {
         None
     }
 
+    /// Set the API key for a specific model entry in `api_keys`.
+    pub fn set_model_api_key(&mut self, name: &str, key: &str) {
+        self.api_keys.insert(name.to_string(), key.to_string());
+    }
+
     /// Switch the active model by entry name. Returns `false` if no such entry.
     pub fn switch_active_model(&mut self, name: &str) -> bool {
         if self.models.iter().any(|m| m.name == name) {

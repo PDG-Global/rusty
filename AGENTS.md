@@ -153,6 +153,18 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 
 ---
 
+## Agent Task Management
+
+When given multi-step work, follow this discipline:
+
+1. **Plan first**: Before any code changes, create a task list with `todowrite`. Think through dependencies, ordering, and edge cases. A vague task list leads to incomplete work.
+2. **Update in real-time**: Mark each task `in_progress` when starting it, and `completed` immediately when done. Never batch updates at the end.
+3. **Drive to completion**: Work through every task without stopping midway to wait for prompting. If blocked, flag the blocker explicitly rather than going silent.
+4. **Verify before marking done**: Run `cargo check`, tests, or other verification before marking a task complete. "Done" means verified.
+5. **Don't abandon work**: If a task list exists and work is unfinished, keep going. The user shouldn't have to ask you to continue.
+
+---
+
 ## Key Architectural Patterns
 
 1. **Streaming-first**: All LLM interaction uses SSE streaming. The provider yields `Stream<Item = Result<StreamEvent, RustyError>>` consumed event-by-event by the agent loop.

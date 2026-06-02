@@ -77,26 +77,24 @@ pub async fn build_system_prompt(config: &Config, working_dir: &Path) -> String 
             .to_string(),
     );
 
-    // Plan-with-tasks mode: instruct model to actively use todowrite
-    if config.plan_with_tasks {
-        parts.push(
-            "## Task Tracking Mode\n\n\
-            You are operating in plan-with-tasks mode. You must actively use the `todowrite` \
-            tool to plan and track your work.\n\n\
-            Rules:\n\
-            1. Break the user's request into concrete sub-tasks using `todowrite` with status `pending`.\n\
-            2. As you work through each sub-task, update its status to `in_progress` before starting \
-            and `completed` when done.\n\
-            3. If you discover additional work needed, add new tasks to the list.\n\
-            4. Keep the task list visible and up-to-date throughout the conversation.\n\
-            5. If you are uncertain what tasks remain, re-read your most recent `todowrite` call.\n\n\
-            CRITICAL: You must NOT stop or emit `end_turn` until every task in your most recent \
-            `todowrite` call is either `completed` or `cancelled`. If you attempt to stop with \
-            incomplete tasks, the system will automatically remind you to continue. \
-            Verify your task list is fully complete before concluding your response."
-                .to_string(),
-        );
-    }
+    // Task tracking: instruct model to actively use todowrite for multi-step work
+    parts.push(
+        "## Task Tracking\n\n\
+        When a task involves multiple steps, you must actively use the `todowrite` \
+        tool to plan and track your work.\n\n\
+        Rules:\n\
+        1. Break the user's request into concrete sub-tasks using `todowrite` with status `pending`.\n\
+        2. As you work through each sub-task, update its status to `in_progress` before starting \
+        and `completed` when done.\n\
+        3. If you discover additional work needed, add new tasks to the list.\n\
+        4. Keep the task list visible and up-to-date throughout the conversation.\n\
+        5. If you are uncertain what tasks remain, re-read your most recent `todowrite` call.\n\n\
+        CRITICAL: You must NOT stop or emit `end_turn` until every task in your most recent \
+        `todowrite` call is either `completed` or `cancelled`. If you attempt to stop with \
+        incomplete tasks, the system will automatically remind you to continue. \
+        Verify your task list is fully complete before concluding your response."
+            .to_string(),
+    );
 
     // System context (platform, git, etc.)
     let sys_ctx = rusty_core::context::build_system_context(working_dir).await;

@@ -84,7 +84,18 @@ impl LlmProvider for OpenAiProvider {
     }
 
     async fn create_message(&self, request: MessageRequest) -> Result<MessageResponse, RustyError> {
-        let oai_messages = rusty_messages_to_oai(&request.messages);
+        let mut oai_messages = rusty_messages_to_oai(&request.messages);
+        if let Some(system) = &request.system {
+            oai_messages.insert(
+                0,
+                OaiMessage {
+                    role: "system".to_string(),
+                    content: Some(system.clone()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
+        }
         let oai_tools = rusty_tools_to_oai(&request.tools);
 
         let oai_req = OaiRequest {
@@ -139,7 +150,18 @@ impl LlmProvider for OpenAiProvider {
         request: MessageRequest,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, RustyError>> + Send>>, RustyError>
     {
-        let oai_messages = rusty_messages_to_oai(&request.messages);
+        let mut oai_messages = rusty_messages_to_oai(&request.messages);
+        if let Some(system) = &request.system {
+            oai_messages.insert(
+                0,
+                OaiMessage {
+                    role: "system".to_string(),
+                    content: Some(system.clone()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            );
+        }
         let oai_tools = rusty_tools_to_oai(&request.tools);
 
         let oai_req = OaiRequest {

@@ -89,6 +89,18 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
         }
         draw_settings(app, area, buf);
     }
+
+    // Overlay model form if active (separate from settings overlay)
+    if app.model_form.is_some() {
+        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                buf[(x, y)].set_char(' ').set_style(dim_style);
+            }
+        }
+        let form_area = centered_rect(60, 70, area);
+        draw_model_form(app, form_area, buf);
+    }
 }
 
 fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
@@ -1267,9 +1279,9 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Context-window usage warning
     let context_window = rusty_core::model_context_window(&app.status.model);
-    let total_estimated = app.status.input_tokens + app.status.output_tokens;
+    let current_context = app.status.current_context_tokens;
     let usage_pct = if context_window > 0 {
-        (total_estimated as f64 / context_window as f64 * 100.0) as u32
+        (current_context as f64 / context_window as f64 * 100.0) as u32
     } else {
         0
     };
@@ -1320,9 +1332,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
     let spans = vec![
         Span::styled(format!(" {} ", app.status.model), model_style),
         Span::styled("| ", separator_style),
-        Span::styled(format!("prompt: {} ", app.status.input_tokens), token_style),
-        Span::styled(format!("completion: {} ", app.status.output_tokens), token_style),
-        Span::styled(format!("({}%) ", usage_pct.min(999)), token_style),
+        Span::styled(format!("context: {}/{} ({}%) ", current_context, context_window, usage_pct.min(999)), token_style),
         Span::styled("| ", separator_style),
         Span::styled(format!("{state_text} "), state_style),
         think_span,
@@ -1824,4 +1834,144 @@ fn draw_file_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     let paragraph = Paragraph::new(lines);
     Widget::render(&paragraph, inner, buf);
+}
+
+/// Draw the model add/edit form as a centered popup.
+fn draw_model_form(app: &AppState, area: Rect, buf: &mut Buffer) {
+    use crate::app::ModelFormField;
+
+    let form = match &app.model_form {
+        Some(f) => f,
+        None => return,
+    };
+
+    let title = match &form.mode {
+        crate::app::ModelFormMode::Add => " Add Model ",
+        crate::app::ModelFormMode::Edit(_) => " Edit Model ",
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+
+    let inner = block.inner(area);
+    block.render(area, buf);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // fields
+            Constraint::Length(2), // error/help
+            Constraint::Length(1), // footer
+        ])
+        .split(inner);
+
+    let field_area = chunks[0];
+    let help_area = chunks[1];
+    let footer_area = chunks[2];
+
+    // Build field labels and values
+    let field_labels = [
+        "Name",
+        "Model ID",
+        "Provider",
+        "API Base",
+        "API Key",
+        "Max Tokens",
+        "Temperature",
+        "Thinking Budget",
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, label) in field_labels.iter().enumerate() {
+        let active_field = ModelFormField::ALL[form.current_field];
+        let is_active = active_field == ModelFormField::ALL[i];
+        let is_provider = active_field == ModelFormField::Provider;
+
+        // Cursor indicator
+        let cursor = if is_active { "▸ " } else { "  " };
+        let label_style = if is_active {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let value = &form.field_buffers[i];
+        let display_value = if i == 4 && !is_active {
+            // Mask API key when not editing
+            "*".repeat(value.len().min(20))
+        } else if value.is_empty() {
+            "<empty>".to_string()
+        } else {
+            value.clone()
+        };
+
+        let value_style = if value.is_empty() && !is_active {
+            Style::default().fg(Color::DarkGray)
+        } else if is_active {
+            Style::default().fg(Color::White)
+        } else if i == 4 {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        // Cursor field editing indicator
+        let cursor_char = if is_active && !is_provider {
+            // Show cursor position within the field
+            let pos = form.field_cursors[form.current_field].min(display_value.len());
+            format!("{}▌", &display_value[..pos])
+        } else {
+            display_value.clone()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(format!("{cursor}{label:>16}: "), label_style),
+            Span::styled(cursor_char, value_style),
+        ]));
+
+        // If provider field is active, show hint
+        if is_provider && is_active {
+            lines.push(Line::from(Span::styled(
+                "                    (OpenAI-compatible only)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
+
+    let fields_para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    Widget::render(&fields_para, field_area, buf);
+
+    // Error or help text
+    let mut help_lines: Vec<Line> = Vec::new();
+    if let Some(err) = &form.error {
+        help_lines.push(Line::from(Span::styled(
+            format!("  Error: {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    } else {
+        help_lines.push(Line::from(Span::styled(
+            "  Tab/Shift+Tab to navigate fields",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let help_para = Paragraph::new(help_lines);
+    Widget::render(&help_para, help_area, buf);
+
+    // Footer
+    let footer_line = Line::from(vec![
+        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" Save  "),
+        Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" Cancel"),
+        Span::raw("  "),
+        Span::styled("[Tab]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" Next Field  "),
+        Span::styled("[Del]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" Clear Field"),
+    ]);
+    let footer_para = Paragraph::new(footer_line);
+    Widget::render(&footer_para, footer_area, buf);
 }
