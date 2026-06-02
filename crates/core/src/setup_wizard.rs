@@ -8,7 +8,7 @@
 //! in containers, and in CI environments.
 
 use crate::credentials::CredentialManager;
-use crate::{Config, CredentialStore, RustyError, Settings};
+use crate::{Config, CredentialStore, ModelEntry, ProviderType, RustyError, Settings};
 use crossterm::style::Stylize;
 use std::io::{self, BufRead, Write};
 
@@ -16,8 +16,14 @@ use std::io::{self, BufRead, Write};
 #[derive(Debug, Clone)]
 pub struct ProviderPreset {
     pub name: &'static str,
+    /// Registry identifier used for `active_model` and per-model API keys.
+    pub entry_name: &'static str,
+    /// Provider group for hierarchical display: "Xiaomi", "Moonshot", etc.
+    pub group: &'static str,
     pub api_base: &'static str,
     pub default_model: &'static str,
+    /// All model identifiers available on this endpoint.
+    pub available_models: &'static [&'static str],
     pub needs_key: bool,
 }
 
@@ -26,39 +32,120 @@ impl ProviderPreset {
     pub fn all() -> Vec<Self> {
         vec![
             Self {
-                name: "Xiaomi (MiMo)",
-                api_base: "https://token-plan-cn.xiaomimimo.com/v1",
+                name: "Xiaomi MiMo (Global)",
+                entry_name: "xiaomi-global",
+                group: "Xiaomi MiMo",
+                api_base: "https://token-plan.xiaomimimo.com/v1",
                 default_model: "mimo-v2.5-pro",
+                available_models: &["mimo-v2.5-pro", "mimo-v2.5-flash"],
                 needs_key: true,
             },
             Self {
-                name: "Kimi (Moonshot)",
+                name: "Xiaomi MiMo (China)",
+                entry_name: "xiaomi-cn",
+                group: "Xiaomi MiMo",
+                api_base: "https://token-plan-cn.xiaomimimo.com/v1",
+                default_model: "mimo-v2.5-pro",
+                available_models: &["mimo-v2.5-pro", "mimo-v2.5-flash"],
+                needs_key: true,
+            },
+            Self {
+                name: "Moonshot (Global)",
+                entry_name: "moonshot-global",
+                group: "Moonshot",
+                api_base: "https://api.moonshot.ai/v1",
+                default_model: "kimi-k2.6",
+                available_models: &["kimi-k2.6", "kimi-k2.5"],
+                needs_key: true,
+            },
+            Self {
+                name: "Moonshot (China)",
+                entry_name: "moonshot-cn",
+                group: "Moonshot",
                 api_base: "https://api.moonshot.cn/v1",
-                default_model: "kimi-k2",
+                default_model: "kimi-k2.6",
+                available_models: &["kimi-k2.6", "kimi-k2.5"],
+                needs_key: true,
+            },
+            Self {
+                name: "DeepSeek (Global)",
+                entry_name: "deepseek-global",
+                group: "DeepSeek",
+                api_base: "https://api.deepseek.com",
+                default_model: "deepseek-v4-pro",
+                available_models: &["deepseek-v4-pro", "deepseek-v4-flash"],
+                needs_key: true,
+            },
+            Self {
+                name: "DeepSeek (China)",
+                entry_name: "deepseek-cn",
+                group: "DeepSeek",
+                api_base: "https://api.deepseek.com",
+                default_model: "deepseek-v4-pro",
+                available_models: &["deepseek-v4-pro", "deepseek-v4-flash"],
+                needs_key: true,
+            },
+            Self {
+                name: "Zhipu GLM (Global)",
+                entry_name: "zhipu-global",
+                group: "Zhipu GLM",
+                api_base: "https://open.bigmodel.cn/api/paas/v4/",
+                default_model: "glm-5.1",
+                available_models: &["glm-5.1", "glm-5-turbo", "glm-4.6"],
+                needs_key: true,
+            },
+            Self {
+                name: "Zhipu GLM (China)",
+                entry_name: "zhipu-cn",
+                group: "Zhipu GLM",
+                api_base: "https://api.z.ai/api/coding/paas/v4",
+                default_model: "glm-5.1",
+                available_models: &["glm-5.1", "glm-5-turbo", "glm-4.6"],
+                needs_key: true,
+            },
+            Self {
+                name: "MiniMax (Global)",
+                entry_name: "minimax-global",
+                group: "MiniMax",
+                api_base: "https://api.minimax.io/v1",
+                default_model: "MiniMax-M2.7",
+                available_models: &["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"],
+                needs_key: true,
+            },
+            Self {
+                name: "MiniMax (China)",
+                entry_name: "minimax-cn",
+                group: "MiniMax",
+                api_base: "https://api.minimaxi.com/v1",
+                default_model: "MiniMax-M2.7",
+                available_models: &["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"],
                 needs_key: true,
             },
             Self {
                 name: "OpenAI",
+                entry_name: "openai",
+                group: "OpenAI",
                 api_base: "https://api.openai.com/v1",
-                default_model: "gpt-4.1",
-                needs_key: true,
-            },
-            Self {
-                name: "DeepSeek",
-                api_base: "https://api.deepseek.com/v1",
-                default_model: "deepseek-chat",
+                default_model: "gpt-5.5",
+                available_models: &["gpt-5.5", "gpt-5.4", "gpt-5.4-nano", "o3", "o4-mini"],
                 needs_key: true,
             },
             Self {
                 name: "Ollama (local)",
+                entry_name: "ollama",
+                group: "Ollama",
                 api_base: "http://localhost:11434/v1",
                 default_model: "qwen3:8b",
+                available_models: &[],
                 needs_key: false,
             },
             Self {
                 name: "Custom (OpenAI-compatible)",
+                entry_name: "custom",
+                group: "Custom",
                 api_base: "http://localhost:8080/v1",
                 default_model: "default",
+                available_models: &[],
                 needs_key: true,
             },
         ]
@@ -280,17 +367,35 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
     }
 
     // --- Store API key ---
-    #[allow(unused_variables)]
-    if let Some(ref _key) = api_key_value {
+    let mut actual_store = credential_store;
+    if let Some(ref key) = api_key_value {
         match credential_store {
             CredentialStore::Keyring => {
                 #[cfg(feature = "os-keyring")]
                 {
-                    CredentialManager::store_in_keyring(_key)?;
-                    println!(
-                        "  {} API key stored in OS Keychain / Credential Manager.",
-                        "✓".green()
-                    );
+                    CredentialManager::store_in_keyring(key)?;
+                    // Validate read-back to catch keyring environments that
+                    // silently fail (sandboxed terminals, permission issues).
+                    match CredentialManager::get_from_keyring() {
+                        Some(read_back) if read_back == *key => {
+                            println!(
+                                "  {} API key stored in OS Keychain / Credential Manager.",
+                                "✓".green()
+                            );
+                        }
+                        _ => {
+                            println!(
+                                "  {} Keyring write appeared to succeed but read-back failed.",
+                                "⚠".yellow()
+                            );
+                            println!(
+                                "  {}",
+                                "   Falling back to settings file storage."
+                                    .dark_grey()
+                            );
+                            actual_store = CredentialStore::SettingsFile;
+                        }
+                    }
                 }
                 #[cfg(not(feature = "os-keyring"))]
                 {
@@ -300,7 +405,6 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
                 }
             }
             CredentialStore::SettingsFile => {
-                // Will be saved into settings.json below alongside other config
                 println!("  {} API key will be saved in settings file.", "✓".green());
             }
         }
@@ -316,14 +420,29 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
         Settings::default()
     };
 
-    settings.api_base = Some(api_base.trim_end_matches('/').to_string());
-    settings.default_model = Some(model.trim().to_string());
-    // Only store api_key in settings file when using settings file store
-    if credential_store == CredentialStore::SettingsFile {
-        settings.api_key = api_key_value;
+    // Build model registry entry from the preset and user input.
+    let entry = ModelEntry {
+        group: preset.group.to_string(),
+        name: preset.entry_name.to_string(),
+        provider: ProviderType::OpenAI,
+        api_base: api_base.trim_end_matches('/').to_string(),
+        model: model.trim().to_string(),
+        available_models: preset.available_models.iter().map(|s| s.to_string()).collect(),
+        max_tokens: 16_384,
+        temperature: Some(0.7),
+        thinking_budget: None,
+    };
+    settings.add_model(entry);
+    settings.active_model = preset.entry_name.to_string();
+
+    // Store API key in per-model settings when using settings file (or keyring fallback).
+    if actual_store == CredentialStore::SettingsFile {
+        if let Some(ref key) = api_key_value {
+            settings.api_keys.insert(preset.entry_name.to_string(), key.clone());
+        }
     }
 
-    settings.credential_store = credential_store;
+    settings.credential_store = actual_store;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -485,18 +604,65 @@ mod tests {
 
     #[test]
     fn provider_presets_count() {
-        assert_eq!(ProviderPreset::all().len(), 6);
+        assert_eq!(ProviderPreset::all().len(), 13);
     }
 
     #[test]
     fn provider_presets_have_names() {
         let presets = ProviderPreset::all();
-        assert_eq!(presets[0].name, "Xiaomi (MiMo)");
-        assert_eq!(presets[1].name, "Kimi (Moonshot)");
-        assert_eq!(presets[2].name, "OpenAI");
-        assert_eq!(presets[3].name, "DeepSeek");
-        assert_eq!(presets[4].name, "Ollama (local)");
-        assert!(presets[5].name.starts_with("Custom"));
+        assert_eq!(presets[0].name, "Xiaomi MiMo (Global)");
+        assert_eq!(presets[1].name, "Xiaomi MiMo (China)");
+        assert_eq!(presets[2].name, "Moonshot (Global)");
+        assert_eq!(presets[3].name, "Moonshot (China)");
+        assert_eq!(presets[4].name, "DeepSeek (Global)");
+        assert_eq!(presets[5].name, "DeepSeek (China)");
+        assert_eq!(presets[6].name, "Zhipu GLM (Global)");
+        assert_eq!(presets[7].name, "Zhipu GLM (China)");
+        assert_eq!(presets[8].name, "MiniMax (Global)");
+        assert_eq!(presets[9].name, "MiniMax (China)");
+        assert_eq!(presets[10].name, "OpenAI");
+        assert_eq!(presets[11].name, "Ollama (local)");
+        assert!(presets[12].name.starts_with("Custom"));
+    }
+
+    #[test]
+    fn provider_presets_have_entry_names() {
+        let presets = ProviderPreset::all();
+        assert_eq!(presets[0].entry_name, "xiaomi-global");
+        assert_eq!(presets[1].entry_name, "xiaomi-cn");
+        assert_eq!(presets[2].entry_name, "moonshot-global");
+        assert_eq!(presets[3].entry_name, "moonshot-cn");
+        assert_eq!(presets[4].entry_name, "deepseek-global");
+        assert_eq!(presets[5].entry_name, "deepseek-cn");
+        assert_eq!(presets[6].entry_name, "zhipu-global");
+        assert_eq!(presets[7].entry_name, "zhipu-cn");
+        assert_eq!(presets[8].entry_name, "minimax-global");
+        assert_eq!(presets[9].entry_name, "minimax-cn");
+        assert_eq!(presets[10].entry_name, "openai");
+        assert_eq!(presets[11].entry_name, "ollama");
+        assert_eq!(presets[12].entry_name, "custom");
+    }
+
+    #[test]
+    fn provider_presets_have_groups() {
+        let presets = ProviderPreset::all();
+        assert_eq!(presets[0].group, "Xiaomi MiMo");
+        assert_eq!(presets[2].group, "Moonshot");
+        assert_eq!(presets[4].group, "DeepSeek");
+        assert_eq!(presets[10].group, "OpenAI");
+    }
+
+    #[test]
+    fn provider_presets_have_available_models() {
+        let presets = ProviderPreset::all();
+        // OpenAI should have multiple models
+        let openai = &presets[10];
+        assert!(!openai.available_models.is_empty());
+        assert!(openai.available_models.contains(&"gpt-5.5"));
+
+        // Ollama has no hardcoded alternatives
+        let ollama = &presets[11];
+        assert!(ollama.available_models.is_empty());
     }
 
     #[test]

@@ -13,7 +13,7 @@ use rusty_agent::{Agent, AgentCallbacks};
 use rusty_core::permissions::{PermissionDecision, PermissionRequest};
 use rusty_core::{Config, ConversationSession, CredentialManager, PermissionMode, Settings};
 use rusty_core::setup_wizard::{run_setup_wizard, is_first_run};
-use rusty_provider::{OpenAiProvider, ProviderConfig};
+use rusty_provider::ProviderConfig;
 use rusty_tools::{all_tools, Tool};
 use std::collections::HashSet;
 use std::io;
@@ -191,6 +191,10 @@ async fn main() -> Result<()> {
     // Handle --setup or auto-detect first run
     let needs_setup = args.setup || is_first_run();
     if needs_setup {
+        if !args.setup {
+            eprintln!("No configuration found. Starting setup wizard...");
+            eprintln!();
+        }
         let completed = run_setup_wizard().await?;
         if !completed {
             // User cancelled the wizard
@@ -274,9 +278,9 @@ async fn main() -> Result<()> {
                 }
             }
             "deepseek" => {
-                config.api_base = Some("https://api.deepseek.com/v1".to_string());
+                config.api_base = Some("https://api.deepseek.com".to_string());
                 if args.model.is_none() && settings.default_model.is_none() {
-                    config.model = "deepseek-chat".to_string();
+                    config.model = "deepseek-v4-pro".to_string();
                 }
             }
             "ollama" => {
@@ -293,17 +297,39 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Capture allowlist before settings are consumed
+    // Apply settings/registry defaults (model registry takes priority over legacy fields)
+    let active_entry = settings.active_model_entry().cloned();
     let permanent_allowlist = settings.allowed_tools_set();
 
-    // Apply settings (explicit flags override preset)
-    if let Some(key) = settings.api_key.clone().or(args.api_key) {
-        config.api_key = Some(key);
+    if let Some(ref entry) = active_entry {
+        // Use model registry as the primary source of defaults
+        if config.api_base.is_none() {
+            config.api_base = Some(entry.api_base.clone());
+        }
+        config.model = entry.model.clone();
+        if args.max_tokens.is_none() {
+            config.max_tokens = entry.max_tokens;
+        }
+        if args.temperature.is_none() {
+            config.temperature = entry.temperature;
+        }
+        if args.thinking_budget.is_none() {
+            config.thinking_budget = entry.thinking_budget;
+        }
+    } else {
+        // Legacy flat settings — only fill gaps not set by preset/CLI
+        if config.api_base.is_none() {
+            if let Some(base) = args.api_base.clone().or(settings.api_base.clone()) {
+                config.api_base = Some(base);
+            }
+        }
+        if let Some(model) = settings.default_model.clone() {
+            config.model = model;
+        }
     }
-    if let Some(base) = settings.api_base.clone().or(args.api_base) {
-        config.api_base = Some(base);
-    }
-    if let Some(model) = args.model.or(settings.default_model.clone()) {
+
+    // CLI overrides (always win over presets, registry, and legacy settings)
+    if let Some(model) = args.model {
         config.model = model;
     }
     if let Some(max_tokens) = args.max_tokens {
@@ -328,9 +354,14 @@ async fn main() -> Result<()> {
         config.plan_with_tasks = true;
     }
 
-    // Build provider — resolve API key using CredentialManager (handles
-    // env vars → keyring → settings file, matching wizard's storage order)
-    let api_key = CredentialManager::resolve_api_key(&settings);
+    // Build provider — resolve API key in priority order:
+    //   1. --api-key CLI flag (highest priority)
+    //   2. Per-model key from registry (model_registry[name].api_keys)
+    //   3. CredentialManager (env var → keyring → settings.api_key)
+    //   4. Auto-launch setup wizard if nothing found
+    let api_key = args.api_key
+        .or_else(|| if active_entry.is_some() { settings.resolve_active_api_key() } else { None })
+        .or_else(|| CredentialManager::resolve_api_key(&settings));
     let api_base = config.resolve_api_base();
 
     let api_key = match api_key {
@@ -360,17 +391,38 @@ async fn main() -> Result<()> {
         }
     };
 
-    let provider_config = ProviderConfig {
-        api_key,
-        api_base,
-        model: config.model.clone(),
-        max_tokens: config.max_tokens,
-        temperature: config.temperature,
-        thinking_budget: config.thinking_budget,
+    // Create provider via factory — routes to the right implementation
+    // based on the model entry's ProviderType.
+    // We use `config` (not the raw entry) so that CLI overrides (--model, --api-base)
+    // are respected even when a registry entry is active.
+    let provider: Arc<dyn rusty_provider::LlmProvider> = if let Some(ref entry) = active_entry {
+        rusty_provider::create_provider(
+            entry.provider,
+            ProviderConfig {
+                api_key,
+                api_base: config.api_base.clone().unwrap_or_else(|| entry.api_base.clone()),
+                model: config.model.clone(),
+                max_tokens: config.max_tokens,
+                temperature: config.temperature,
+                thinking_budget: config.thinking_budget,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else {
+        // Legacy path: no registry entry, build config from flat fields
+        rusty_provider::create_provider(
+            rusty_core::ProviderType::OpenAI,
+            ProviderConfig {
+                api_key,
+                api_base,
+                model: config.model.clone(),
+                max_tokens: config.max_tokens,
+                temperature: config.temperature,
+                thinking_budget: config.thinking_budget,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?
     };
-
-    let provider = OpenAiProvider::new(provider_config)?;
-    let provider: Arc<dyn rusty_provider::LlmProvider> = Arc::new(provider);
 
     // Build system prompt (must happen before make_agent_tool so sub-agents
     // receive the full context including AGENTS.md/CLAUDE.md, platform info, etc.)
@@ -437,7 +489,7 @@ async fn main() -> Result<()> {
         run_headless_stdin(&mut agent, &config.model).await?;
     } else {
         // Interactive TUI mode — moves agent into spawned task, handles session save internally
-        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path).await?;
+        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings).await?;
         return Ok(());
     }
 
@@ -657,6 +709,10 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
                     }
                     continue;
                 }
+                Some(rusty_tui::app::SlashCommand::Settings) => {
+                    println!("Settings panel is not available in headless mode. Edit ~/.rusty/settings.json directly.");
+                    continue;
+                }
                 None => {
                     println!("Unknown command: {line}. Type /help for available commands.");
                     continue;
@@ -756,6 +812,7 @@ async fn run_tui(
     config: &Config,
     working_dir: &PathBuf,
     log_path: &std::path::Path,
+    mut settings: Settings,
 ) -> Result<()> {
     use rusty_core::Message;
 
@@ -1049,6 +1106,95 @@ async fn run_tui(
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
                             Some(rusty_tui::app::TuiCommand::SessionRename(_name)) => {}
+                            Some(rusty_tui::app::TuiCommand::SwitchModel(model_key)) => {
+                                let mut settings = Settings::load().await.unwrap_or_default();
+                                match settings.models.iter().find(|m| m.name == model_key).cloned() {
+                                    Some(entry) => {
+                                        let api_key = settings.resolve_api_key_for(&entry.name)
+                                            .or_else(|| CredentialManager::resolve_api_key(&settings))
+                                            .or_else(|| settings.api_key.clone());
+                                        match api_key {
+                                            Some(key) => {
+                                                let provider_config = ProviderConfig {
+                                                    api_key: key,
+                                                    api_base: entry.api_base.clone(),
+                                                    model: entry.model.clone(),
+                                                    max_tokens: entry.max_tokens,
+                                                    temperature: entry.temperature,
+                                                    thinking_budget: entry.thinking_budget,
+                                                };
+                                                match rusty_provider::create_provider(entry.provider, provider_config) {
+                                                    Ok(new_provider) => {
+                                                        let mut agent = agent_arc.lock().await;
+                                                        agent.set_provider(new_provider);
+                                                        agent.config_mut().model = entry.model.clone();
+                                                        agent.config_mut().api_base = Some(entry.api_base.clone());
+                                                        agent.config_mut().max_tokens = entry.max_tokens;
+                                                        agent.config_mut().temperature = entry.temperature;
+                                                        agent.config_mut().thinking_budget = entry.thinking_budget;
+                                                        drop(agent);
+                                                        let _ = settings.switch_active_model(&model_key);
+                                                        let _ = settings.save().await;
+                                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                                            rusty_tui::app::AgentEvent::ModelChanged(entry.model.clone()),
+                                                        ));
+                                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                                            rusty_tui::app::AgentEvent::ResponseComplete(
+                                                                format!("Switched to model: {} ({})", entry.name, entry.model)
+                                                            ),
+                                                        ));
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                                            rusty_tui::app::AgentEvent::Error(format!("Failed to create provider: {e}")),
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                                    rusty_tui::app::AgentEvent::Error("No API key found for selected model.".to_string()),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                            rusty_tui::app::AgentEvent::Error(format!("Model '{}' not found in registry.", model_key)),
+                                        ));
+                                    }
+                                }
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::SetThinkingLevel(level)) => {
+                                let mut agent = agent_arc.lock().await;
+                                agent.config_mut().thinking_level = level;
+                                drop(agent);
+                                settings.thinking_level = level;
+                                let _ = settings.save().await;
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::ThinkingLevel(level),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::ResponseComplete(
+                                        format!("Thinking level set to: {}", level.map(|l| l.to_string()).unwrap_or_else(|| "default".to_string()))
+                                    ),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::SetPermissionMode(mode)) => {
+                                let mut agent = agent_arc.lock().await;
+                                agent.set_permission_mode(mode);
+                                drop(agent);
+                                settings.permission_mode = Some(mode);
+                                let _ = settings.save().await;
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::ResponseComplete(
+                                        format!("Permission mode set to: {mode:?}")
+                                    ),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
                             Some(rusty_tui::app::TuiCommand::Cancel) => {}
                             None => {
                                 if let Some((handle, _)) = current_run.take() {
@@ -1214,6 +1360,15 @@ async fn tui_main_loop(
                         if app.take_cancel_requested() {
                             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Cancel);
                         }
+                        if let Some(model_key) = app.model_switch_requested.take() {
+                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SwitchModel(model_key));
+                        }
+                        if let Some(level) = app.thinking_level_change_requested.take() {
+                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetThinkingLevel(level));
+                        }
+                        if let Some(mode) = app.permission_mode_change_requested.take() {
+                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetPermissionMode(mode));
+                        }
                         if had_perm {
                             app.needs_redraw = true;
                         }
@@ -1253,8 +1408,13 @@ async fn tui_main_loop(
                     rusty_tui::app::AgentEvent::ThinkingDelta(text) => {
                         app.push_thinking_text(&text);
                     }
-                    rusty_tui::app::AgentEvent::ResponseComplete(_) => {
+                    rusty_tui::app::AgentEvent::ResponseComplete(msg) => {
                         app.finish_streaming();
+                        // Show non-empty completion messages as system feedback
+                        // (e.g. model switch confirmations) when there's no streaming content
+                        if !msg.is_empty() && app.messages.last().map_or(true, |m| m.role != rusty_tui::app::MessageRole::Assistant) {
+                            app.push_system(&msg);
+                        }
                     }
                     rusty_tui::app::AgentEvent::Error(msg) => {
                         app.push_error(&msg);
@@ -1272,6 +1432,10 @@ async fn tui_main_loop(
                     }
                     rusty_tui::app::AgentEvent::ThinkingLevel(level) => {
                         app.status.thinking_level = level;
+                        app.needs_redraw = true;
+                    }
+                    rusty_tui::app::AgentEvent::ModelChanged(model) => {
+                        app.status.model = model;
                         app.needs_redraw = true;
                     }
                 },
@@ -1525,6 +1689,30 @@ async fn handle_slash_command(
         }
         rusty_tui::app::SlashCommand::Quit => {
             app.should_quit = true;
+        }
+        rusty_tui::app::SlashCommand::Settings => {
+            // Toggle the settings panel visibility
+            if app.settings_overlay.is_some() {
+                app.settings_overlay = None;
+            } else {
+                // Build the model list from the user's saved registry
+                let settings = rusty_core::Settings::load().await.unwrap_or_default();
+                let models = if settings.models.is_empty() {
+                    rusty_tui::model_registry::default_model_list()
+                } else {
+                    settings.models.clone()
+                };
+                let active_name = settings.active_model.clone();
+                app.settings_overlay = Some(rusty_tui::app::SettingsState::new(
+                    models,
+                    active_name,
+                    settings.thinking_level,
+                    settings.permission_mode.unwrap_or(rusty_core::PermissionMode::Default),
+                ));
+            }
+            app.input.clear();
+            app.cursor_pos = 0;
+            app.needs_redraw = true;
         }
     }
 }

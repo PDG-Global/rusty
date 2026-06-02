@@ -165,6 +165,7 @@ pub enum AgentEvent {
     Error(String),
     Usage { input_tokens: u32, output_tokens: u32 },
     ThinkingLevel(Option<rusty_core::ThinkingLevel>),
+    ModelChanged(String),
 }
 
 /// Messages from the TUI to the agent task
@@ -181,6 +182,12 @@ pub enum TuiCommand {
     ResumeSession(String, Vec<rusty_core::Message>),
     /// Rename the current session
     SessionRename(String),
+    /// Switch to a different model by alias or provider/model
+    SwitchModel(String),
+    /// Set thinking level
+    SetThinkingLevel(Option<rusty_core::ThinkingLevel>),
+    /// Set permission mode
+    SetPermissionMode(rusty_core::PermissionMode),
 }
 
 /// Slash commands the user can invoke
@@ -208,6 +215,8 @@ pub enum SlashCommand {
     Rename,
     /// /permissions — manage allowed tools (always-approve list)
     Permissions,
+    /// /settings — open the settings/model registry TUI
+    Settings,
 }
 
 impl SlashCommand {
@@ -227,6 +236,7 @@ impl SlashCommand {
             _ if trimmed.starts_with("/rename ") => Some(SlashCommand::Rename),
             "/permissions" | "/perms" => Some(SlashCommand::Permissions),
             _ if trimmed.starts_with("/permissions ") || trimmed.starts_with("/perms ") => Some(SlashCommand::Permissions),
+            "/settings" => Some(SlashCommand::Settings),
             _ => None,
         }
     }
@@ -243,6 +253,7 @@ impl SlashCommand {
             ("/model", "Show current model name"),
             ("/rename", "Rename the current session"),
             ("/permissions", "Manage always-approved tools list"),
+            ("/settings", "Open settings and model registry"),
             ("/quit", "Exit rusty"),
         ]
     }
@@ -327,6 +338,212 @@ impl SessionPickerState {
                 self.scroll_offset = self.selected - visible_rows + 1;
             }
         }
+    }
+}
+
+/// Which tab is active in the settings overlay.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SettingsTab {
+    /// Browse the model registry and switch the active model.
+    Models,
+    /// View/edit general settings (thinking level, permissions, etc.).
+    General,
+}
+
+/// A single row in the settings panel's model list.
+/// Group headers are not selectable — only model entries are.
+#[derive(Debug, Clone)]
+pub enum DisplayRow {
+    /// A group header (e.g. "Moonshot", "DeepSeek"). Not selectable.
+    GroupHeader { name: String, count: usize },
+    /// A model entry. The `usize` indexes into `SettingsState.models`.
+    ModelEntry(usize),
+}
+
+/// Rows displayed in the General settings tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeneralRow {
+    ThinkingLevel,
+    PermissionMode,
+}
+
+impl GeneralRow {
+    pub const ALL: &'static [GeneralRow] = &[GeneralRow::ThinkingLevel, GeneralRow::PermissionMode];
+}
+
+/// Cycle to the next permission mode.
+pub fn next_permission_mode(current: rusty_core::PermissionMode) -> rusty_core::PermissionMode {
+    match current {
+        rusty_core::PermissionMode::Default => rusty_core::PermissionMode::AcceptEdits,
+        rusty_core::PermissionMode::AcceptEdits => rusty_core::PermissionMode::BypassPermissions,
+        rusty_core::PermissionMode::BypassPermissions => rusty_core::PermissionMode::Plan,
+        rusty_core::PermissionMode::Plan => rusty_core::PermissionMode::Default,
+    }
+}
+
+/// Display label for a permission mode.
+pub fn permission_mode_label(mode: rusty_core::PermissionMode) -> &'static str {
+    match mode {
+        rusty_core::PermissionMode::Default => "default",
+        rusty_core::PermissionMode::AcceptEdits => "accept-edits",
+        rusty_core::PermissionMode::BypassPermissions => "bypass",
+        rusty_core::PermissionMode::Plan => "plan",
+    }
+}
+
+/// Tracks the state of the `/settings` TUI overlay.
+#[derive(Debug, Clone)]
+pub struct SettingsState {
+    /// Currently active tab.
+    pub active_tab: SettingsTab,
+    /// Index into `models` Vec of the currently highlighted model (Models tab).
+    pub selected: usize,
+    /// Scroll offset so long lists don't overflow the viewport.
+    pub scroll: usize,
+    /// Cached list of models from the registry.
+    pub models: Vec<crate::model_registry::ModelEntry>,
+    /// The `name` of the model that is currently active.
+    pub active_model_name: String,
+    /// Which model entry is expanded to show `available_models` (if any).
+    pub expanded: Option<usize>,
+    /// Whether the user is in "edit mode" for a specific field (future extensibility).
+    pub edit_buffer: Option<String>,
+    /// Currently highlighted row in the General tab.
+    pub general_selected: usize,
+    /// Current thinking level value (for General tab display and cycling).
+    pub general_thinking_level: Option<rusty_core::ThinkingLevel>,
+    /// Current permission mode value (for General tab display and cycling).
+    pub general_permission_mode: rusty_core::PermissionMode,
+}
+
+impl SettingsState {
+    /// Create a new settings state seeded from the current runtime config.
+    pub fn new(
+        models: Vec<crate::model_registry::ModelEntry>,
+        active_model_name: String,
+        thinking_level: Option<rusty_core::ThinkingLevel>,
+        permission_mode: rusty_core::PermissionMode,
+    ) -> Self {
+        let selected = models
+            .iter()
+            .position(|m| m.name == active_model_name)
+            .unwrap_or(0);
+        Self {
+            active_tab: SettingsTab::Models,
+            selected,
+            scroll: 0,
+            expanded: None,
+            models,
+            active_model_name,
+            edit_buffer: None,
+            general_selected: 0,
+            general_thinking_level: thinking_level,
+            general_permission_mode: permission_mode,
+        }
+    }
+
+    /// Move cursor up (skipping group headers in Models tab).
+    pub fn select_previous(&mut self) {
+        match self.active_tab {
+            SettingsTab::General => {
+                if self.general_selected > 0 {
+                    self.general_selected -= 1;
+                }
+            }
+            SettingsTab::Models => {
+                let rows = self.display_rows();
+                let current_display_idx = rows
+                    .iter()
+                    .position(|r| matches!(r, DisplayRow::ModelEntry(i) if *i == self.selected));
+                if let Some(pos) = current_display_idx {
+                    for row in rows[..pos].iter().rev() {
+                        if let DisplayRow::ModelEntry(idx) = row {
+                            self.selected = *idx;
+                            self.expanded = None;
+                            // Adjust scroll
+                            if self.selected < self.scroll {
+                                self.scroll = self.selected;
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Move cursor down (skipping group headers in Models tab).
+    pub fn select_next(&mut self) {
+        match self.active_tab {
+            SettingsTab::General => {
+                if self.general_selected + 1 < GeneralRow::ALL.len() {
+                    self.general_selected += 1;
+                }
+            }
+            SettingsTab::Models => {
+                let rows = self.display_rows();
+                let current_display_idx = rows
+                    .iter()
+                    .position(|r| matches!(r, DisplayRow::ModelEntry(i) if *i == self.selected));
+                if let Some(pos) = current_display_idx {
+                    for row in rows[pos + 1..].iter() {
+                        if let DisplayRow::ModelEntry(idx) = row {
+                            self.selected = *idx;
+                            self.expanded = None;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Cycle tabs right.
+    pub fn next_tab(&mut self) {
+        self.active_tab = match self.active_tab {
+            SettingsTab::Models => SettingsTab::General,
+            SettingsTab::General => SettingsTab::Models,
+        };
+    }
+
+    /// Cycle tabs left (same as right with 2 tabs).
+    pub fn prev_tab(&mut self) {
+        self.next_tab();
+    }
+
+    /// Returns the model entry under the cursor, if any.
+    pub fn selected_model(&self) -> Option<&crate::model_registry::ModelEntry> {
+        self.models.get(self.selected)
+    }
+
+    /// Toggle expansion of the currently selected entry to show `available_models`.
+    pub fn toggle_expand(&mut self) {
+        if self.expanded == Some(self.selected) {
+            self.expanded = None;
+        } else {
+            self.expanded = Some(self.selected);
+        }
+    }
+
+    /// Build the display rows: group headers interspersed with model entries.
+    /// Groups are ordered by first appearance in `models`.
+    pub fn display_rows(&self) -> Vec<DisplayRow> {
+        let mut rows = Vec::new();
+        let mut seen_groups: Vec<String> = Vec::new();
+
+        for (i, entry) in self.models.iter().enumerate() {
+            let group_name = entry.group.clone();
+            if !seen_groups.contains(&group_name) {
+                let count = self.models.iter().filter(|e| e.group == group_name).count();
+                rows.push(DisplayRow::GroupHeader {
+                    name: group_name.clone(),
+                    count,
+                });
+                seen_groups.push(group_name);
+            }
+            rows.push(DisplayRow::ModelEntry(i));
+        }
+        rows
     }
 }
 
@@ -497,6 +714,8 @@ pub struct AppState {
     pub should_quit: bool,
     pub permission_prompt: Option<PermissionPromptState>,
     pub session_picker: Option<SessionPickerState>,
+    /// Settings overlay state (for /settings)
+    pub settings_overlay: Option<SettingsState>,
     /// Tools currently executing — name -> start index in streaming_text
     pub pending_tools: Vec<PendingTool>,
     /// Whether we're waiting for clear confirmation
@@ -525,6 +744,15 @@ pub struct AppState {
     last_key_time: Option<Instant>,
     /// Whether we're currently in paste mode (rapid input detected)
     pub paste_mode: bool,
+    /// Set by the Enter handler in the Models tab — the TUI main loop
+    /// picks this up and sends `TuiCommand::SwitchModel` to the agent task.
+    pub model_switch_requested: Option<String>,
+    /// Set by the Enter handler in the General tab — the TUI main loop
+    /// picks this up and sends `TuiCommand::SetThinkingLevel` to the agent task.
+    pub thinking_level_change_requested: Option<Option<rusty_core::ThinkingLevel>>,
+    /// Set by the Enter handler in the General tab — the TUI main loop
+    /// picks this up and sends `TuiCommand::SetPermissionMode` to the agent task.
+    pub permission_mode_change_requested: Option<rusty_core::PermissionMode>,
 }
 
 pub struct PendingTool {
@@ -577,6 +805,7 @@ impl Default for AppState {
             should_quit: false,
             permission_prompt: None,
             session_picker: None,
+            settings_overlay: None,
             pending_tools: Vec::new(),
             clear_pending: false,
             is_renaming: false,
@@ -592,6 +821,9 @@ impl Default for AppState {
             file_picker: None,
             last_key_time: None,
             paste_mode: false,
+            model_switch_requested: None,
+            thinking_level_change_requested: None,
+            permission_mode_change_requested: None,
         }
     }
 }
@@ -760,6 +992,77 @@ impl AppState {
                     self.clear_pending = false;
                     self.needs_redraw = true;
                 }
+            }
+            return;
+        }
+
+        // If settings overlay is active, handle it exclusively
+        if let Some(ref mut settings) = self.settings_overlay {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    settings.select_previous();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    settings.select_next();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Tab => {
+                    settings.next_tab();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::BackTab => {
+                    settings.prev_tab();
+                    self.needs_redraw = true;
+                    return;
+                }
+                KeyCode::Enter => {
+                    match settings.active_tab {
+                        SettingsTab::Models => {
+                            // Signal the main loop to switch to the selected model.
+                            if let Some(entry) = settings.selected_model() {
+                                self.model_switch_requested = Some(entry.name.clone());
+                            }
+                            self.settings_overlay = None; // Close settings
+                            self.needs_redraw = true;
+                        }
+                        SettingsTab::General => {
+                            match GeneralRow::ALL.get(settings.general_selected) {
+                                Some(GeneralRow::ThinkingLevel) => {
+                                    let next = crate::model_registry::next_thinking_level(settings.general_thinking_level);
+                                    settings.general_thinking_level = next;
+                                    self.thinking_level_change_requested = Some(next);
+                                    self.needs_redraw = true;
+                                }
+                                Some(GeneralRow::PermissionMode) => {
+                                    let next = next_permission_mode(settings.general_permission_mode);
+                                    settings.general_permission_mode = next;
+                                    self.permission_mode_change_requested = Some(next);
+                                    self.needs_redraw = true;
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                    return;
+                }
+                KeyCode::Char(' ') => {
+                    // Space toggles expansion of available_models
+                    if settings.active_tab == SettingsTab::Models {
+                        settings.toggle_expand();
+                        self.needs_redraw = true;
+                    }
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.settings_overlay = None;
+                    self.needs_redraw = true;
+                    return;
+                }
+                _ => {} // Fall through for other keys
             }
             return;
         }
@@ -934,8 +1237,9 @@ impl AppState {
                 }
             }
             KeyCode::Tab if !self.is_streaming
-                // Tab-complete slash commands
-                && self.input.starts_with('/') => {
+                // Tab-complete slash commands only when input is a bare command prefix (no spaces)
+                && self.input.starts_with('/')
+                && !self.input.contains(' ') => {
                     self.autocomplete_slash();
                 }
             KeyCode::Enter if self.paste_mode => {

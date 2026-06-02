@@ -82,14 +82,18 @@ pub async fn build_system_prompt(config: &Config, working_dir: &Path) -> String 
         parts.push(
             "## Task Tracking Mode\n\n\
             You are operating in plan-with-tasks mode. You must actively use the `todowrite` \
-            tool to plan and track your work. At the start of each task:\n\
+            tool to plan and track your work.\n\n\
+            Rules:\n\
             1. Break the user's request into concrete sub-tasks using `todowrite` with status `pending`.\n\
             2. As you work through each sub-task, update its status to `in_progress` before starting \
             and `completed` when done.\n\
             3. If you discover additional work needed, add new tasks to the list.\n\
-            4. Keep the task list visible and up-to-date throughout the conversation.\n\n\
-            You are in read-only mode and cannot make file edits or run commands that modify the system. \
-            Use your task list to present a clear, actionable plan to the user."
+            4. Keep the task list visible and up-to-date throughout the conversation.\n\
+            5. If you are uncertain what tasks remain, re-read your most recent `todowrite` call.\n\n\
+            CRITICAL: You must NOT stop or emit `end_turn` until every task in your most recent \
+            `todowrite` call is either `completed` or `cancelled`. If you attempt to stop with \
+            incomplete tasks, the system will automatically remind you to continue. \
+            Verify your task list is fully complete before concluding your response."
                 .to_string(),
         );
     }

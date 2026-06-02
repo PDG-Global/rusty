@@ -78,6 +78,17 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
         let picker_area = centered_rect(60, 20, area);
         draw_file_picker(app, picker_area, buf);
     }
+
+    // Overlay settings if active
+    if app.settings_overlay.is_some() {
+        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                buf[(x, y)].set_char(' ').set_style(dim_style);
+            }
+        }
+        draw_settings(app, area, buf);
+    }
 }
 
 fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
@@ -1386,6 +1397,170 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
         width += w;
     }
     result
+}
+
+fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
+    let settings = match &app.settings_overlay {
+        Some(s) => s,
+        None => return,
+    };
+
+    let popup = centered_rect(70, 22, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" Settings ");
+
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+
+    if inner.height < 3 || inner.width < 10 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Tab bar
+    let models_style = if settings.active_tab == crate::app::SettingsTab::Models {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    let general_style = if settings.active_tab == crate::app::SettingsTab::General {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(" Models ", models_style),
+        Span::raw("  "),
+        Span::styled(" General ", general_style),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "\u{2500}".repeat(inner.width as usize),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let content_height = (inner.height as usize).saturating_sub(lines.len() + 1);
+
+    match settings.active_tab {
+        crate::app::SettingsTab::Models => {
+            let display_rows = settings.display_rows();
+            let start = settings.scroll.min(display_rows.len().saturating_sub(1));
+            let end = (start + content_height).min(display_rows.len());
+
+            for row in &display_rows[start..end] {
+                match row {
+                    crate::app::DisplayRow::GroupHeader { name, count: _ } => {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {name}"),
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::BOLD),
+                        )));
+                    }
+                    crate::app::DisplayRow::ModelEntry(idx) => {
+                        let entry = &settings.models[*idx];
+                        let is_selected = *idx == settings.selected;
+                        let is_active = entry.name == settings.active_model_name;
+                        let cursor = if is_selected { ">" } else { " " };
+                        let active_marker = if is_active { "●" } else { " " };
+                        let style = if is_selected {
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Cyan)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        let marker_style = if is_selected {
+                            style
+                        } else if is_active {
+                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        let name_style = if is_selected {
+                            style
+                        } else if is_active {
+                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(format!(" {cursor}"), style),
+                            Span::styled(format!("{active_marker} "), marker_style),
+                            Span::styled(format!("{:<24}", entry.name), name_style),
+                            Span::styled(
+                                format!("{:<16}", entry.provider),
+                                if is_selected {
+                                    style
+                                } else {
+                                    Style::default().fg(Color::Gray)
+                                },
+                            ),
+                            Span::styled(
+                                format!("{} · {}", entry.model, entry.api_base),
+                                if is_selected {
+                                    style
+                                } else {
+                                    Style::default().fg(Color::DarkGray)
+                                },
+                            ),
+                        ]));
+                    }
+                }
+            }
+        }
+        crate::app::SettingsTab::General => {
+            lines.push(Line::from(""));
+
+            let general_rows = [
+                ("Thinking level", crate::model_registry::thinking_level_label(settings.general_thinking_level)),
+                ("Permission mode", crate::app::permission_mode_label(settings.general_permission_mode)),
+            ];
+
+            for (i, (label, value)) in general_rows.iter().enumerate() {
+                let is_selected = i == settings.general_selected;
+                let cursor = if is_selected { ">" } else { " " };
+                let style = if is_selected {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {cursor} "), style),
+                    Span::styled(format!("{:<24}", *label), style),
+                    Span::styled(
+                        value.to_string(),
+                        if is_selected {
+                            style
+                        } else {
+                            Style::default().fg(Color::Green)
+                        },
+                    ),
+                ]));
+            }
+        }
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" Select  "),
+        Span::styled("[Tab]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" Switch Tab  "),
+        Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::raw(" Close"),
+    ]));
+
+    let paragraph = Paragraph::new(lines);
+    Widget::render(&paragraph, inner, buf);
 }
 
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {

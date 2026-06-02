@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 pub mod app;
+ pub mod model_registry;
 pub mod ui;
 
 use app::{AgentEvent, AppState, MessageRole};
@@ -140,6 +141,10 @@ async fn run_loop(
                     }
                     AgentEvent::ThinkingLevel(level) => {
                         app.status.thinking_level = level;
+                        app.needs_redraw = true;
+                    }
+                    AgentEvent::ModelChanged(model) => {
+                        app.status.model = model;
                         app.needs_redraw = true;
                     }
                 },

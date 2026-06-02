@@ -6,8 +6,9 @@ pub mod types;
 
 use async_trait::async_trait;
 use futures::Stream;
-use rusty_core::{Message, RustyError, ToolDefinition, UsageInfo};
+use rusty_core::{ModelEntry, ProviderType, Message, RustyError, ToolDefinition, UsageInfo};
 use std::pin::Pin;
+use std::sync::Arc;
 
 pub use openai::OpenAiProvider;
 pub use types::*;
@@ -20,6 +21,20 @@ pub struct ProviderConfig {
     pub max_tokens: u32,
     pub temperature: Option<f32>,
     pub thinking_budget: Option<u32>,
+}
+
+impl ProviderConfig {
+    /// Build a `ProviderConfig` from a model registry entry and an API key.
+    pub fn from_model_entry(entry: &ModelEntry, api_key: String) -> Self {
+        Self {
+            api_key,
+            api_base: entry.api_base.clone(),
+            model: entry.model.clone(),
+            max_tokens: entry.max_tokens,
+            temperature: entry.temperature,
+            thinking_budget: entry.thinking_budget,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,4 +83,29 @@ pub trait LlmProvider: Send + Sync {
         &self,
         request: MessageRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, RustyError>> + Send>>, RustyError>;
+}
+
+/// Create a provider instance for the given provider type and configuration.
+///
+/// This is the central factory that maps `ProviderType` → concrete `LlmProvider`
+/// implementation. Currently all providers speak the OpenAI-compatible protocol.
+pub fn create_provider(
+    provider_type: ProviderType,
+    config: ProviderConfig,
+) -> Result<Arc<dyn LlmProvider>, RustyError> {
+    match provider_type {
+        ProviderType::OpenAI => {
+            let provider = OpenAiProvider::new(config)?;
+            Ok(Arc::new(provider))
+        }
+    }
+}
+
+/// Convenience: build a provider directly from a model registry entry.
+pub fn create_provider_from_entry(
+    entry: &ModelEntry,
+    api_key: String,
+) -> Result<Arc<dyn LlmProvider>, RustyError> {
+    let config = ProviderConfig::from_model_entry(entry, api_key);
+    create_provider(entry.provider, config)
 }
