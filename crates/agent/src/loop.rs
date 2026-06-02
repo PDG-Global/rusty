@@ -7,7 +7,7 @@ use rusty_core::permissions::{
     PermissionLevel, PermissionRequest,
 };
 use rusty_core::{
-    model_context_window, Config, ContentBlock, Message, PermissionMode, RustyError, UsageInfo,
+    model_context_window, Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
 };
 use rusty_core::{dynamic_thinking_level, level_to_budget, ThinkingLevel};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
@@ -75,20 +75,35 @@ pub type PermissionCallback = Arc<
 /// Lightweight cancellation token for cooperative cancellation of agent turns.
 /// Checked between stream events so the agent can abort mid-stream or mid-tool.
 #[derive(Clone)]
-pub struct CancelToken(Arc<AtomicBool>);
+pub struct CancelToken {
+    flag: Arc<AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
 
 impl CancelToken {
     pub fn new() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+        }
     }
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Relaxed);
+        self.flag.store(true, Ordering::Relaxed);
+        self.notify.notify_waiters();
     }
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
+        self.flag.load(Ordering::Relaxed)
     }
     pub fn reset(&self) {
-        self.0.store(false, Ordering::Relaxed);
+        self.flag.store(false, Ordering::Relaxed);
+    }
+    /// Async cancellation future — resolves immediately if already cancelled,
+    /// otherwise waits until `cancel()` is called.
+    pub async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        self.notify.notified().await;
     }
 }
 
@@ -111,6 +126,9 @@ pub struct Agent {
     permission_callback: Option<PermissionCallback>,
     session_allowlist: HashSet<String>,
     permanent_allowlist: HashSet<String>,
+    /// How many times we've nudged the model to finish incomplete tasks.
+    /// Prevents infinite loops when the model is stuck.
+    task_nudge_count: u32,
 }
 
 #[derive(Default)]
@@ -149,6 +167,7 @@ impl Agent {
             permission_callback: None,
             session_allowlist: HashSet::new(),
             permanent_allowlist: HashSet::new(),
+            task_nudge_count: 0,
         }
     }
 
@@ -162,6 +181,16 @@ impl Agent {
 
     pub fn set_permanent_allowlist(&mut self, allowlist: HashSet<String>) {
         self.permanent_allowlist = allowlist;
+    }
+
+    /// Replace the LLM provider at runtime (used for model switching).
+    pub fn set_provider(&mut self, provider: Arc<dyn LlmProvider>) {
+        self.provider = provider;
+    }
+
+    /// Mutable access to the agent's config (e.g. to update model name).
+    pub fn config_mut(&mut self) -> &mut Config {
+        &mut self.config
     }
 
     pub fn messages(&self) -> &[Message] {
@@ -186,8 +215,34 @@ impl Agent {
         &self.total_usage
     }
 
+    /// Scan recent messages for the most recent `todowrite` tool call and
+    /// check whether any tasks are still pending or in_progress.
+    fn has_incomplete_tasks(&self) -> bool {
+        // Look at the last ~10 messages for a todowrite ToolUse block
+        for msg in self.messages.iter().rev().take(10) {
+            if msg.role != Role::Assistant {
+                continue;
+            }
+            for block in msg.content_blocks() {
+                if let ContentBlock::ToolUse { name, input, .. } = block {
+                    if name == "todowrite" {
+                        if let Some(todos) = input.get("todos").and_then(|v| v.as_array()) {
+                            return todos.iter().any(|t| {
+                                t.get("status")
+                                    .and_then(|s| s.as_str())
+                                    .map(|s| s != "completed" && s != "cancelled")
+                                    .unwrap_or(false)
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
-    /// Pass a `CancelToken` via callbacks to allow mid-turn cancellation (checked between stream events).
+    /// Pass a `CancelToken` via callbacks to allow mid-turn cancellation (immediate via `tokio::select!`).
     pub async fn run(
         &mut self,
         user_input: &str,
@@ -230,7 +285,7 @@ impl Agent {
             let estimated_tokens = estimated_chars / 4;
             let context_pct = estimated_tokens as f64 / context_window as f64;
             let base_level = self.config.resolve_thinking_level();
-            let effective_level = dynamic_thinking_level(base_level, context_pct);
+            let effective_level = dynamic_thinking_level(base_level, context_pct, turn as u32);
             let thinking_budget = Some(level_to_budget(effective_level));
 
             if effective_level != base_level {
@@ -267,12 +322,18 @@ impl Agent {
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
             let mut stop_reason = None;
 
-            while let Some(event) = stream.next().await {
-                if let Some(c) = cancel {
-                    if c.is_cancelled() {
-                        return Ok("Turn cancelled by user.".to_string());
+            loop {
+                let next_event = if let Some(c) = cancel {
+                    tokio::select! {
+                        event = stream.next() => event,
+                        _ = c.cancelled() => {
+                            return Ok("Turn cancelled by user.".to_string());
+                        }
                     }
-                }
+                } else {
+                    stream.next().await
+                };
+                let Some(event) = next_event else { break };
                 match event? {
                     StreamEvent::TextDelta(text) => {
                         assistant_text.push_str(&text);
@@ -426,6 +487,24 @@ impl Agent {
             // Check stop reason
             match stop_reason.as_deref() {
                 Some("end_turn") | None => {
+                    // If we're in task-tracking mode and there are incomplete tasks,
+                    // nudge the model to continue instead of letting it stop.
+                    if self.config.plan_with_tasks
+                        && self.task_nudge_count < 3
+                        && self.has_incomplete_tasks()
+                    {
+                        warn!(
+                            "Model tried to stop with incomplete tasks (nudge {}/3); nudging to continue",
+                            self.task_nudge_count + 1
+                        );
+                        self.task_nudge_count += 1;
+                        self.messages.push(Message::user(
+                            "You have incomplete tasks remaining. Please continue working through your task list. \
+                             Do not stop until every task is marked `completed` or `cancelled`. \
+                             If you are unsure what remains, review your most recent `todowrite` output."
+                        ));
+                        continue;
+                    }
                     return Ok(assistant_text);
                 }
                 Some("max_tokens") => {
@@ -468,7 +547,18 @@ impl Agent {
         };
 
         let mut summary = String::new();
-        while let Some(event) = stream.next().await {
+        loop {
+            let next_event = if let Some(c) = cancel {
+                tokio::select! {
+                    event = stream.next() => event,
+                    _ = c.cancelled() => {
+                        return Ok("Turn cancelled by user.".to_string());
+                    }
+                }
+            } else {
+                stream.next().await
+            };
+            let Some(event) = next_event else { break };
             match event? {
                 StreamEvent::TextDelta(text) => {
                     summary.push_str(&text);

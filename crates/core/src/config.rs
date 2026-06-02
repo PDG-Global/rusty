@@ -61,6 +61,68 @@ pub fn budget_to_level(budget: u32) -> ThinkingLevel {
     }
 }
 
+/// Which LLM backend to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderType {
+    OpenAI,
+}
+
+impl std::fmt::Display for ProviderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OpenAI => write!(f, "OpenAI"),
+        }
+    }
+}
+
+/// A single provider/model configuration in the model registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelEntry {
+    /// Provider group name for hierarchical UI display: "Xiaomi", "Kimi", "DeepSeek", etc.
+    /// Empty string means ungrouped (backward compat with old configs).
+    #[serde(default)]
+    pub group: String,
+    /// User-chosen label: "mimo", "openai", "local", etc.
+    pub name: String,
+    /// Which backend protocol to speak.
+    pub provider: ProviderType,
+    /// API base URL (e.g. `https://api.openai.com/v1`).
+    pub api_base: String,
+    /// Model identifier (e.g. `mimo-v2.5-pro`, `gpt-4o`).
+    pub model: String,
+    /// All model identifiers available on this endpoint.
+    /// The first element should match `model` (the primary/default).
+    /// When empty, falls back to `vec![model.clone()]`.
+    #[serde(default)]
+    pub available_models: Vec<String>,
+    /// Maximum output tokens.
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    /// Sampling temperature.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    /// Thinking/reasoning token budget.
+    #[serde(default)]
+    pub thinking_budget: Option<u32>,
+}
+
+impl ModelEntry {
+    /// Returns the list of all available model identifiers for this entry.
+    /// Falls back to a single-element vec of `self.model` when `available_models` is empty.
+    pub fn model_list(&self) -> Vec<&str> {
+        if self.available_models.is_empty() {
+            vec![self.model.as_str()]
+        } else {
+            self.available_models.iter().map(|s| s.as_str()).collect()
+        }
+    }
+}
+
+fn default_max_tokens() -> u32 {
+    16384
+}
+
 /// Where API credentials are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -191,37 +253,71 @@ impl Config {
     /// 3. Default to `Normal`
     pub fn resolve_thinking_level(&self) -> ThinkingLevel {
         self.thinking_level
-            .clone()
             .or_else(|| self.thinking_budget.map(budget_to_level))
             .unwrap_or(ThinkingLevel::Normal)
     }
 }
 
-/// Adjust thinking level downward based on how full the context window is.
+/// Adjust thinking level based on context fill and task complexity.
 ///
 /// Heuristic:
-/// - < 50 %  → keep base level
-/// - 50–75 % → step down one level
-/// - > 75 %  → force Minimal
-pub fn dynamic_thinking_level(base: ThinkingLevel, context_pct: f64) -> ThinkingLevel {
-    if context_pct > 0.75 {
-        ThinkingLevel::Minimal
-    } else if context_pct > 0.50 {
+/// - **Complex tasks** (≥ 2 tool-turns): boost to at least Normal
+/// - < 70 %  → keep effective base level
+/// - 70–85 % → step down one level
+/// - > 85 %  → force Minimal
+///
+/// The `turn` parameter is the current agent-loop turn index (0-based).
+/// When the agent is executing multiple tool calls it signals a complex
+/// multi-step task that benefits from deeper reasoning.
+pub fn dynamic_thinking_level(base: ThinkingLevel, context_pct: f64, turn: u32) -> ThinkingLevel {
+    // For multi-step tasks (2+ turns of tool use), ensure at least Normal thinking.
+    let effective_base = if turn >= 2 {
         match base {
+            ThinkingLevel::Minimal => ThinkingLevel::Normal,
+            other => other,
+        }
+    } else {
+        base
+    };
+
+    if context_pct > 0.85 {
+        ThinkingLevel::Minimal
+    } else if context_pct > 0.70 {
+        match effective_base {
             ThinkingLevel::Deep => ThinkingLevel::Normal,
             _ => ThinkingLevel::Minimal,
         }
     } else {
-        base
+        effective_base
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
 pub struct Settings {
+    // ── Legacy flat fields (kept for backward compat / migration) ──
+    #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
     pub api_base: Option<String>,
+    #[serde(default)]
     pub default_model: Option<String>,
+
+    // ── Model registry ──
+    #[serde(default)]
+    pub models: Vec<ModelEntry>,
+    /// Name of the active entry in `models`.
+    #[serde(default)]
+    pub active_model: String,
+    /// Per-model API keys (plaintext fallback when keyring is unavailable).
+    /// Keys are model entry names, values are the API keys.
+    #[serde(default)]
+    pub api_keys: HashMap<String, String>,
+
+    // ── General settings ──
+    #[serde(default)]
+    pub thinking_level: Option<ThinkingLevel>,
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
     #[serde(default)]
     pub permissions: HashMap<String, PermissionMode>,
     /// Tool names that are permanently allowed without prompting
@@ -232,16 +328,66 @@ pub struct Settings {
     pub credential_store: CredentialStore,
 }
 
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            api_base: None,
+            default_model: None,
+            models: Vec::new(),
+            active_model: String::new(),
+            api_keys: HashMap::new(),
+            thinking_level: None,
+            permission_mode: None,
+            permissions: HashMap::new(),
+            allowed_tools: Vec::new(),
+            credential_store: CredentialStore::default(),
+        }
+    }
+}
+
 
 impl Settings {
     pub async fn load() -> anyhow::Result<Self> {
         let path = Config::settings_path();
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = tokio::fs::read_to_string(&path).await?;
-        let settings: Self = serde_json::from_str(&content)?;
+        let mut settings = if !path.exists() {
+            Self::default()
+        } else {
+            let content = tokio::fs::read_to_string(&path).await?;
+            serde_json::from_str(&content)?
+        };
+        settings.migrate();
         Ok(settings)
+    }
+
+    /// Migrate from flat `api_key`/`api_base`/`default_model` fields to the model registry.
+    /// Called automatically after deserialization. Idempotent.
+    pub fn migrate(&mut self) {
+        if !self.models.is_empty() {
+            return; // already migrated
+        }
+        let model_name = self.default_model.clone().unwrap_or_else(|| "mimo-v2.5-pro".to_string());
+        let api_base = self.api_base.clone()
+            .unwrap_or_else(|| "https://token-plan-cn.xiaomimimo.com/v1".to_string());
+
+        let entry = ModelEntry {
+            group: String::new(), // legacy entries are ungrouped
+            name: "default".to_string(),
+            provider: ProviderType::OpenAI,
+            api_base,
+            model: model_name,
+            available_models: vec![],
+            max_tokens: 16384,
+            temperature: None,
+            thinking_budget: None,
+        };
+        self.models.push(entry);
+        self.active_model = "default".to_string();
+
+        // Migrate the API key into per-model storage
+        if let Some(key) = self.api_key.clone() {
+            self.api_keys.insert("default".to_string(), key);
+        }
     }
 
     pub async fn save(&self) -> anyhow::Result<()> {
@@ -260,6 +406,91 @@ impl Settings {
 
     pub fn allowed_tools_set(&self) -> std::collections::HashSet<String> {
         self.allowed_tools.iter().cloned().collect()
+    }
+
+    // ── Model registry helpers ──────────────────────────────────────
+
+    /// Get the currently active model entry, if it exists.
+    pub fn active_model_entry(&self) -> Option<&ModelEntry> {
+        self.models.iter().find(|m| m.name == self.active_model)
+    }
+
+    /// Resolve the API key for the active model entry.
+    ///
+    /// Priority: per-model key in `api_keys` → env `OPENAI_API_KEY` → env `RUSTY_API_KEY`.
+    pub fn resolve_active_api_key(&self) -> Option<String> {
+        self.resolve_api_key_for(&self.active_model)
+    }
+
+    /// Resolve the API key for a specific model entry by name.
+    ///
+    /// Priority: env vars → per-model key in `api_keys` → OS keyring → legacy flat `api_key`.
+    pub fn resolve_api_key_for(&self, name: &str) -> Option<String> {
+        // Priority 1: Environment variables
+        for var in &["RUSTY_API_KEY", "OPENAI_API_KEY"] {
+            if let Ok(val) = std::env::var(var) {
+                if !val.is_empty() {
+                    return Some(val);
+                }
+            }
+        }
+
+        // Priority 2: Per-model key in settings file
+        if let Some(key) = self.api_keys.get(name).cloned() {
+            if !key.is_empty() {
+                return Some(key);
+            }
+        }
+
+        // Priority 3: OS Keyring
+        #[cfg(feature = "os-keyring")]
+        if self.credential_store == CredentialStore::Keyring {
+            if let Some(key) = crate::credentials::CredentialManager::get_from_keyring() {
+                return Some(key);
+            }
+        }
+
+        // Priority 4: Legacy flat api_key
+        if let Some(ref key) = self.api_key {
+            if !key.is_empty() {
+                return Some(key.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Switch the active model by entry name. Returns `false` if no such entry.
+    pub fn switch_active_model(&mut self, name: &str) -> bool {
+        if self.models.iter().any(|m| m.name == name) {
+            self.active_model = name.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Add a new model entry. If an entry with the same name exists, it is replaced.
+    pub fn add_model(&mut self, entry: ModelEntry) {
+        self.models.retain(|m| m.name != entry.name);
+        self.models.push(entry);
+    }
+
+    /// Remove a model entry by name. Returns `true` if found and removed.
+    /// Cannot remove the active model.
+    pub fn remove_model(&mut self, name: &str) -> bool {
+        if name == self.active_model {
+            return false;
+        }
+        let before = self.models.len();
+        self.models.retain(|m| m.name != name);
+        self.api_keys.remove(name);
+        self.models.len() < before
+    }
+
+    /// Set the API key for a model entry (stored in the plaintext `api_keys` map).
+    pub fn set_api_key(&mut self, model_name: &str, key: String) {
+        self.api_keys.insert(model_name.to_string(), key);
     }
 }
 
@@ -472,29 +703,29 @@ mod tests {
     // ── dynamic_thinking_level ───────────────────────────────────────
 
     #[test]
-    fn dynamic_level_unchanged_below_half() {
+    fn dynamic_level_unchanged_below_seventy() {
         assert_eq!(
-            dynamic_thinking_level(ThinkingLevel::Deep, 0.25),
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.25, 0),
             ThinkingLevel::Deep
         );
         assert_eq!(
-            dynamic_thinking_level(ThinkingLevel::Normal, 0.49),
+            dynamic_thinking_level(ThinkingLevel::Normal, 0.69, 0),
             ThinkingLevel::Normal
         );
     }
 
     #[test]
-    fn dynamic_level_steps_down_at_half() {
+    fn dynamic_level_steps_down_at_seventy() {
         assert_eq!(
-            dynamic_thinking_level(ThinkingLevel::Deep, 0.60),
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.75, 0),
             ThinkingLevel::Normal
         );
         assert_eq!(
-            dynamic_thinking_level(ThinkingLevel::Normal, 0.60),
+            dynamic_thinking_level(ThinkingLevel::Normal, 0.75, 0),
             ThinkingLevel::Minimal
         );
         assert_eq!(
-            dynamic_thinking_level(ThinkingLevel::Minimal, 0.60),
+            dynamic_thinking_level(ThinkingLevel::Minimal, 0.75, 0),
             ThinkingLevel::Minimal
         );
     }
@@ -502,12 +733,238 @@ mod tests {
     #[test]
     fn dynamic_level_forces_minimal_near_limit() {
         assert_eq!(
-            dynamic_thinking_level(ThinkingLevel::Deep, 0.76),
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.86, 0),
             ThinkingLevel::Minimal
         );
         assert_eq!(
-            dynamic_thinking_level(ThinkingLevel::Normal, 0.90),
+            dynamic_thinking_level(ThinkingLevel::Normal, 0.90, 0),
             ThinkingLevel::Minimal
         );
+    }
+
+    #[test]
+    fn dynamic_level_boosts_minimal_for_complex_tasks() {
+        // On turn 0 or 1, Minimal stays Minimal
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Minimal, 0.30, 0),
+            ThinkingLevel::Minimal
+        );
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Minimal, 0.30, 1),
+            ThinkingLevel::Minimal
+        );
+        // On turn 2+, Minimal gets boosted to Normal (complex task)
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Minimal, 0.30, 2),
+            ThinkingLevel::Normal
+        );
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Minimal, 0.30, 5),
+            ThinkingLevel::Normal
+        );
+        // Deep and Normal stay the same regardless of turn
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.30, 3),
+            ThinkingLevel::Deep
+        );
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Normal, 0.30, 3),
+            ThinkingLevel::Normal
+        );
+    }
+
+    #[test]
+    fn dynamic_level_complex_task_context_pressure() {
+        // Complex task (turn 3) with high context: Minimal boosted to Normal,
+        // then stepped down to Minimal due to context pressure
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Minimal, 0.75, 3),
+            ThinkingLevel::Minimal // boosted to Normal, then 70-85% → Minimal
+        );
+        // Complex task with Deep base at high context
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.75, 3),
+            ThinkingLevel::Normal
+        );
+        // Complex task over 85%: forced to Minimal
+        assert_eq!(
+            dynamic_thinking_level(ThinkingLevel::Deep, 0.90, 3),
+            ThinkingLevel::Minimal
+        );
+    }
+
+    // ── Model registry ───────────────────────────────────────────────
+
+    #[test]
+    fn migrate_creates_default_entry_from_legacy_fields() {
+        let mut settings = Settings {
+            api_key: Some("sk-test".into()),
+            api_base: Some("https://custom.api.com/v1".into()),
+            default_model: Some("gpt-4o".into()),
+            ..Settings::default()
+        };
+        settings.migrate();
+
+        assert_eq!(settings.models.len(), 1);
+        assert_eq!(settings.active_model, "default");
+        let entry = &settings.models[0];
+        assert_eq!(entry.name, "default");
+        assert_eq!(entry.provider, ProviderType::OpenAI);
+        assert_eq!(entry.api_base, "https://custom.api.com/v1");
+        assert_eq!(entry.model, "gpt-4o");
+        assert_eq!(entry.max_tokens, 16384);
+        // API key migrated to per-model map
+        assert_eq!(settings.api_keys.get("default").unwrap(), "sk-test");
+    }
+
+    #[test]
+    fn migrate_defaults_when_no_legacy_values() {
+        let mut settings = Settings::default();
+        settings.migrate();
+
+        assert_eq!(settings.models.len(), 1);
+        let entry = &settings.models[0];
+        assert_eq!(entry.name, "default");
+        assert_eq!(entry.model, "mimo-v2.5-pro");
+        assert_eq!(entry.api_base, "https://token-plan-cn.xiaomimimo.com/v1");
+    }
+
+    #[test]
+    fn migrate_skips_if_models_already_populated() {
+        let existing = ModelEntry {
+            group: "Other".into(),
+            name: "custom".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://other.com/v1".into(),
+            model: "other-model".into(),
+            available_models: vec![],
+            max_tokens: 8192,
+            temperature: None,
+            thinking_budget: None,
+        };
+        let mut settings = Settings {
+            api_key: Some("sk-legacy".into()),
+            models: vec![existing],
+            active_model: "custom".into(),
+            ..Settings::default()
+        };
+        settings.migrate();
+
+        // Should NOT create a "default" entry
+        assert_eq!(settings.models.len(), 1);
+        assert_eq!(settings.models[0].name, "custom");
+        // Legacy key should NOT be migrated
+        assert!(!settings.api_keys.contains_key("default"));
+    }
+
+    #[test]
+    fn active_model_entry_returns_correct_entry() {
+        let mut settings = Settings::default();
+        settings.migrate();
+        assert!(settings.active_model_entry().is_some());
+        assert_eq!(settings.active_model_entry().unwrap().name, "default");
+    }
+
+    #[test]
+    fn active_model_entry_returns_none_when_no_match() {
+        let settings = Settings {
+            active_model: "nonexistent".into(),
+            ..Settings::default()
+        };
+        assert!(settings.active_model_entry().is_none());
+    }
+
+    #[test]
+    fn switch_active_model_works() {
+        let mut settings = Settings::default();
+        settings.migrate();
+        settings.add_model(ModelEntry {
+            group: "OpenAI".into(),
+            name: "gpt4".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://api.openai.com/v1".into(),
+            model: "gpt-4o".into(),
+            available_models: vec![],
+            max_tokens: 4096,
+            temperature: None,
+            thinking_budget: None,
+        });
+
+        assert!(settings.switch_active_model("gpt4"));
+        assert_eq!(settings.active_model, "gpt4");
+        assert_eq!(settings.active_model_entry().unwrap().model, "gpt-4o");
+    }
+
+    #[test]
+    fn switch_active_model_rejects_unknown_name() {
+        let mut settings = Settings::default();
+        settings.migrate();
+        assert!(!settings.switch_active_model("nonexistent"));
+        assert_eq!(settings.active_model, "default");
+    }
+
+    #[test]
+    fn add_model_replaces_existing_with_same_name() {
+        let mut settings = Settings::default();
+        settings.migrate();
+
+        let updated = ModelEntry {
+            group: "Custom".into(),
+            name: "default".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://new-api.com/v1".into(),
+            model: "new-model".into(),
+            available_models: vec![],
+            max_tokens: 8192,
+            temperature: Some(0.7),
+            thinking_budget: None,
+        };
+        settings.add_model(updated);
+
+        assert_eq!(settings.models.len(), 1);
+        assert_eq!(settings.models[0].api_base, "https://new-api.com/v1");
+        assert_eq!(settings.models[0].temperature, Some(0.7));
+    }
+
+    #[test]
+    fn remove_model_prevents_removing_active() {
+        let mut settings = Settings::default();
+        settings.migrate();
+
+        // Cannot remove active model
+        assert!(!settings.remove_model("default"));
+        assert_eq!(settings.models.len(), 1);
+    }
+
+    #[test]
+    fn remove_model_removes_inactive_entry() {
+        let mut settings = Settings::default();
+        settings.migrate();
+        settings.add_model(ModelEntry {
+            group: "OpenAI".into(),
+            name: "extra".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://x.com/v1".into(),
+            model: "x-model".into(),
+            available_models: vec![],
+            max_tokens: 4096,
+            temperature: None,
+            thinking_budget: None,
+        });
+        settings.set_api_key("extra", "sk-extra".into());
+
+        assert!(settings.remove_model("extra"));
+        assert_eq!(settings.models.len(), 1);
+        assert!(!settings.api_keys.contains_key("extra"));
+    }
+
+    #[test]
+    fn resolve_active_api_key_from_per_model_map() {
+        let mut settings = Settings::default();
+        settings.migrate();
+        settings.set_api_key("default", "sk-per-model".into());
+
+        let key = settings.resolve_active_api_key();
+        assert_eq!(key.unwrap(), "sk-per-model");
     }
 }
