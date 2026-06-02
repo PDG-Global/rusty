@@ -50,19 +50,19 @@ impl ProviderPreset {
                 needs_key: true,
             },
             Self {
-                name: "Moonshot (Global)",
-                entry_name: "moonshot-global",
-                group: "Moonshot",
-                api_base: "https://api.moonshot.ai/v1",
+                name: "Kimi (Global)",
+                entry_name: "kimi-global",
+                group: "Kimi",
+                api_base: "https://api.kimi.com/coding/",
                 default_model: "kimi-k2.6",
                 available_models: &["kimi-k2.6", "kimi-k2.5"],
                 needs_key: true,
             },
             Self {
-                name: "Moonshot (China)",
-                entry_name: "moonshot-cn",
-                group: "Moonshot",
-                api_base: "https://api.moonshot.cn/v1",
+                name: "Kimi (China)",
+                entry_name: "kimi-cn",
+                group: "Kimi",
+                api_base: "https://api.kimi.com/coding/",
                 default_model: "kimi-k2.6",
                 available_models: &["kimi-k2.6", "kimi-k2.5"],
                 needs_key: true,
@@ -630,8 +630,8 @@ mod tests {
         let presets = ProviderPreset::all();
         assert_eq!(presets[0].entry_name, "xiaomi-global");
         assert_eq!(presets[1].entry_name, "xiaomi-cn");
-        assert_eq!(presets[2].entry_name, "moonshot-global");
-        assert_eq!(presets[3].entry_name, "moonshot-cn");
+        assert_eq!(presets[2].entry_name, "kimi-global");
+        assert_eq!(presets[3].entry_name, "kimi-cn");
         assert_eq!(presets[4].entry_name, "deepseek-global");
         assert_eq!(presets[5].entry_name, "deepseek-cn");
         assert_eq!(presets[6].entry_name, "zhipu-global");

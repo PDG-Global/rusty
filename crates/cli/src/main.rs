@@ -266,7 +266,7 @@ async fn main() -> Result<()> {
                 }
             }
             "kimi" | "moonshot" => {
-                config.api_base = Some("https://api.moonshot.cn/v1".to_string());
+                config.api_base = Some("https://api.kimi.com/coding/".to_string());
                 if args.model.is_none() && settings.default_model.is_none() {
                     config.model = "kimi-k2.6".to_string();
                 }

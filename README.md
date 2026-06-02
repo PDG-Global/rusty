@@ -137,7 +137,7 @@ The setup wizard can store your key in the OS keyring or in the settings file.
 | Preset | API Base | Default Model |
 |--------|----------|---------------|
 | `xiaomi` | `https://token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5-pro` |
-| `kimi` | `https://api.moonshot.cn/v1` | `kimi-k2.6` |
+| `kimi` | `https://api.kimi.com/coding/` | `kimi-k2.6` |
 | `openai` | `https://api.openai.com/v1` | `gpt-4o` |
 | `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` |
 | `ollama` | `http://localhost:11434/v1` | `llama3` |

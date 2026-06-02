@@ -21,10 +21,10 @@ pub fn default_model_list() -> Vec<ModelEntry> {
     vec![
         // ── Moonshot ─────────────────────────────────────────────────────
         ModelEntry {
-            group: "Moonshot".into(),
-            name: "moonshot-global".into(),
+            group: "Kimi".into(),
+            name: "kimi-global".into(),
             provider: ProviderType::OpenAI,
-            api_base: "https://api.moonshot.ai/v1".into(),
+            api_base: "https://api.kimi.com/coding/".into(),
             model: "kimi-k2.6".into(),
             available_models: vec!["kimi-k2.6".into(), "kimi-k2.5".into()],
             max_tokens: 8_192,
@@ -32,10 +32,10 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
         },
         ModelEntry {
-            group: "Moonshot".into(),
-            name: "moonshot-cn".into(),
+            group: "Kimi".into(),
+            name: "kimi-cn".into(),
             provider: ProviderType::OpenAI,
-            api_base: "https://api.moonshot.cn/v1".into(),
+            api_base: "https://api.kimi.com/coding/".into(),
             model: "kimi-k2.6".into(),
             available_models: vec!["kimi-k2.6".into(), "kimi-k2.5".into()],
             max_tokens: 8_192,
