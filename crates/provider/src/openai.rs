@@ -27,6 +27,17 @@ impl OpenAiProvider {
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
+        // Apply extra headers from provider config (e.g. Kimi routing headers).
+        if let Some(extra) = &config.extra_headers {
+            for (name, value) in extra {
+                let header_name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| RustyError::Other(format!("Invalid header name: {name}")))?;
+                let header_value = HeaderValue::from_str(value)
+                    .map_err(|_| RustyError::Other(format!("Invalid header value for {name}")))?;
+                headers.insert(header_name, header_value);
+            }
+        }
+
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .timeout(Duration::from_secs(600))
@@ -134,6 +145,7 @@ impl LlmProvider for OpenAiProvider {
         let usage = UsageInfo {
             input_tokens: resp.usage.as_ref().map_or(0, |u| u.prompt_tokens),
             output_tokens: resp.usage.as_ref().map_or(0, |u| u.completion_tokens),
+            cached_tokens: resp.usage.as_ref().map_or(0, |u| u.cached_tokens()),
         };
 
         let (content, stop_reason) = oai_response_to_rusty(&resp);
@@ -241,6 +253,7 @@ impl LlmProvider for OpenAiProvider {
                                             Ok(StreamEvent::Usage(UsageInfo {
                                                 input_tokens: usage.prompt_tokens,
                                                 output_tokens: usage.completion_tokens,
+                                                cached_tokens: usage.cached_tokens(),
                                             })),
                                             (stream, line_buf, tool_calls),
                                         ));
@@ -492,6 +505,7 @@ mod tests {
                 max_tokens: 4096,
                 temperature: None,
                 thinking_budget: None,
+                extra_headers: None,
             },
         }
     }

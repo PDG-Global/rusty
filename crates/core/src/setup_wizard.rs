@@ -25,6 +25,8 @@ pub struct ProviderPreset {
     /// All model identifiers available on this endpoint.
     pub available_models: &'static [&'static str],
     pub needs_key: bool,
+    /// Optional extra HTTP headers to send with every request.
+    pub extra_headers: Option<Vec<(&'static str, &'static str)>>,
 }
 
 impl ProviderPreset {
@@ -39,6 +41,7 @@ impl ProviderPreset {
                 default_model: "mimo-v2.5-pro",
                 available_models: &["mimo-v2.5-pro", "mimo-v2.5-flash"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "Xiaomi MiMo (China)",
@@ -48,24 +51,27 @@ impl ProviderPreset {
                 default_model: "mimo-v2.5-pro",
                 available_models: &["mimo-v2.5-pro", "mimo-v2.5-flash"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "Kimi (Global)",
                 entry_name: "kimi-global",
                 group: "Kimi",
-                api_base: "https://api.kimi.com/coding/",
+                api_base: "https://api.kimi.com/coding/v1",
                 default_model: "kimi-k2.6",
                 available_models: &["kimi-k2.6", "kimi-k2.5"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "Kimi (China)",
                 entry_name: "kimi-cn",
                 group: "Kimi",
-                api_base: "https://api.kimi.com/coding/",
+                api_base: "https://api.kimi.com/coding/v1",
                 default_model: "kimi-k2.6",
                 available_models: &["kimi-k2.6", "kimi-k2.5"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "DeepSeek (Global)",
@@ -75,6 +81,7 @@ impl ProviderPreset {
                 default_model: "deepseek-v4-pro",
                 available_models: &["deepseek-v4-pro", "deepseek-v4-flash"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "DeepSeek (China)",
@@ -84,6 +91,7 @@ impl ProviderPreset {
                 default_model: "deepseek-v4-pro",
                 available_models: &["deepseek-v4-pro", "deepseek-v4-flash"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "Zhipu GLM (Global)",
@@ -93,6 +101,7 @@ impl ProviderPreset {
                 default_model: "glm-5.1",
                 available_models: &["glm-5.1", "glm-5-turbo", "glm-4.6"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "Zhipu GLM (China)",
@@ -102,6 +111,7 @@ impl ProviderPreset {
                 default_model: "glm-5.1",
                 available_models: &["glm-5.1", "glm-5-turbo", "glm-4.6"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "MiniMax (Global)",
@@ -111,6 +121,7 @@ impl ProviderPreset {
                 default_model: "MiniMax-M2.7",
                 available_models: &["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "MiniMax (China)",
@@ -120,6 +131,7 @@ impl ProviderPreset {
                 default_model: "MiniMax-M2.7",
                 available_models: &["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "OpenAI",
@@ -129,6 +141,7 @@ impl ProviderPreset {
                 default_model: "gpt-5.5",
                 available_models: &["gpt-5.5", "gpt-5.4", "gpt-5.4-nano", "o3", "o4-mini"],
                 needs_key: true,
+                extra_headers: None,
             },
             Self {
                 name: "Ollama (local)",
@@ -138,6 +151,7 @@ impl ProviderPreset {
                 default_model: "qwen3:8b",
                 available_models: &[],
                 needs_key: false,
+                extra_headers: None,
             },
             Self {
                 name: "Custom (OpenAI-compatible)",
@@ -147,6 +161,7 @@ impl ProviderPreset {
                 default_model: "default",
                 available_models: &[],
                 needs_key: true,
+                extra_headers: None,
             },
         ]
     }
@@ -431,6 +446,7 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
         max_tokens: 16_384,
         temperature: Some(0.7),
         thinking_budget: None,
+        extra_headers: preset.extra_headers.clone().map(|h| h.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()),
     };
     settings.add_model(entry);
     settings.active_model = preset.entry_name.to_string();

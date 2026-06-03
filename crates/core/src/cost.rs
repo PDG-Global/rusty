@@ -8,6 +8,7 @@ use crate::UsageInfo;
 pub struct CostTracker {
     input_tokens: AtomicU64,
     output_tokens: AtomicU64,
+    cached_tokens: AtomicU64,
 }
 
 impl Default for CostTracker {
@@ -21,6 +22,7 @@ impl CostTracker {
         Self {
             input_tokens: AtomicU64::new(0),
             output_tokens: AtomicU64::new(0),
+            cached_tokens: AtomicU64::new(0),
         }
     }
 
@@ -29,6 +31,8 @@ impl CostTracker {
             .fetch_add(usage.input_tokens as u64, Ordering::Relaxed);
         self.output_tokens
             .fetch_add(usage.output_tokens as u64, Ordering::Relaxed);
+        self.cached_tokens
+            .fetch_add(usage.cached_tokens as u64, Ordering::Relaxed);
     }
 
     pub fn total_input(&self) -> u64 {
@@ -39,12 +43,26 @@ impl CostTracker {
         self.output_tokens.load(Ordering::Relaxed)
     }
 
+    pub fn total_cached(&self) -> u64 {
+        self.cached_tokens.load(Ordering::Relaxed)
+    }
+
     pub fn summary(&self) -> String {
-        format!(
-            "tokens: {} in / {} out",
-            self.total_input(),
-            self.total_output()
-        )
+        let cached = self.total_cached();
+        if cached > 0 {
+            format!(
+                "tokens: {} in ({} cached) / {} out",
+                self.total_input(),
+                cached,
+                self.total_output()
+            )
+        } else {
+            format!(
+                "tokens: {} in / {} out",
+                self.total_input(),
+                self.total_output()
+            )
+        }
     }
 }
 
@@ -52,13 +70,14 @@ impl CostTracker {
 mod tests {
     use super::*;
 
-    // ── CostTracker::new ─────────────────────────────────────────────
+    // CostTracker::new
 
     #[test]
     fn new_tracker_starts_at_zero() {
         let tracker = CostTracker::new();
         assert_eq!(tracker.total_input(), 0);
         assert_eq!(tracker.total_output(), 0);
+        assert_eq!(tracker.total_cached(), 0);
     }
 
     #[test]
@@ -66,9 +85,10 @@ mod tests {
         let tracker = CostTracker::default();
         assert_eq!(tracker.total_input(), 0);
         assert_eq!(tracker.total_output(), 0);
+        assert_eq!(tracker.total_cached(), 0);
     }
 
-    // ── CostTracker::add_usage ───────────────────────────────────────
+    // CostTracker::add_usage
 
     #[test]
     fn add_usage_accumulates() {
@@ -76,9 +96,11 @@ mod tests {
         tracker.add_usage(&UsageInfo {
             input_tokens: 100,
             output_tokens: 50,
+            cached_tokens: 0,
         });
         assert_eq!(tracker.total_input(), 100);
         assert_eq!(tracker.total_output(), 50);
+        assert_eq!(tracker.total_cached(), 0);
     }
 
     #[test]
@@ -87,13 +109,16 @@ mod tests {
         tracker.add_usage(&UsageInfo {
             input_tokens: 100,
             output_tokens: 50,
+            cached_tokens: 80,
         });
         tracker.add_usage(&UsageInfo {
             input_tokens: 200,
             output_tokens: 75,
+            cached_tokens: 150,
         });
         assert_eq!(tracker.total_input(), 300);
         assert_eq!(tracker.total_output(), 125);
+        assert_eq!(tracker.total_cached(), 230);
     }
 
     #[test]
@@ -102,12 +127,14 @@ mod tests {
         tracker.add_usage(&UsageInfo {
             input_tokens: 0,
             output_tokens: 0,
+            cached_tokens: 0,
         });
         assert_eq!(tracker.total_input(), 0);
         assert_eq!(tracker.total_output(), 0);
+        assert_eq!(tracker.total_cached(), 0);
     }
 
-    // ── CostTracker::summary ─────────────────────────────────────────
+    // CostTracker::summary
 
     #[test]
     fn summary_zero() {
@@ -116,12 +143,27 @@ mod tests {
     }
 
     #[test]
-    fn summary_with_usage() {
+    fn summary_with_usage_no_cache() {
         let tracker = CostTracker::new();
         tracker.add_usage(&UsageInfo {
             input_tokens: 1234,
             output_tokens: 5678,
+            cached_tokens: 0,
         });
         assert_eq!(tracker.summary(), "tokens: 1234 in / 5678 out");
+    }
+
+    #[test]
+    fn summary_with_cached() {
+        let tracker = CostTracker::new();
+        tracker.add_usage(&UsageInfo {
+            input_tokens: 1234,
+            output_tokens: 5678,
+            cached_tokens: 900,
+        });
+        assert_eq!(
+            tracker.summary(),
+            "tokens: 1234 in (900 cached) / 5678 out"
+        );
     }
 }

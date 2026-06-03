@@ -21,6 +21,9 @@ pub struct ProviderConfig {
     pub max_tokens: u32,
     pub temperature: Option<f32>,
     pub thinking_budget: Option<u32>,
+    /// Extra HTTP headers to send with every request to this provider.
+    /// Used by providers like Kimi that require custom headers for routing.
+    pub extra_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 impl ProviderConfig {
@@ -33,6 +36,7 @@ impl ProviderConfig {
             max_tokens: entry.max_tokens,
             temperature: entry.temperature,
             thinking_budget: entry.thinking_budget,
+            extra_headers: entry.extra_headers.clone(),
         }
     }
 }

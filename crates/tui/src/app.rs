@@ -163,7 +163,7 @@ pub enum AgentEvent {
     ToolDone { name: String, is_error: bool, output: String },
     ResponseComplete(String),
     Error(String),
-    Usage { input_tokens: u32, output_tokens: u32, current_context_tokens: u32 },
+    Usage { input_tokens: u32, output_tokens: u32, cached_input_tokens: u32, current_context_tokens: u32 },
     ThinkingLevel(Option<rusty_core::ThinkingLevel>),
     ModelChanged(String),
 }
@@ -354,6 +354,7 @@ impl ModelFormState {
             max_tokens,
             temperature,
             thinking_budget,
+            extra_headers: None,
         })
     }
 }
@@ -955,6 +956,7 @@ pub struct StatusInfo {
     pub model: String,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    pub cached_input_tokens: u32,
     pub current_context_tokens: u32,
     pub is_processing: bool,
     pub thinking_level: Option<rusty_core::ThinkingLevel>,

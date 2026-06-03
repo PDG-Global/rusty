@@ -1293,6 +1293,13 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         Style::default().fg(Color::White)
     };
 
+    let cached_style = Style::default().fg(Color::DarkGray);
+    let cached_span = if app.status.cached_input_tokens > 0 {
+        Span::styled(format!("| cached: {} ", app.status.cached_input_tokens), cached_style)
+    } else {
+        Span::styled("", cached_style)
+    };
+
     let think_style = Style::default().fg(Color::Gray);
     let think_span = match app.status.thinking_level {
         Some(level) => Span::styled(format!("| thinking: {level}"), think_style),
@@ -1334,6 +1341,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         Span::styled(format!(" {} ", app.status.model), model_style),
         Span::styled("| ", separator_style),
         Span::styled(format!("context: {}/{} ({}%) ", current_context, context_window, usage_pct.min(999)), token_style),
+        cached_span,
         Span::styled("| ", separator_style),
         Span::styled(format!("{state_text} "), state_style),
         think_span,

@@ -24,23 +24,25 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             group: "Kimi".into(),
             name: "kimi-global".into(),
             provider: ProviderType::OpenAI,
-            api_base: "https://api.kimi.com/coding/".into(),
+            api_base: "https://api.kimi.com/coding/v1".into(),
             model: "kimi-k2.6".into(),
             available_models: vec!["kimi-k2.6".into(), "kimi-k2.5".into()],
             max_tokens: 8_192,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         ModelEntry {
             group: "Kimi".into(),
             name: "kimi-cn".into(),
             provider: ProviderType::OpenAI,
-            api_base: "https://api.kimi.com/coding/".into(),
+            api_base: "https://api.kimi.com/coding/v1".into(),
             model: "kimi-k2.6".into(),
             available_models: vec!["kimi-k2.6".into(), "kimi-k2.5".into()],
             max_tokens: 8_192,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         // ── Xiaomi MiMo ──────────────────────────────────────────────────
         ModelEntry {
@@ -53,6 +55,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 32_768,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         ModelEntry {
             group: "Xiaomi MiMo".into(),
@@ -64,6 +67,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 32_768,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         // ── DeepSeek ─────────────────────────────────────────────────────
         ModelEntry {
@@ -76,6 +80,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 384_000,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         ModelEntry {
             group: "DeepSeek".into(),
@@ -87,6 +92,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 384_000,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         // ── Zhipu GLM ────────────────────────────────────────────────────
         ModelEntry {
@@ -99,6 +105,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 8_192,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         ModelEntry {
             group: "Zhipu GLM".into(),
@@ -110,6 +117,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 8_192,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         // ── MiniMax ──────────────────────────────────────────────────────
         ModelEntry {
@@ -126,6 +134,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 8_192,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         ModelEntry {
             group: "MiniMax".into(),
@@ -141,6 +150,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 8_192,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         // ── OpenAI ───────────────────────────────────────────────────────
         ModelEntry {
@@ -159,6 +169,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 16_384,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
         // ── Ollama (local) ───────────────────────────────────────────────
         ModelEntry {
@@ -171,6 +182,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             max_tokens: 4_096,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         },
     ]
 }
@@ -267,6 +279,7 @@ mod tests {
             max_tokens: 4096,
             temperature: None,
             thinking_budget: None,
+            extra_headers: None,
         };
         let line = format_entry_line(&entry, true);
         assert!(line.starts_with('●'));

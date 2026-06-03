@@ -87,10 +87,37 @@ pub struct OaiResponseMessage {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct OaiUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: Option<u32>,
+    // OpenAI / Kimi / MiMo: prompt_tokens_details.cached_tokens
+    #[serde(default)]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
+    // DeepSeek: top-level prompt_cache_hit_tokens
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: Option<u32>,
+}
+
+impl OaiUsage {
+    /// Extract the number of cached input tokens, supporting both OpenAI and
+    /// DeepSeek wire formats. Returns 0 when not reported.
+    pub fn cached_tokens(&self) -> u32 {
+        // DeepSeek style (top-level field)
+        if let Some(hit) = self.prompt_cache_hit_tokens {
+            return hit;
+        }
+        // OpenAI / Kimi / MiMo style (nested object)
+        self.prompt_tokens_details
+            .as_ref()
+            .map_or(0, |d| d.cached_tokens)
+    }
 }
 
 // Streaming response chunks

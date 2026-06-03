@@ -153,6 +153,10 @@ pub struct ModelEntry {
     /// Thinking/reasoning token budget.
     #[serde(default)]
     pub thinking_budget: Option<u32>,
+    /// Extra HTTP headers to send with every request to this provider.
+    /// Used by providers like Kimi that require custom headers for routing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_headers: Option<HashMap<String, String>>,
 }
 
 impl ModelEntry {
@@ -428,6 +432,7 @@ impl Settings {
             max_tokens: 16384,
             temperature: None,
             thinking_budget: None,
+            extra_headers: None,
         };
         self.models.push(entry);
         self.active_model = "default".to_string();
@@ -895,6 +900,7 @@ mod tests {
             max_tokens: 8192,
             temperature: None,
             thinking_budget: None,
+            extra_headers: None,
         };
         let mut settings = Settings {
             api_key: Some("sk-legacy".into()),
@@ -942,6 +948,7 @@ mod tests {
             max_tokens: 4096,
             temperature: None,
             thinking_budget: None,
+            extra_headers: None,
         });
 
         assert!(settings.switch_active_model("gpt4"));
@@ -972,6 +979,7 @@ mod tests {
             max_tokens: 8192,
             temperature: Some(0.7),
             thinking_budget: None,
+            extra_headers: None,
         };
         settings.add_model(updated);
 
@@ -1004,6 +1012,7 @@ mod tests {
             max_tokens: 4096,
             temperature: None,
             thinking_budget: None,
+            extra_headers: None,
         });
         settings.set_api_key("extra", "sk-extra".into());
 

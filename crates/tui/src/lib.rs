@@ -134,7 +134,7 @@ async fn run_loop(
                     AgentEvent::ToolDone { name, is_error, output } => {
                         app.tool_finished(&name, is_error, &output);
                     }
-                    AgentEvent::Usage { input_tokens, output_tokens, current_context_tokens } => {
+                    AgentEvent::Usage { input_tokens, output_tokens, current_context_tokens, .. } => {
                         app.status.input_tokens = input_tokens;
                         app.status.output_tokens = output_tokens;
                         app.status.current_context_tokens = current_context_tokens;

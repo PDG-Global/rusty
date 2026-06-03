@@ -65,8 +65,8 @@ pub enum ToolStatus {
 
 /// Callback for tool execution status — receives name and status
 pub type ToolCallback = Box<dyn Fn(&str, ToolStatus) + Send + Sync>;
-/// Callback for token usage updates — receives (total_input, total_output, current_context_tokens)
-pub type UsageCallback = Box<dyn Fn(u32, u32, u32) + Send + Sync>;
+/// Callback for token usage updates — receives (total_input, total_output, current_context_tokens, cached_tokens)
+pub type UsageCallback = Box<dyn Fn(u32, u32, u32, u32) + Send + Sync>;
 /// Callback for thinking level changes
 pub type ThinkingLevelCallback = Box<dyn Fn(Option<ThinkingLevel>) + Send + Sync>;
 /// Callback for permission requests — receives a request, returns a decision future
@@ -392,8 +392,9 @@ impl Agent {
                         // For total_usage, track the max context seen (not a sum)
                         self.total_usage.input_tokens = usage.input_tokens;
                         self.total_usage.output_tokens += usage.output_tokens;
+                        self.total_usage.cached_tokens += usage.cached_tokens;
                         if let Some(cb) = on_usage {
-                            cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens);
+                            cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
                         }
                     }
                     StreamEvent::Done { stop_reason: sr } => {
@@ -424,7 +425,7 @@ impl Agent {
                     self.total_usage.output_tokens = estimated_output;
                 }
                 if let Some(cb) = on_usage {
-                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens);
+                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
                 }
             }
 

@@ -280,7 +280,7 @@ async fn main() -> Result<()> {
                 }
             }
             "kimi" | "moonshot" => {
-                config.api_base = Some("https://api.kimi.com/coding/".to_string());
+                config.api_base = Some("https://api.kimi.com/coding/v1".to_string());
                 if args.model.is_none() && settings.default_model.is_none() {
                     config.model = "kimi-k2.6".to_string();
                 }
@@ -419,6 +419,7 @@ async fn main() -> Result<()> {
                 max_tokens: config.max_tokens,
                 temperature: config.temperature,
                 thinking_budget: config.thinking_budget,
+                extra_headers: entry.extra_headers.clone(),
             },
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -433,6 +434,7 @@ async fn main() -> Result<()> {
                 max_tokens: config.max_tokens,
                 temperature: config.temperature,
                 thinking_budget: config.thinking_budget,
+                extra_headers: None,
             },
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -990,9 +992,9 @@ async fn run_tui(
                         let _ = tx_tool.send(AgentTaskEvent::Event(event));
                     });
                     let tx_usage = event_tx.clone();
-                    let usage_cb: rusty_agent::r#loop::UsageCallback = Box::new(move |input_tokens, output_tokens, current_context_tokens| {
+                    let usage_cb: rusty_agent::r#loop::UsageCallback = Box::new(move |input_tokens, output_tokens, current_context_tokens, cached_input_tokens| {
                         let _ = tx_usage.send(AgentTaskEvent::Event(
-                            rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, current_context_tokens },
+                            rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, cached_input_tokens, current_context_tokens },
                         ));
                     });
                     let tx_thinking_level = event_tx.clone();
@@ -1153,6 +1155,7 @@ async fn run_tui(
                                                     max_tokens: entry.max_tokens,
                                                     temperature: entry.temperature,
                                                     thinking_budget: entry.thinking_budget,
+                                                    extra_headers: entry.extra_headers.clone(),
                                                 };
                                                 match rusty_provider::create_provider(entry.provider, provider_config) {
                                                     Ok(new_provider) => {
@@ -1500,9 +1503,10 @@ async fn tui_main_loop(
                     rusty_tui::app::AgentEvent::ToolDone { name, is_error, output } => {
                         app.tool_finished(&name, is_error, &output);
                     }
-                    rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, current_context_tokens } => {
+                    rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, cached_input_tokens, current_context_tokens } => {
                         app.status.input_tokens = input_tokens;
                         app.status.output_tokens = output_tokens;
+                        app.status.cached_input_tokens = cached_input_tokens;
                         app.status.current_context_tokens = current_context_tokens;
                         app.needs_redraw = true;
                     }

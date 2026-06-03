@@ -124,6 +124,11 @@ impl Message {
 pub struct UsageInfo {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Number of input tokens served from the provider's prompt cache.
+    /// Providers report this differently (OpenAI: prompt_tokens_details.cached_tokens,
+    /// DeepSeek: prompt_cache_hit_tokens). 0 when not reported or not cached.
+    #[serde(default)]
+    pub cached_tokens: u32,
 }
 
 impl UsageInfo {
@@ -307,7 +312,19 @@ mod tests {
         let usage = UsageInfo {
             input_tokens: 1000,
             output_tokens: 500,
+            cached_tokens: 0,
         };
+        assert_eq!(usage.total(), 1500);
+    }
+
+    #[test]
+    fn usage_info_total_with_cached() {
+        let usage = UsageInfo {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cached_tokens: 800,
+        };
+        // cached_tokens is a subset of input_tokens, not additive
         assert_eq!(usage.total(), 1500);
     }
 
