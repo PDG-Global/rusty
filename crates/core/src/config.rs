@@ -114,12 +114,20 @@ pub fn budget_to_level(budget: u32) -> ThinkingLevel {
 #[serde(rename_all = "snake_case")]
 pub enum ProviderType {
     OpenAI,
+    Anthropic,
+}
+
+impl Default for ProviderType {
+    fn default() -> Self {
+        Self::OpenAI
+    }
 }
 
 impl std::fmt::Display for ProviderType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OpenAI => write!(f, "OpenAI"),
+            Self::Anthropic => write!(f, "Anthropic"),
         }
     }
 }
@@ -134,6 +142,7 @@ pub struct ModelEntry {
     /// User-chosen label: "mimo", "openai", "local", etc.
     pub name: String,
     /// Which backend protocol to speak.
+    #[serde(default)]
     pub provider: ProviderType,
     /// API base URL (e.g. `https://api.openai.com/v1`).
     pub api_base: String,

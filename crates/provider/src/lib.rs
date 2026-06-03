@@ -1,6 +1,7 @@
 // Copyright (C) 2026 PDG Global Limited
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+pub mod anthropic;
 pub mod openai;
 pub mod types;
 
@@ -10,6 +11,7 @@ use rusty_core::{ModelEntry, ProviderType, Message, RustyError, ToolDefinition, 
 use std::pin::Pin;
 use std::sync::Arc;
 
+pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiProvider;
 pub use types::*;
 
@@ -92,7 +94,7 @@ pub trait LlmProvider: Send + Sync {
 /// Create a provider instance for the given provider type and configuration.
 ///
 /// This is the central factory that maps `ProviderType` → concrete `LlmProvider`
-/// implementation. Currently all providers speak the OpenAI-compatible protocol.
+/// implementation.
 pub fn create_provider(
     provider_type: ProviderType,
     config: ProviderConfig,
@@ -100,6 +102,10 @@ pub fn create_provider(
     match provider_type {
         ProviderType::OpenAI => {
             let provider = OpenAiProvider::new(config)?;
+            Ok(Arc::new(provider))
+        }
+        ProviderType::Anthropic => {
+            let provider = AnthropicProvider::new(config)?;
             Ok(Arc::new(provider))
         }
     }
