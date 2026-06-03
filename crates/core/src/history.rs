@@ -5,7 +5,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::{ensure_restricted_dir, set_restrictive_file_permissions};
+
 use crate::Message;
+
+/// Sessions older than this are cleaned up automatically.
+const SESSION_TTL_DAYS: i64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSession {
@@ -38,10 +43,17 @@ impl ConversationSession {
 
     pub async fn save(&self) -> anyhow::Result<()> {
         let dir = crate::Config::sessions_dir();
-        tokio::fs::create_dir_all(&dir).await?;
+        {
+            let dir = dir.clone();
+            tokio::task::spawn_blocking(move || ensure_restricted_dir(&dir)).await??;
+        }
         let path = Self::session_path(&self.id);
         let content = serde_json::to_string_pretty(self)?;
         tokio::fs::write(&path, content).await?;
+        {
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || set_restrictive_file_permissions(&path)).await?;
+        }
         Ok(())
     }
 
@@ -74,6 +86,33 @@ impl ConversationSession {
         }
         sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         Ok(sessions)
+    }
+
+    /// Remove session files older than `SESSION_TTL_DAYS`. Returns the number of
+    /// sessions removed. Called lazily during `list()` to avoid blocking startup.
+    pub async fn cleanup_expired() -> anyhow::Result<usize> {
+        let dir = crate::Config::sessions_dir();
+        if !dir.exists() {
+            return Ok(0);
+        }
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(SESSION_TTL_DAYS);
+        let mut removed = 0usize;
+        let mut entries = tokio::fs::read_dir(&dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                    if let Ok(session) = serde_json::from_str::<Self>(&content) {
+                        if session.updated_at < cutoff {
+                            if tokio::fs::remove_file(&path).await.is_ok() {
+                                removed += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(removed)
     }
 }
 

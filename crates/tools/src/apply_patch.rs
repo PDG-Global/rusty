@@ -59,6 +59,8 @@ impl Tool for ApplyPatchTool {
             match op {
                 PatchOp::AddFile { path, content } => {
                     let full_path = crate::resolve_path(path, &ctx.working_dir)?;
+                    // Pre-write check: ensure no escaping symlink exists at this path
+                    crate::verify_not_escaping_symlink(&full_path, &ctx.working_dir)?;
                     if let Some(parent) = full_path.parent() {
                         tokio::fs::create_dir_all(parent)
                             .await
@@ -78,12 +80,14 @@ impl Tool for ApplyPatchTool {
                     tokio::fs::write(&full_path, content).await.map_err(|e| {
                         RustyError::Tool(format!("Failed to write {}: {e}", full_path.display()))
                     })?;
-                    // TOCTOU post-write check
+                    // Post-write check (defense in depth)
                     crate::verify_no_symlink_escape(&full_path, &ctx.working_dir)?;
                     results.push(format!("  Added {}", path));
                 }
                 PatchOp::UpdateFile { path, hunks } => {
                     let full_path = crate::resolve_path(path, &ctx.working_dir)?;
+                    // Pre-read check: ensure path is not an escaping symlink
+                    crate::verify_not_escaping_symlink(&full_path, &ctx.working_dir)?;
                     let original = tokio::fs::read_to_string(&full_path).await.map_err(|e| {
                         RustyError::Tool(format!(
                             "Failed to read {}: {e}",
@@ -99,7 +103,7 @@ impl Tool for ApplyPatchTool {
                         RustyError::Tool(format!("Failed to write {}: {e}", full_path.display()))
                     })?;
 
-                    // TOCTOU post-write check
+                    // Post-write check (defense in depth)
                     crate::verify_no_symlink_escape(&full_path, &ctx.working_dir)?;
 
                     let diff = similar::TextDiff::from_lines(&original, &new_content);
@@ -117,6 +121,8 @@ impl Tool for ApplyPatchTool {
                             full_path.display()
                         )));
                     }
+                    // Pre-delete check: prevent deleting through an escaping symlink
+                    crate::verify_not_escaping_symlink(&full_path, &ctx.working_dir)?;
                     tokio::fs::remove_file(&full_path).await.map_err(|e| {
                         RustyError::Tool(format!(
                             "Failed to delete {}: {e}",

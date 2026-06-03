@@ -131,23 +131,72 @@ impl Tool for WebFetchTool {
             }
         }
 
-        // 4. DNS resolution check: block if hostname resolves to a private IP
-        //    This catches cases like a custom hostname resolving to 127.0.0.1
-        if let Ok(addrs) = tokio::net::lookup_host((host, 0)).await {
-            for addr in addrs {
-                if is_blocked_ip(addr.ip()) {
-                    return Ok(ToolResult::error(format!(
-                        "Blocked: host '{host}' resolves to private/reserved IP {}.",
-                        addr.ip()
-                    )));
+        // 4. DNS resolution check + pin: resolve once and pin the IP to prevent
+        //    DNS rebinding TOCTOU (attacker changes DNS between check and request).
+        //    We build a per-request client that overrides DNS resolution with the
+        //    validated IP addresses.
+        let resolved_ip = match tokio::net::lookup_host((host, parsed.port_or_known_default().unwrap_or(443))).await {
+            Ok(addrs) => {
+                let mut pinned_ip: Option<std::net::IpAddr> = None;
+                for addr in addrs {
+                    if is_blocked_ip(addr.ip()) {
+                        return Ok(ToolResult::error(format!(
+                            "Blocked: host '{host}' resolves to private/reserved IP {}.",
+                            addr.ip()
+                        )));
+                    }
+                    if pinned_ip.is_none() {
+                        pinned_ip = Some(addr.ip());
+                    }
                 }
+                pinned_ip
             }
-        }
+            Err(e) => {
+                debug!("DNS lookup failed for {host}: {e}");
+                None
+            }
+        };
 
         debug!("Fetching URL: {url}");
 
-        let resp = self
-            .client
+        // Build a per-request client with pinned DNS to prevent DNS rebinding.
+        // If we resolved the IP, pin it; otherwise fall back to default client.
+        let request_client = if let Some(ip) = resolved_ip {
+            let port = parsed.port_or_known_default().unwrap_or(443);
+            let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 5 {
+                    return attempt.stop();
+                }
+                if let Some(redir_host) = attempt.url().host_str() {
+                    let redir_lower = redir_host.to_ascii_lowercase();
+                    if redir_lower == "localhost"
+                        || redir_lower.ends_with(".localhost")
+                        || redir_lower.ends_with(".local")
+                    {
+                        return attempt.stop();
+                    }
+                    if let Ok(redir_ip) = redir_host.parse::<std::net::IpAddr>() {
+                        if is_blocked_ip(redir_ip) {
+                            return attempt.stop();
+                        }
+                    }
+                }
+                attempt.follow()
+            });
+            let socket_addr = std::net::SocketAddr::new(ip, port);
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .redirect(redirect_policy)
+                .resolve(host, socket_addr)
+                .build()
+                .map_err(|e| RustyError::Tool(format!("Failed to build HTTP client: {e}")))?
+        } else {
+            // DNS lookup failed (e.g. no A/AAAA record); use default client
+            // which will fail naturally on connect
+            self.client.clone()
+        };
+
+        let resp = request_client
             .get(url)
             .send()
             .await

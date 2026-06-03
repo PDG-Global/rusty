@@ -7,6 +7,16 @@ use std::path::Path;
 /// Prevents context flooding from oversized or malicious AGENTS.md / CLAUDE.md files.
 const CONTEXT_FILES_MAX_BYTES: usize = 30_000;
 
+/// Escape angle brackets in context file content to prevent prompt injection via
+/// XML/tag breakout. A malicious AGENTS.md could contain `</environment_context>`
+/// followed by fake system instructions — escaping prevents the tag from being
+/// parsed as a real delimiter.
+fn sanitise_context_content(content: &str) -> String {
+    content
+        .replace('<', "\u{FF1C}")  // fullwidth less-than sign
+        .replace('>', "\u{FF1E}")  // fullwidth greater-than sign
+}
+
 /// Build system context: platform info, working directory, git status
 pub async fn build_system_context(working_dir: &Path) -> String {
     let mut parts = Vec::new();
@@ -79,11 +89,13 @@ pub async fn build_user_context(working_dir: &Path, no_claude_md: bool) -> Strin
 }
 
 /// Collect context files with a byte budget. Files are added in order until the
-/// budget is exhausted; remaining files are skipped.
+/// budget is exhausted; remaining files are skipped. Content is sanitised to
+/// prevent angle-bracket breakout attacks (M1).
 fn apply_budget(files: &[(String, String)], budget: &mut usize) -> Vec<String> {
     let mut result = Vec::new();
     for (header, content) in files {
-        let entry = format!("{}\n{}", header, content);
+        let sanitised = sanitise_context_content(content);
+        let entry = format!("{}\n{}", header, sanitised);
         let entry_bytes = entry.len();
         if *budget == 0 {
             break;

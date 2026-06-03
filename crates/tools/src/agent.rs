@@ -49,7 +49,7 @@ impl Tool for AgentTool {
     }
 
     fn permission_level(&self) -> PermissionLevel {
-        PermissionLevel::None
+        PermissionLevel::Write
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult, RustyError> {

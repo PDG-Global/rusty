@@ -2,11 +2,59 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::permissions::PermissionMode;
+
+/// Set restrictive (owner-only) permissions on a directory.
+/// On Unix: 0o700. No-op on other platforms.
+#[cfg(unix)]
+pub fn set_restrictive_dir_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+}
+
+#[cfg(not(unix))]
+pub fn set_restrictive_dir_permissions(_path: &Path) {}
+
+/// Set restrictive (owner-only) permissions on a file.
+/// On Unix: 0o600. No-op on other platforms.
+#[cfg(unix)]
+pub fn set_restrictive_file_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+pub fn set_restrictive_file_permissions(_path: &Path) {}
+
+/// Ensure a directory exists and set restrictive permissions on it.
+/// Creates the directory and all missing parents, then sets 0o700 on each
+/// newly-created directory in the chain.
+pub fn ensure_restricted_dir(path: &Path) -> std::io::Result<()> {
+    if path.exists() {
+        set_restrictive_dir_permissions(path);
+        return Ok(());
+    }
+    // Walk up to find the first existing ancestor
+    let mut to_create = Vec::new();
+    let mut current = Some(path);
+    while let Some(p) = current {
+        if p.exists() {
+            break;
+        }
+        to_create.push(p);
+        current = p.parent();
+    }
+    // Create from ancestor down, setting permissions on each
+    for p in to_create.iter().rev() {
+        std::fs::create_dir(p)?;
+        set_restrictive_dir_permissions(p);
+    }
+    Ok(())
+}
 
 /// Thinking/reasoning depth tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -393,10 +441,11 @@ impl Settings {
     pub async fn save(&self) -> anyhow::Result<()> {
         let path = Config::settings_path();
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            ensure_restricted_dir(parent)?;
         }
         let content = serde_json::to_string_pretty(self)?;
         tokio::fs::write(&path, content).await?;
+        set_restrictive_file_permissions(&path);
         Ok(())
     }
 

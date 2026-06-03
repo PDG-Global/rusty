@@ -148,7 +148,11 @@ impl Tool for MemoryTool {
                     query
                 );
                 for m in &results {
-                    out.push_str(&format!("[{}] {}\n", m.id, m.content));
+                    // Defence-in-depth: sanitise on output in case stored content
+                    // was written by a previous version without sanitisation
+                    let safe = rusty_core::memory::sanitize_content(&m.content)
+                        .unwrap_or_else(|| "[unsanitisable]".to_string());
+                    out.push_str(&format!("[{}] {}\n", m.id, safe));
                 }
                 Ok(ToolResult::success(out))
             }
@@ -170,7 +174,11 @@ impl Tool for MemoryTool {
                     }
                 );
                 for m in &memory.memories {
-                    out.push_str(&format!("[{}] {}\n", m.id, m.content));
+                    // Defence-in-depth: sanitise on output in case stored content
+                    // was written by a previous version without sanitisation
+                    let safe = rusty_core::memory::sanitize_content(&m.content)
+                        .unwrap_or_else(|| "[unsanitisable]".to_string());
+                    out.push_str(&format!("[{}] {}\n", m.id, safe));
                 }
                 Ok(ToolResult::success(out))
             }

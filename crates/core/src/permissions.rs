@@ -41,7 +41,16 @@ pub enum PermissionDecision {
 pub fn check_auto_permission(mode: PermissionMode, level: PermissionLevel) -> PermissionDecision {
     match mode {
         PermissionMode::BypassPermissions => PermissionDecision::AllowOnce,
-        PermissionMode::AcceptEdits => PermissionDecision::AllowOnce,
+        PermissionMode::AcceptEdits => {
+            if level == PermissionLevel::Write {
+                PermissionDecision::AllowOnce
+            } else if level == PermissionLevel::ReadOnly || level == PermissionLevel::None {
+                PermissionDecision::AllowOnce
+            } else {
+                // Execute still requires approval in AcceptEdits mode
+                PermissionDecision::Deny("Execute requires approval in AcceptEdits mode".to_string())
+            }
+        }
         PermissionMode::Plan => {
             if level == PermissionLevel::ReadOnly || level == PermissionLevel::None {
                 PermissionDecision::AllowOnce
@@ -65,24 +74,29 @@ pub fn check_auto_permission(mode: PermissionMode, level: PermissionLevel) -> Pe
 pub enum BashClassification {
     ReadOnly,
     Write,
+    Execute,
 }
 
 /// Returns true if the command contains shell metacharacters that could enable
-/// command substitution (backticks, $()).
+/// command substitution (backticks, $()), process substitution (<(), >()), or
+/// other dangerous constructs.
 fn contains_command_substitution(cmd: &str) -> bool {
-    cmd.contains('`') || cmd.contains("$(")
+    cmd.contains('`') || cmd.contains("$(") || cmd.contains("<(") || cmd.contains(">(")
 }
 
 /// Classify whether a bash command is read-only or write/execute.
 pub fn classify_bash_command(command: &str) -> BashClassification {
     let trimmed = command.trim();
 
-    // Redirects always mean write
-    if trimmed.contains('>') || trimmed.contains(">>") {
+    // Shell redirects: >file, >>file, 2>file, 2>>file, etc.
+    // Use a simple state machine to detect redirects while avoiding false
+    // positives from `>` inside strings or arguments like `->`.
+    if contains_redirect(trimmed) {
         return BashClassification::Write;
     }
 
-    // Command substitution (backticks, $()) can execute arbitrary commands
+    // Command substitution (backticks, $()) and process substitution (<(), >())
+    // can execute arbitrary commands
     if contains_command_substitution(trimmed) {
         return BashClassification::Write;
     }
@@ -90,17 +104,54 @@ pub fn classify_bash_command(command: &str) -> BashClassification {
     // Split on shell operators: &&, ||, |, ;
     let parts = split_shell_operators(trimmed);
 
+    let mut result = BashClassification::ReadOnly;
+
     for part in &parts {
         let part = part.trim();
         if part.is_empty() {
             continue;
         }
-        if classify_single_command(part) == BashClassification::Write {
-            return BashClassification::Write;
+        match classify_single_command(part) {
+            BashClassification::Execute => return BashClassification::Execute,
+            BashClassification::Write => result = BashClassification::Write,
+            _ => {}
         }
     }
 
-    BashClassification::ReadOnly
+    result
+}
+
+/// Detect shell redirect operators (> file, >>file, 2>file, etc.)
+/// without false positives from `>` in arguments or quoted strings.
+fn contains_redirect(cmd: &str) -> bool {
+    let bytes = cmd.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    while i < len {
+        match bytes[i] {
+            b'\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            b'"' if !in_single_quote => in_double_quote = !in_double_quote,
+            b'>' if !in_single_quote && !in_double_quote => {
+                // Check if this `>` looks like a redirect:
+                // - preceded by whitespace, start-of-string, or a digit (fd), or & (2>&1)
+                // - not preceded by another > that we already counted (handles >>)
+                let prev_ok = if i == 0 {
+                    true
+                } else {
+                    matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'0'..=b'9' | b'&' | b'>' | b'|' | b';' | b'(' | b'{')
+                };
+                if prev_ok {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 fn split_shell_operators(cmd: &str) -> Vec<String> {
@@ -146,7 +197,7 @@ fn classify_single_command(cmd: &str) -> BashClassification {
     // Commands that are always safe (read-only)
     match bin {
         "ls" | "cat" | "find" | "grep" | "rg" | "wc" | "head" | "tail" | "echo"
-        | "pwd" | "which" | "env" | "printenv" | "whoami" | "date" | "uname"
+        | "pwd" | "which" | "whoami" | "date" | "uname"
         | "file" | "stat" | "du" | "df" | "tree" | "less" | "more" | "type"
         | "command" | "help" | "man" | "info" | "true" | "false" | "test" | "["
         | "diff" | "comm" | "sort" | "uniq" | "cut" | "tr"
@@ -178,6 +229,11 @@ fn classify_single_command(cmd: &str) -> BashClassification {
         // tee: always write — its purpose is to write to files
         "tee" => {
             return BashClassification::Write;
+        }
+        // eval/source/.: always execute — they run arbitrary code from arguments/files
+        // env/printenv: always execute — they expose all environment variables including secrets
+        "eval" | "source" | "." | "env" | "printenv" => {
+            return BashClassification::Execute;
         }
         _ => {}
     }
@@ -409,5 +465,40 @@ mod tests {
         assert_eq!(classify_bash_command("ls && git push"), BashClassification::Write);
         assert_eq!(classify_bash_command("ls | grep foo"), BashClassification::ReadOnly);
         assert_eq!(classify_bash_command("echo hello > file.txt"), BashClassification::Write);
+    }
+
+    #[test]
+    fn test_eval_source_always_execute() {
+        assert_eq!(classify_bash_command("eval echo hi"), BashClassification::Execute);
+        assert_eq!(classify_bash_command("source setup.sh"), BashClassification::Execute);
+        assert_eq!(classify_bash_command(". setup.sh"), BashClassification::Execute);
+        assert_eq!(classify_bash_command("env"), BashClassification::Execute);
+        assert_eq!(classify_bash_command("printenv"), BashClassification::Execute);
+        assert_eq!(classify_bash_command("env | grep PATH"), BashClassification::Execute);
+    }
+
+    #[test]
+    fn test_process_substitution_is_write() {
+        assert_eq!(
+            classify_bash_command("diff <(ls a) <(ls b)"),
+            BashClassification::Write
+        );
+    }
+
+    #[test]
+    fn test_check_auto_permission_accept_edits_execute_denied() {
+        // AcceptEdits should allow Write and ReadOnly but deny Execute
+        assert_eq!(
+            check_auto_permission(PermissionMode::AcceptEdits, PermissionLevel::Write),
+            PermissionDecision::AllowOnce
+        );
+        assert_eq!(
+            check_auto_permission(PermissionMode::AcceptEdits, PermissionLevel::ReadOnly),
+            PermissionDecision::AllowOnce
+        );
+        assert!(matches!(
+            check_auto_permission(PermissionMode::AcceptEdits, PermissionLevel::Execute),
+            PermissionDecision::Deny(_)
+        ));
     }
 }

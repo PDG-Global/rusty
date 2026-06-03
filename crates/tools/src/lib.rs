@@ -75,6 +75,46 @@ pub fn resolve_path(path_str: &str, working_dir: &Path) -> Result<PathBuf, Rusty
     Ok(canonical)
 }
 
+/// Pre-operation validation: verify that `path` is not a symlink pointing outside
+/// the sandbox. Uses `symlink_metadata` (does not follow symlinks) to detect symlinks,
+/// then resolves and checks the target if one is found.
+///
+/// Call this **before** any write or delete operation to prevent TOCTOU attacks where
+/// a symlink is created between `resolve_path` and the actual I/O.
+pub fn verify_not_escaping_symlink(path: &Path, working_dir: &Path) -> Result<(), RustyError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(_) => return Ok(()), // Path doesn't exist yet, nothing to check
+    };
+
+    if !meta.is_symlink() {
+        return Ok(());
+    }
+
+    // Path is a symlink — resolve it and check the target
+    let resolved = path.canonicalize().map_err(|e| {
+        RustyError::Tool(format!(
+            "Cannot resolve symlink at '{}': {e}",
+            path.display()
+        ))
+    })?;
+    let canon_working = working_dir.canonicalize().map_err(|e| {
+        RustyError::Tool(format!("Cannot resolve working directory: {e}"))
+    })?;
+
+    if !resolved.starts_with(&canon_working) {
+        return Err(RustyError::Tool(format!(
+            "SECURITY: path '{}' is a symlink pointing to '{}' which is outside the working directory ({}). \
+             Operation blocked.",
+            path.display(),
+            resolved.display(),
+            canon_working.display()
+        )));
+    }
+
+    Ok(())
+}
+
 /// Post-write validation: verify the file at `path` hasn't been replaced by a symlink
 /// that points outside the sandbox.
 ///

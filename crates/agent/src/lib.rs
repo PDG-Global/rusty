@@ -14,7 +14,10 @@ pub use r#loop::{Agent, AgentCallbacks, CancelToken, PermissionCallback, ToolSta
 
 /// Spawn a sub-agent as a same-process tokio task.
 /// Returns the sub-agent's final text response.
-/// Sub-agents run with BypassPermissions — no interactive prompts.
+/// Sub-agents inherit the parent's permission mode. In Bypass mode they run
+/// without prompts; in other modes they enforce the same permission checks as
+/// the parent. Interactive (Default) mode is promoted to AcceptEdits so
+/// sub-agents never block waiting for user input.
 pub async fn spawn_subagent(
     provider: Arc<dyn LlmProvider>,
     tools: Vec<Box<dyn Tool>>,
@@ -22,10 +25,18 @@ pub async fn spawn_subagent(
     working_dir: PathBuf,
     system_prompt: String,
     task: String,
+    parent_permission_mode: PermissionMode,
 ) -> Result<String, RustyError> {
+    // Sub-agents cannot prompt the user interactively, so Default mode
+    // must be promoted to AcceptEdits (auto-allow writes, deny execute
+    // unless explicitly allowed).
+    let effective_mode = match parent_permission_mode {
+        PermissionMode::Default => PermissionMode::AcceptEdits,
+        other => other,
+    };
     let handle = tokio::spawn(async move {
         let mut agent = Agent::new(provider, tools, config, working_dir, system_prompt);
-        agent.set_permission_mode(PermissionMode::BypassPermissions);
+        agent.set_permission_mode(effective_mode);
         agent.run(&task, AgentCallbacks::default()).await
     });
 
@@ -41,6 +52,7 @@ pub fn make_agent_tool(
     system_prompt: String,
     config: Config,
 ) -> rusty_tools::agent::AgentTool {
+    let parent_mode = config.permission_mode;
     let spawn_fn = Arc::new(move |task: String, working_dir: PathBuf| {
         let provider = provider.clone();
         let system_prompt = system_prompt.clone();
@@ -48,7 +60,7 @@ pub fn make_agent_tool(
         Box::pin(async move {
             // Sub-agents get all tools except the agent tool (to prevent recursive spawning)
             let tools: Vec<Box<dyn rusty_tools::Tool>> = rusty_tools::all_tools();
-            spawn_subagent(provider, tools, config, working_dir, system_prompt, task).await
+            spawn_subagent(provider, tools, config, working_dir, system_prompt, task, parent_mode).await
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RustyError>> + Send>>
     });
 

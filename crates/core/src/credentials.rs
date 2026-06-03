@@ -82,18 +82,19 @@ impl CredentialManager {
             }
         }
 
-        // Priority 2: Per-model keys in settings file
-        for key in settings.api_keys.values() {
-            if !key.is_empty() {
-                return Some(key.clone());
-            }
-        }
-
-        // Priority 3: OS Keyring (only available with os-keyring feature)
+        // Priority 2: OS Keyring (only available with os-keyring feature)
+        // Keyring takes precedence over settings file to avoid storing secrets on disk.
         #[cfg(feature = "os-keyring")]
         if settings.credential_store == CredentialStore::Keyring {
             if let Some(key) = Self::get_from_keyring() {
                 return Some(key);
+            }
+        }
+
+        // Priority 3: Per-model keys in settings file
+        for key in settings.api_keys.values() {
+            if !key.is_empty() {
+                return Some(key.clone());
             }
         }
 

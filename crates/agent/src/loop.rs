@@ -668,6 +668,7 @@ impl Agent {
             match classify_bash_command(cmd) {
                 BashClassification::ReadOnly => PermissionLevel::ReadOnly,
                 BashClassification::Write => PermissionLevel::Execute,
+                BashClassification::Execute => PermissionLevel::Execute,
             }
         } else {
             tool.permission_level()

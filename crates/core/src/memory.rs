@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use once_cell::sync::Lazy;
+
+use crate::config::{ensure_restricted_dir, set_restrictive_file_permissions};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -133,15 +135,16 @@ impl ProjectMemory {
         Ok(memory)
     }
 
-    /// Save the project memory to disk.
+    /// Save the project memory to disk with restrictive permissions.
     pub fn save(&self) -> anyhow::Result<()> {
         let project_id = slugify_path(Path::new(&self.project_path));
         let path = memory_file_path(&project_id);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            ensure_restricted_dir(parent)?;
         }
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(&path, content)?;
+        set_restrictive_file_permissions(&path);
         Ok(())
     }
 

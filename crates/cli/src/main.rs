@@ -13,6 +13,7 @@ use rusty_agent::{Agent, AgentCallbacks};
 use rusty_core::permissions::{PermissionDecision, PermissionRequest};
 use rusty_core::{Config, ConversationSession, CredentialManager, PermissionMode, Settings};
 use rusty_core::setup_wizard::{run_setup_wizard, is_first_run};
+use rusty_core::config::{ensure_restricted_dir, set_restrictive_file_permissions};
 use rusty_provider::ProviderConfig;
 use rusty_tools::{all_tools, Tool};
 use std::collections::HashSet;
@@ -147,7 +148,7 @@ async fn main() -> Result<()> {
             .into_owned()
     });
     // Best-effort directory creation — fall back to /tmp if it fails
-    let _ = std::fs::create_dir_all(&log_dir);
+    let _ = ensure_restricted_dir(std::path::Path::new(&log_dir));
     let log_path = std::path::Path::new(&log_dir).join("debug.log");
 
     // Open log file in append mode; fall back to stderr if file can't be opened
@@ -156,6 +157,11 @@ async fn main() -> Result<()> {
         .append(true)
         .open(&log_path)
         .ok();
+
+    // Set restrictive permissions on the log file
+    if log_file.is_some() {
+        set_restrictive_file_permissions(&log_path);
+    }
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
@@ -214,6 +220,8 @@ async fn main() -> Result<()> {
 
     // Handle --list-sessions early exit
     if args.list_sessions {
+        // Run session cleanup in background before listing
+        let _ = rusty_core::ConversationSession::cleanup_expired().await;
         let sessions = rusty_core::ConversationSession::list().await?;
         if sessions.is_empty() {
             println!("No saved sessions.");
@@ -256,6 +264,11 @@ async fn main() -> Result<()> {
     // Load config
     let settings = Settings::load().await.unwrap_or_default();
     let mut config = Config::default();
+
+    // Fire-and-forget session cleanup (M2/L2): remove sessions older than 30 days
+    tokio::spawn(async {
+        let _ = rusty_core::ConversationSession::cleanup_expired().await;
+    });
 
     // Apply preset first (can be overridden by explicit flags)
     if let Some(preset) = &args.preset {
