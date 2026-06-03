@@ -9,6 +9,7 @@ pub mod file_read;
 pub mod file_write;
 pub mod glob;
 pub mod grep;
+pub mod memory;
 pub mod todowrite;
 pub mod web_fetch;
 

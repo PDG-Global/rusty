@@ -55,8 +55,13 @@ pub fn make_agent_tool(
     rusty_tools::agent::AgentTool { spawn_fn }
 }
 
-/// Build the system prompt from config and context
-pub async fn build_system_prompt(config: &Config, working_dir: &Path) -> String {
+/// Build the system prompt from config and context.
+/// `memory_context` is an optional pre-formatted string of relevant memories.
+pub async fn build_system_prompt(
+    config: &Config,
+    working_dir: &Path,
+    memory_context: Option<&str>,
+) -> String {
     let mut parts = Vec::new();
 
     // Base system prompt
@@ -132,6 +137,38 @@ pub async fn build_system_prompt(config: &Config, working_dir: &Path) -> String 
     if !user_ctx.is_empty() {
         parts.push(user_ctx);
     }
+
+    // Inject stored memories if available
+    if let Some(mem_ctx) = memory_context {
+        if !mem_ctx.is_empty() {
+            parts.push(mem_ctx.to_string());
+        }
+    }
+
+    // Memory management instructions
+    parts.push(
+        "## Memory Management\n\n\
+        You have access to a `memory` tool that persists information across conversations. \
+        Use it to remember important facts, preferences, decisions, and context that would be \
+        useful in future interactions.\n\n\
+        **When to save memories:**\n\
+        - User preferences (coding style, naming conventions, framework choices)\n\
+        - Project-specific decisions (architecture choices, library selections)\n\
+        - Important context the user explicitly asks you to remember\n\
+        - Recurring patterns in how the user works\n\n\
+        **When NOT to save memories:**\n\
+        - Temporary information relevant only to the current task\n\
+        - Information already captured in project files (AGENTS.md, etc.)\n\
+        - Sensitive data (passwords, tokens, API keys)\n\n\
+        **How to use:**\n\
+        - Call `memory` with action `\"store\"` to save a concise, well-written note\n\
+        - Call `memory` with action `\"list\"` to see all stored memories\n\
+        - Call `memory` with action `\"get\"` to retrieve a specific memory by name\n\
+        - Call `memory` with action `\"delete\"` to remove a memory\n\n\
+        Memory names should be lowercase, hyphenated, and descriptive (e.g., `project-structure`, \
+        `user-preferences`, `api-conventions`). Keep memory content concise but complete."
+            .to_string(),
+    );
 
     // Append system prompt if configured
     if let Some(append) = &config.append_system_prompt {

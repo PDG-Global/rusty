@@ -427,10 +427,27 @@ async fn main() -> Result<()> {
 
     // Build system prompt (must happen before make_agent_tool so sub-agents
     // receive the full context including AGENTS.md/CLAUDE.md, platform info, etc.)
-    let system_prompt = rusty_agent::build_system_prompt(&config, &working_dir).await;
+    // Load stored memories for injection into system prompt
+    let project_memory = rusty_core::memory::ProjectMemory::load_for_project(&working_dir)
+        .await
+        .unwrap_or_else(|_| rusty_core::memory::ProjectMemory::new(working_dir.to_string_lossy().to_string()));
+    let memory_context = project_memory.format_for_context();
+    let memory_context_opt = if memory_context.is_empty() {
+        None
+    } else {
+        Some(memory_context.clone())
+    };
+    let system_prompt = rusty_agent::build_system_prompt(
+        &config,
+        &working_dir,
+        memory_context_opt.as_deref(),
+    )
+    .await;
 
-    // Build tools (including agent tool)
+    // Build tools (including agent tool and memory tool)
     let mut tools: Vec<Box<dyn Tool>> = all_tools();
+    let memory_tool = rusty_tools::memory::MemoryTool::new(project_memory);
+    tools.push(Box::new(memory_tool));
 
     // Add agent tool with spawn function — uses the full system prompt so
     // sub-agents inherit the same context (AGENTS.md, CLAUDE.md, git info, etc.)
