@@ -1,6 +1,7 @@
 // Copyright (C) 2026 PDG Global Limited
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use futures::future::join_all;
 use futures::StreamExt;
 use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,
@@ -456,24 +457,102 @@ impl Agent {
 
                 self.messages.push(Message::assistant_blocks(blocks.clone()));
 
-                // Execute each tool
+                // Execute tools concurrently.
+                // Permission checks happen first (sequential, may prompt user),
+                // then all approved tools run in parallel via tokio::spawn.
                 let ctx = ToolContext {
                     working_dir: self.working_dir.clone(),
                     permission_mode: self.permission_mode,
                 };
 
+                // Phase 1: Check permissions for all tool calls (sequential)
+                let mut permission_results: Vec<(&ToolCallState, PermissionDecision)> = Vec::new();
                 for tc in &tool_calls {
+                    let decision = self.check_permission_for_tool(tc, &ctx).await;
+                    match &decision {
+                        PermissionDecision::AllowSession => {
+                            let key = make_allow_key(&tc.name, &tc.arguments);
+                            self.session_allowlist.insert(key);
+                        }
+                        PermissionDecision::AllowAlways => {
+                            let key = make_allow_key(&tc.name, &tc.arguments);
+                            self.session_allowlist.insert(key.clone());
+                            if let Err(e) = rusty_core::config::add_permanent_permission(&key).await {
+                                warn!("Failed to save permanent permission: {e}");
+                            }
+                        }
+                        _ => {}
+                    }
+                    permission_results.push((tc, decision));
+                }
+
+                // Phase 2: Fire "Running" callbacks and spawn approved tools concurrently
+                let mut spawn_handles: Vec<Option<_>> = Vec::new();
+                for (tc, decision) in &permission_results {
+                    if let PermissionDecision::Deny(reason) = decision {
+                        warn!("Tool {} denied: {}", tc.name, reason);
+                        spawn_handles.push(None);
+                        continue;
+                    }
+
                     if let Some(cb) = on_tool {
                         cb(&tc.name, ToolStatus::Running {
                             arguments: tc.arguments.clone(),
                         });
                     }
 
-                    let result = self.execute_tool(&tc.name, &tc.arguments, &ctx).await;
+                    // Clone what we need for the spawned task
+                    let tool_name = tc.name.clone();
+                    let tool_args = tc.arguments.clone();
+                    let tool_arc = self.tools.get(&tc.name).cloned();
+                    let tool_ctx = ctx.clone();
 
+                    let handle = tokio::spawn(async move {
+                        let Some(tool) = tool_arc else {
+                            return Err(RustyError::Tool(format!("Unknown tool: {tool_name}")));
+                        };
+                        let input: serde_json::Value = serde_json::from_str(&tool_args)
+                            .ok()
+                            .filter(|v: &serde_json::Value| v.is_object())
+                            .unwrap_or(serde_json::json!({}));
+                        tool.execute(input, &tool_ctx).await
+                    });
+                    spawn_handles.push(Some(handle));
+                }
+
+                // Phase 3: Collect results and fire callbacks
+                let results: Vec<Option<Result<ToolResult, RustyError>>> = join_all(
+                    spawn_handles.into_iter().map(|h| async {
+                        match h {
+                            Some(handle) => match handle.await {
+                                Ok(r) => Some(r),
+                                Err(e) => Some(Err(RustyError::Other(format!("Tool task panicked: {e}")))),
+                            },
+                            None => None,
+                        }
+                    })
+                ).await;
+
+                for ((tc, _decision), result) in permission_results.iter().zip(results) {
                     let tool_result = match result {
-                        Ok(r) => r,
-                        Err(e) => ToolResult::error(e.to_string()),
+                        Some(Ok(r)) => r,
+                        Some(Err(e)) => ToolResult::error(e.to_string()),
+                        None => {
+                            // Permission denied — already logged
+                            if let Some(cb) = on_tool {
+                                cb(&tc.name, ToolStatus::Error {
+                                    output: format!("Permission denied"),
+                                });
+                            }
+                            self.messages.push(Message::user_blocks(vec![
+                                ContentBlock::ToolResult {
+                                    tool_use_id: tc.id.clone(),
+                                    content: format!("Permission denied"),
+                                    is_error: Some(true),
+                                },
+                            ]));
+                            continue;
+                        }
                     };
 
                     if let Some(cb) = on_tool {
@@ -491,7 +570,6 @@ impl Agent {
                     // Truncate large tool outputs before storing in history.
                     // Use line-boundary-aware truncation to keep output readable.
                     let stored_content = if tool_result.content.len() > MAX_TOOL_OUTPUT_CHARS {
-                        
                         smart_truncate_output(&tool_result.content, MAX_TOOL_OUTPUT_CHARS)
                     } else {
                         tool_result.content.clone()
@@ -649,20 +727,16 @@ impl Agent {
         Err(last_err.unwrap_or_else(|| RustyError::Api("Max retries exceeded".into())))
     }
 
-    async fn execute_tool(
-        &mut self,
-        name: &str,
-        arguments: &str,
-        ctx: &ToolContext,
-    ) -> Result<ToolResult, RustyError> {
-        let tool = self
-            .tools
-            .get(name)
-            .ok_or_else(|| RustyError::Tool(format!("Unknown tool: {name}")))?;
-
-        // Determine effective permission level (bash gets classified per-command)
-        let effective_level = if name == "bash" {
-            let input: serde_json::Value = serde_json::from_str(arguments)
+    /// Check permissions for a tool call without executing it.
+    /// Returns the permission decision. Used by the concurrent execution path
+    /// where permission checks happen before spawning tasks.
+    async fn check_permission_for_tool(
+        &self,
+        tc: &ToolCallState,
+        _ctx: &ToolContext,
+    ) -> PermissionDecision {
+        let effective_level = if tc.name == "bash" {
+            let input: serde_json::Value = serde_json::from_str(&tc.arguments)
                 .unwrap_or(serde_json::Value::Null);
             let cmd = input["command"].as_str().unwrap_or("");
             match classify_bash_command(cmd) {
@@ -671,38 +745,14 @@ impl Agent {
                 BashClassification::Execute => PermissionLevel::Execute,
             }
         } else {
-            tool.permission_level()
+            self.tools
+                .get(&tc.name)
+                .map(|t| t.permission_level())
+                .unwrap_or(PermissionLevel::Execute)
         };
 
-        // Tiered permission check
-        let decision = self
-            .check_permission_tiered(name, arguments, effective_level)
-            .await;
-
-        match decision {
-            PermissionDecision::AllowOnce => { /* proceed */ }
-            PermissionDecision::AllowSession => {
-                let key = make_allow_key(name, arguments);
-                self.session_allowlist.insert(key);
-            }
-            PermissionDecision::AllowAlways => {
-                let key = make_allow_key(name, arguments);
-                self.session_allowlist.insert(key.clone());
-                if let Err(e) = rusty_core::config::add_permanent_permission(&key).await {
-                    warn!("Failed to save permanent permission: {e}");
-                }
-            }
-            PermissionDecision::Deny(reason) => {
-                warn!("Tool {name} denied: {reason}");
-                return Ok(ToolResult::error(format!("Permission denied: {reason}")));
-            }
-        }
-
-        debug!("Executing tool: {name}");
-        let input: serde_json::Value =
-            serde_json::from_str(arguments).unwrap_or(serde_json::Value::Object(Default::default()));
-
-        tool.execute(input, ctx).await
+        self.check_permission_tiered(&tc.name, &tc.arguments, effective_level)
+            .await
     }
 
     async fn check_permission_tiered(
