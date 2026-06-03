@@ -608,9 +608,10 @@ impl Agent {
                         );
                         self.task_nudge_count += 1;
                         self.messages.push(Message::user(
-                            "You have incomplete tasks remaining. Please continue working through your task list. \
-                             Do not stop until every task is marked `completed` or `cancelled`. \
-                             If you are unsure what remains, review your most recent `todowrite` output."
+                            "STOP. You have incomplete tasks. Do NOT narrate what you will do next. \
+                             Execute the first pending or in_progress task from your task list RIGHT NOW by calling the appropriate tool. \
+                             After completing it, update the task list and immediately start the next one. \
+                             Repeat until all tasks are `completed` or `cancelled`."
                         ));
                         continue;
                     }

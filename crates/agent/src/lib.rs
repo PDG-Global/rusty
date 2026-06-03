@@ -106,10 +106,28 @@ pub async fn build_system_prompt(
         3. If you discover additional work needed, add new tasks to the list.\n\
         4. Keep the task list visible and up-to-date throughout the conversation.\n\
         5. If you are uncertain what tasks remain, re-read your most recent `todowrite` call.\n\n\
-        CRITICAL: You must NOT stop or emit `end_turn` until every task in your most recent \
-        `todowrite` call is either `completed` or `cancelled`. If you attempt to stop with \
-        incomplete tasks, the system will automatically remind you to continue. \
-        Verify your task list is fully complete before concluding your response."
+        CRITICAL EXECUTION RULES:\n\
+        - Creating a task list is planning, not work. After calling `todowrite`, you MUST \
+        immediately begin executing the first task. Do not stop to narrate what you will do.\n\
+        - Never say \"I'll now proceed to...\", \"Let me start with...\", or \"Now I will...\" \
+        and then stop. Instead, perform the actual action (call the tool, write the code, \
+        make the edit).\n\
+        - If the first task requires research or investigation, that research IS the first \
+        task. Gather information by reading files, running commands, or searching code, then \
+        proceed to the next task. Do not treat research as a separate meta-phase.\n\
+        - Work through every task sequentially. After completing one, immediately start the \
+        next. The only valid reasons to stop are: all tasks are `completed`/`cancelled`, you \
+        are blocked by missing information from the user, or an error prevents continuation.\n\
+        - After all tasks are `completed` or `cancelled`, REVIEW your work before finishing. \
+        Re-read the original request, then go through each completed task and verify it was \
+        done correctly and completely. Check for: missed requirements, inconsistencies between \
+        tasks, files that should have been updated but weren't, and anything that contradicts \
+        the original request. If you find gaps, add new tasks and execute them.\n\
+        - You must NOT stop or emit `end_turn` until every task in your most recent \
+        `todowrite` call is either `completed` or `cancelled` AND you have reviewed your work. \
+        If you attempt to stop with incomplete tasks, the system will automatically remind \
+        you to continue.\n\
+        - Verify your task list is fully complete before concluding your response."
             .to_string(),
     );
 

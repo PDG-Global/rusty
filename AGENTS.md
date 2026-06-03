@@ -157,11 +157,37 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 
 When given multi-step work, follow this discipline:
 
-1. **Plan first**: Before any code changes, create a task list with `todowrite`. Think through dependencies, ordering, and edge cases. A vague task list leads to incomplete work.
-2. **Update in real-time**: Mark each task `in_progress` when starting it, and `completed` immediately when done. Never batch updates at the end.
-3. **Drive to completion**: Work through every task without stopping midway to wait for prompting. If blocked, flag the blocker explicitly rather than going silent.
-4. **Verify before marking done**: Run `cargo check`, tests, or other verification before marking a task complete. "Done" means verified.
-5. **Don't abandon work**: If a task list exists and work is unfinished, keep going. The user shouldn't have to ask you to continue.
+### Phase 1: Plan (brief)
+
+1. Create a task list with `todowrite`. Each task must be a concrete action (e.g. "Add X field to Y struct in Z.rs"), not a vague goal (e.g. "Improve error handling").
+2. If the request is complex, use your thinking to research the codebase and identify what needs to change. This is where deep thinking belongs: at the planning stage, not during execution.
+3. Keep the plan short. 3-7 tasks is typical. If the plan exceeds 10 tasks, break the request into phases.
+
+### Phase 2: Execute (immediately)
+
+4. After creating the task list, execute the FIRST task immediately. Do not narrate what you are about to do.
+5. Mark each task `in_progress` before starting it, and `completed` the moment it is done. Never batch updates.
+6. After completing a task, proceed to the next one without pausing. Do not stop to summarise progress or ask the user if you should continue.
+7. If a task requires information you do not have, gather it (read a file, grep the codebase) as part of executing the task, then continue.
+8. If you discover a new task while executing, add it to the list and keep going.
+9. If you are blocked (e.g. permission denied, external dependency), mark the task `cancelled` with a reason, and proceed to the next task.
+
+### Phase 3: Verify
+
+10. After all tasks are done, run `cargo check`, tests, or other verification if applicable. "Done" means verified.
+
+### Phase 4: Review
+
+11. Re-read the original request. Go through each completed task and verify it was done correctly and completely.
+12. Check for: missed requirements, inconsistencies between tasks, files that should have been updated but weren't, and anything that contradicts the original request.
+13. If you find gaps, add new tasks to the list and execute them.
+
+### Rules
+
+- **Planning is not execution.** A task list without tool calls is incomplete work.
+- **Never stop with incomplete tasks** unless you are genuinely blocked. The user should not need to prompt you to continue.
+- **Do not ask the user if you should continue.** You should always continue until all tasks are `completed` or `cancelled`.
+- **Always review before finishing.** Do not conclude your response until you have checked your work against the original request.
 
 ---
 
