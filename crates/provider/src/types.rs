@@ -233,7 +233,14 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                             call_type: "function".to_string(),
                             function: OaiFunctionCall {
                                 name: name.clone(),
-                                arguments: input.to_string(),
+                                // Ensure arguments is always a JSON object string.
+                                // Some LLM APIs fail if they receive "null" or a non-object
+                                // here (e.g. "Can only get item pairs from a mapping").
+                                arguments: if input.is_object() {
+                                    input.to_string()
+                                } else {
+                                    "{}".to_string()
+                                },
                             },
                         }),
                         _ => None,

@@ -108,7 +108,11 @@ impl Tool for MemoryTool {
 
                 let entry = {
                     let mut memory = self.memory.lock();
-                    let entry = memory.add(content);
+                    let entry = memory.add(content).ok_or_else(|| {
+                        RustyError::Tool(
+                            "memory content is empty or contained only unsafe content".into(),
+                        )
+                    })?;
                     memory
                         .save()
                         .map_err(|e| RustyError::Tool(format!("failed to save memory: {e}")))?;

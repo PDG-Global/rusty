@@ -46,3 +46,4 @@ arboard = "3"
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "vendored"] }
 base64 = "0.22"
 png = "0.17"
+once_cell = "1"

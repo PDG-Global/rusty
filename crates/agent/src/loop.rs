@@ -443,8 +443,10 @@ impl Agent {
                     }
                 }
                 for tc in &tool_calls {
-                    let input: serde_json::Value =
-                        serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
+                    let input: serde_json::Value = serde_json::from_str(&tc.arguments)
+                        .ok()
+                        .filter(|v: &serde_json::Value| v.is_object())
+                        .unwrap_or(serde_json::json!({}));
                     blocks.push(ContentBlock::ToolUse {
                         id: tc.id.clone(),
                         name: tc.name.clone(),

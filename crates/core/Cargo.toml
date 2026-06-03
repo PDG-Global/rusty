@@ -21,6 +21,8 @@ tokio.workspace = true
 keyring = { workspace = true, optional = true }
 reqwest.workspace = true
 crossterm.workspace = true
+once_cell.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
