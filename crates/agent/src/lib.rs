@@ -4,7 +4,7 @@
 pub mod compact;
 pub mod r#loop;
 
-use rusty_core::{Config, PermissionMode, RustyError};
+use rusty_core::{Config, ContentBlock, PermissionMode, RustyError};
 use rusty_provider::LlmProvider;
 use rusty_tools::Tool;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ pub async fn spawn_subagent(
     let handle = tokio::spawn(async move {
         let mut agent = Agent::new(provider, tools, config, working_dir, system_prompt);
         agent.set_permission_mode(effective_mode);
-        agent.run(&task, AgentCallbacks::default()).await
+        agent.run(vec![ContentBlock::Text { text: task }], AgentCallbacks::default()).await
     });
 
     handle

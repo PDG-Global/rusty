@@ -17,6 +17,11 @@ pub enum ContentBlock {
     Text {
         text: String,
     },
+    /// Image content with base64-encoded data
+    Image {
+        media_type: String,
+        data: String,
+    },
     ToolUse {
         id: String,
         name: String,
@@ -117,6 +122,34 @@ impl Message {
         self.content_blocks()
             .iter()
             .any(|b| matches!(b, ContentBlock::ToolUse { .. }))
+    }
+
+    pub fn has_images(&self) -> bool {
+        match &self.content {
+            MessageContent::Blocks(blocks) => {
+                blocks.iter().any(|b| matches!(b, ContentBlock::Image { .. }))
+            }
+            _ => false,
+        }
+    }
+
+    pub fn get_image_blocks(&self) -> Vec<&ContentBlock> {
+        match &self.content {
+            MessageContent::Blocks(blocks) => blocks
+                .iter()
+                .filter(|b| matches!(b, ContentBlock::Image { .. }))
+                .collect(),
+            _ => vec![],
+        }
+    }
+
+    /// Convert a `MessageContent` into a flat `Vec<ContentBlock>`.
+    /// `Text(String)` becomes `vec![ContentBlock::Text { text }]`.
+    pub fn into_blocks(self) -> Vec<ContentBlock> {
+        match self.content {
+            MessageContent::Text(s) => vec![ContentBlock::Text { text: s }],
+            MessageContent::Blocks(blocks) => blocks,
+        }
     }
 }
 

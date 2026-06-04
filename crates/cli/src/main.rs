@@ -12,6 +12,7 @@ use crossterm::event::{EnableBracketedPaste, DisableBracketedPaste};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use rusty_agent::{Agent, AgentCallbacks};
 use rusty_core::permissions::{PermissionDecision, PermissionRequest};
+use rusty_core::ContentBlock;
 use rusty_core::{Config, ConversationSession, CredentialManager, PermissionMode, Settings};
 use rusty_core::setup_wizard::{run_setup_wizard, is_first_run};
 use rusty_core::config::{ensure_restricted_dir, set_restrictive_file_permissions};
@@ -553,7 +554,7 @@ async fn run_headless(agent: &mut Agent, prompt: &str) -> Result<()> {
 
     let result = agent
         .run(
-            prompt,
+            vec![ContentBlock::Text { text: prompt.to_string() }],
             AgentCallbacks {
                 on_text: Some(&text_cb),
                 ..Default::default()
@@ -628,7 +629,7 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
                     });
                     let result = agent
                         .run(
-                            &init_prompt,
+                            vec![ContentBlock::Text { text: init_prompt }],
                             AgentCallbacks {
                                 on_text: Some(&text_cb),
                                 ..Default::default()
@@ -762,7 +763,7 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
 
         let result = agent
             .run(
-                line,
+                vec![ContentBlock::Text { text: line.to_string() }],
                 AgentCallbacks {
                     on_text: Some(&text_cb),
                     ..Default::default()
@@ -921,7 +922,7 @@ async fn run_tui(
             fn start_run(
                 agent: Arc<tokio::sync::Mutex<Agent>>,
                 event_tx: mpsc::UnboundedSender<AgentTaskEvent>,
-                input: String,
+                input: Vec<ContentBlock>,
                 cancel: rusty_agent::CancelToken,
             ) -> tokio::task::JoinHandle<()> {
                 tokio::spawn(async move {
@@ -981,7 +982,7 @@ async fn run_tui(
                     let cancel_ref = cancel.clone();
                     let result = agent
                         .run(
-                            &input,
+                            input,
                             AgentCallbacks {
                                 on_text: Some(&text_cb),
                                 on_thinking: Some(&thinking_cb),
@@ -1009,7 +1010,7 @@ async fn run_tui(
             }
 
             let mut current_run: Option<(tokio::task::JoinHandle<()>, rusty_agent::CancelToken)> = None;
-            let mut queued_chat: Option<String> = None;
+            let mut queued_chat: Option<Vec<ContentBlock>> = None;
 
             loop {
                 tokio::select! {
@@ -1472,7 +1473,7 @@ async fn tui_main_loop(
                                 app.streaming_text.clear();
                                 app.streaming_text = "...".to_string();
                                 app.needs_redraw = true;
-                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(input));
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: input }]));
                             }
                         } else {
                             // Handle key (including permission prompt responses)
@@ -1569,7 +1570,7 @@ async fn tui_main_loop(
                             app.streaming_text.clear();
                             app.streaming_text = "...".to_string();
                             app.needs_redraw = true;
-                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(input));
+                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: input }]));
                         }
                     }
                     None => break, // agent task channel closed
@@ -1609,7 +1610,7 @@ async fn handle_slash_command(
             app.streaming_text = "...".to_string();
             app.needs_redraw = true;
             let init_prompt = build_init_prompt();
-            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(init_prompt));
+            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: init_prompt }]));
         }
         rusty_tui::app::SlashCommand::Resume => {
             // Load sessions and show the picker

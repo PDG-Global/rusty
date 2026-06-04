@@ -102,7 +102,7 @@ impl LlmProvider for OpenAiProvider {
                 0,
                 OaiMessage {
                     role: "system".to_string(),
-                    content: Some(system.clone()),
+                    content: Some(OaiMessageContent::Text(system.clone())),
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -169,7 +169,7 @@ impl LlmProvider for OpenAiProvider {
                 0,
                 OaiMessage {
                     role: "system".to_string(),
-                    content: Some(system.clone()),
+                    content: Some(OaiMessageContent::Text(system.clone())),
                     tool_calls: None,
                     tool_call_id: None,
                 },

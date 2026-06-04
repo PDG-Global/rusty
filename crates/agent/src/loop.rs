@@ -253,7 +253,7 @@ impl Agent {
     /// Pass a `CancelToken` via callbacks to allow mid-turn cancellation (immediate via `tokio::select!`).
     pub async fn run(
         &mut self,
-        user_input: &str,
+        content: Vec<ContentBlock>,
         callbacks: AgentCallbacks<'_>,
     ) -> Result<String, RustyError> {
         let AgentCallbacks {
@@ -267,7 +267,7 @@ impl Agent {
         if let Some(c) = cancel {
             c.reset();
         }
-        self.messages.push(Message::user(user_input));
+        self.messages.push(Message::user_blocks(content));
 
         for turn in 0..self.max_turns {
             if let Some(c) = cancel {

@@ -171,7 +171,7 @@ pub enum AgentEvent {
 /// Messages from the TUI to the agent task
 pub enum TuiCommand {
     /// Regular chat message
-    Chat(String),
+    Chat(Vec<rusty_core::ContentBlock>),
     /// Cancel the currently running agent turn
     Cancel,
     /// Force compaction of conversation history

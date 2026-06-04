@@ -28,10 +28,34 @@ pub struct StreamOptions {
     pub include_usage: bool,
 }
 
+/// Content part for multimodal messages (text or image_url)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum OaiContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: OaiImageUrl },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OaiImageUrl {
+    /// data URI: "data:{media_type};base64,{data}"
+    pub url: String,
+}
+
+/// Message content: either a plain string or an array of content parts (for multimodal)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OaiMessageContent {
+    Text(String),
+    Parts(Vec<OaiContentPart>),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OaiMessage {
     pub role: String,
-    pub content: Option<String>,
+    pub content: Option<OaiMessageContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<OaiToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,7 +194,7 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                     rusty_core::MessageContent::Text(t) => {
                         result.push(OaiMessage {
                             role: "user".to_string(),
-                            content: Some(t.clone()),
+                            content: Some(OaiMessageContent::Text(t.clone())),
                             tool_calls: None,
                             tool_call_id: None,
                         });
@@ -198,28 +222,63 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                             };
                             result.push(OaiMessage {
                                 role: "tool".to_string(),
-                                content: Some(text),
+                                content: Some(OaiMessageContent::Text(text)),
                                 tool_calls: None,
                                 tool_call_id: Some(tool_use_id.clone()),
                             });
                         }
                     }
                 } else {
-                    // Regular user message with text blocks
-                    let text = blocks
+                    // Check if we have image blocks - if so, use multipart content
+                    let has_images = blocks
                         .iter()
-                        .filter_map(|b| match b {
-                            ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("");
-                    result.push(OaiMessage {
-                        role: "user".to_string(),
-                        content: Some(text),
-                        tool_calls: None,
-                        tool_call_id: None,
-                    });
+                        .any(|b| matches!(b, ContentBlock::Image { .. }));
+
+                    if has_images {
+                        let mut parts = Vec::new();
+                        for block in &blocks {
+                            match block {
+                                ContentBlock::Text { text } => {
+                                    parts.push(OaiContentPart::Text {
+                                        text: text.clone(),
+                                    });
+                                }
+                                ContentBlock::Image {
+                                    media_type,
+                                    data,
+                                } => {
+                                    let data_uri =
+                                        format!("data:{};base64,{}", media_type, data);
+                                    parts.push(OaiContentPart::ImageUrl {
+                                        image_url: OaiImageUrl { url: data_uri },
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                        result.push(OaiMessage {
+                            role: "user".to_string(),
+                            content: Some(OaiMessageContent::Parts(parts)),
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
+                    } else {
+                        // No images, just text blocks - flatten to string
+                        let text = blocks
+                            .iter()
+                            .filter_map(|b| match b {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+                        result.push(OaiMessage {
+                            role: "user".to_string(),
+                            content: Some(OaiMessageContent::Text(text)),
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
+                    }
                 }
             }
             rusty_core::Message {
@@ -231,7 +290,7 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                     rusty_core::MessageContent::Text(t) => {
                         result.push(OaiMessage {
                             role: "assistant".to_string(),
-                            content: Some(t.clone()),
+                            content: Some(OaiMessageContent::Text(t.clone())),
                             tool_calls: None,
                             tool_call_id: None,
                         });
@@ -249,7 +308,7 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                 let content_text = if text_parts.is_empty() {
                     None
                 } else {
-                    Some(text_parts.join(""))
+                    Some(OaiMessageContent::Text(text_parts.join("")))
                 };
 
                 let tool_calls: Vec<OaiToolCall> = blocks
@@ -345,6 +404,13 @@ pub fn oai_response_to_rusty(resp: &OaiResponse) -> (Vec<ContentBlock>, String) 
 mod tests {
     use super::*;
     use rusty_core::ContentBlock;
+
+    fn assert_content_text(msg: &OaiMessage, expected: &str) {
+        match &msg.content {
+            Some(OaiMessageContent::Text(s)) => assert_eq!(s, expected),
+            other => panic!("expected OaiMessageContent::Text, got {:?}", other),
+        }
+    }
 
     fn make_response(finish_reason: Option<&str>, content: Option<&str>) -> OaiResponse {
         OaiResponse {
@@ -527,7 +593,7 @@ mod tests {
         let oai = rusty_messages_to_oai(&msgs);
         assert_eq!(oai.len(), 1);
         assert_eq!(oai[0].role, "user");
-        assert_eq!(oai[0].content.as_deref(), Some("hello world"));
+        assert_content_text(&oai[0], "hello world");
         assert!(oai[0].tool_calls.is_none());
         assert!(oai[0].tool_call_id.is_none());
     }
@@ -538,7 +604,7 @@ mod tests {
         let oai = rusty_messages_to_oai(&msgs);
         assert_eq!(oai.len(), 1);
         assert_eq!(oai[0].role, "assistant");
-        assert_eq!(oai[0].content.as_deref(), Some("hi there"));
+        assert_content_text(&oai[0], "hi there");
         assert!(oai[0].tool_calls.is_none());
     }
 
@@ -560,7 +626,7 @@ mod tests {
         let oai = rusty_messages_to_oai(&msgs);
         assert_eq!(oai.len(), 1);
         assert_eq!(oai[0].role, "assistant");
-        assert_eq!(oai[0].content.as_deref(), Some("Let me run it"));
+        assert_content_text(&oai[0], "Let me run it");
         let calls = oai[0].tool_calls.as_ref().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_1");
@@ -583,7 +649,7 @@ mod tests {
         assert_eq!(oai.len(), 1);
         assert_eq!(oai[0].role, "tool");
         assert_eq!(oai[0].tool_call_id.as_deref(), Some("call_1"));
-        assert_eq!(oai[0].content.as_deref(), Some("file contents here"));
+        assert_content_text(&oai[0], "file contents here");
     }
 
     #[test]
@@ -599,7 +665,7 @@ mod tests {
             ]),
         }];
         let oai = rusty_messages_to_oai(&msgs);
-        assert_eq!(oai[0].content.as_deref(), Some("ERROR: permission denied"));
+        assert_content_text(&oai[0], "ERROR: permission denied");
     }
 
     #[test]
