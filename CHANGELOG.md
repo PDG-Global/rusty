@@ -1,10 +1,27 @@
 # Changelog
 
-## v0.1.5 (2026-06-03)
+## v0.1.5 (2026-06-04)
+
+### Features
+
+- **Persistent project memory**: Cross-session memory storage scoped to each project. Memories are injected into the system prompt at startup and managed via a `memory` tool with store/get/list/delete actions.
+- **Model registry with Anthropic support**: Hierarchical model entries with provider type routing. Kimi is now routed through the Anthropic Messages API instead of OpenAI. Includes per-model `extra_headers` wired through to the HTTP client.
+- **Cached token tracking**: `UsageInfo` and `CostTracker` now track cached tokens from both OpenAI (`prompt_tokens_details.cached_tokens`) and DeepSeek (`prompt_cache_hit_tokens`) wire formats. Cached tokens display in the TUI status bar when non-zero.
+- **Concurrent tool execution**: Multiple tool calls in a single LLM response now execute in parallel via `tokio::spawn` + `join_all`, instead of sequentially. Permission checks still run sequentially to handle interactive prompts.
+- **User-Agent header**: All HTTP clients now send `Rusty/{version}` as User-Agent.
+- **Immediate task enforcement**: System prompt now enforces immediate task execution with a post-completion review phase.
+
+### Security
+
+- **Prompt injection protection**: Memory system sanitises content on both write and read paths, stripping control characters, role impersonation, instruction override attempts, special token delimiters, XML injection tags, and markdown headers. Context file content is escaped to prevent XML/tag breakout via malicious AGENTS.md files.
+- **Restrictive file permissions**: Config directory (0o700) and log files (0o600) now have restrictive permissions via `ensure_restricted_dir()` and `set_restrictive_file_permissions()`.
+- **Session TTL**: Sessions older than 30 days are automatically cleaned up on startup and session list.
+- **SSRF protection**: `web_fetch` now blocks requests to private/reserved IPs, enforces redirect limits, and validates content-type.
+- **Sub-agent permission fix**: Sub-agents now inherit the parent permission mode instead of always using BypassPermissions. Default mode is promoted to AcceptEdits so sub-agents never block for interactive input.
 
 ### Fixes
 
-- **`/init` prompt grounding**: Rewrote the `/init` prompt to require the LLM to explore the repository with tools before generating AGENTS.md. Previously the prompt prescribed a fixed 12-section template, causing the LLM to hallucinate content to fill sections that had no basis in the actual repo.
+- **`/init` prompt grounding**: Rewrote the `/init` prompt to require the LLM to explore the repository with tools before generating AGENTS.md, preventing hallucinated content.
 
 ## v0.1.2 (2026-06-02)
 
