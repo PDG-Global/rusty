@@ -23,8 +23,8 @@ pub fn default_model_list() -> Vec<ModelEntry> {
         ModelEntry {
             group: "Kimi".into(),
             name: "kimi-global".into(),
-            provider: ProviderType::OpenAI,
-            api_base: "https://api.kimi.com/coding/v1".into(),
+            provider: ProviderType::Anthropic,
+            api_base: "https://api.kimi.com/coding/v1/".into(),
             model: "kimi-k2.6".into(),
             available_models: vec!["kimi-k2.6".into(), "kimi-k2.5".into()],
             max_tokens: 8_192,
@@ -35,8 +35,8 @@ pub fn default_model_list() -> Vec<ModelEntry> {
         ModelEntry {
             group: "Kimi".into(),
             name: "kimi-cn".into(),
-            provider: ProviderType::OpenAI,
-            api_base: "https://api.kimi.com/coding/v1".into(),
+            provider: ProviderType::Anthropic,
+            api_base: "https://api.kimi.com/coding/v1/".into(),
             model: "kimi-k2.6".into(),
             available_models: vec!["kimi-k2.6".into(), "kimi-k2.5".into()],
             max_tokens: 8_192,

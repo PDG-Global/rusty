@@ -61,7 +61,7 @@ impl ProviderPreset {
                 name: "Kimi (Global)",
                 entry_name: "kimi-global",
                 group: "Kimi",
-                api_base: "https://api.kimi.com/coding/v1",
+                api_base: "https://api.kimi.com/coding/v1/",
                 default_model: "kimi-k2.6",
                 available_models: &["kimi-k2.6", "kimi-k2.5"],
                 needs_key: true,
@@ -72,7 +72,7 @@ impl ProviderPreset {
                 name: "Kimi (China)",
                 entry_name: "kimi-cn",
                 group: "Kimi",
-                api_base: "https://api.kimi.com/coding/v1",
+                api_base: "https://api.kimi.com/coding/v1/",
                 default_model: "kimi-k2.6",
                 available_models: &["kimi-k2.6", "kimi-k2.5"],
                 needs_key: true,
@@ -371,7 +371,7 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
             print!("  {} Testing connection... ", "⏳".to_string());
             io::stdout().flush().ok();
 
-            match test_connectivity(&api_base, key, &model).await {
+            match test_connectivity(&api_base, key, &model, preset.provider).await {
                 Ok(duration) => {
                     println!(
                         "{}",
@@ -492,36 +492,62 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
 
 /// Lightweight connectivity test.
 ///
-/// Makes a minimal chat completion request to verify the API key is valid
-/// and the endpoint is reachable.
+/// Makes a minimal request to verify the API key is valid and the endpoint
+/// is reachable.  Adapts the endpoint path and auth header based on the
+/// provider type (OpenAI vs Anthropic).
 async fn test_connectivity(
     api_base: &str,
     api_key: &str,
     model: &str,
+    provider: ProviderType,
 ) -> Result<std::time::Duration, RustyError> {
-    let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
-
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 1,
-    });
+    let base = api_base.trim_end_matches('/');
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .user_agent(crate::rusty_user_agent())
         .build()
         .map_err(|e| RustyError::Http(format!("Failed to create HTTP client: {e}")))?;
 
     let start = std::time::Instant::now();
 
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("Content-Type", "application/json")
-        .body(body.to_string())
-        .send()
-        .await
-        .map_err(|e| RustyError::Http(format!("Connection failed: {e}")))?;
+    let resp = match provider {
+        ProviderType::Anthropic => {
+            // Anthropic Messages API: POST {base}/messages
+            let url = format!("{base}/messages");
+            let body = serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 1,
+            });
+            client
+                .post(&url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("Content-Type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .map_err(|e| RustyError::Http(format!("Connection failed: {e}")))?
+        }
+        ProviderType::OpenAI => {
+            // OpenAI Chat Completions: POST {base}/chat/completions
+            let url = format!("{base}/chat/completions");
+            let body = serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 1,
+            });
+            client
+                .post(&url)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("Content-Type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .map_err(|e| RustyError::Http(format!("Connection failed: {e}")))?
+        }
+    };
 
     let status = resp.status();
     let elapsed = start.elapsed();

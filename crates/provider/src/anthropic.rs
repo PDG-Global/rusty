@@ -4,7 +4,7 @@
 //! Anthropic Messages API provider implementation.
 //!
 //! Implements the `LlmProvider` trait for Anthropic-compatible endpoints
-//! (e.g. Kimi Coding API at `api.kimi.com/coding/v1`).
+//! (e.g. Kimi Coding API at `api.kimi.com/coding/v1/`).
 //!
 //! Key differences from OpenAI Chat Completions:
 //! - Endpoint: `/v1/messages` (not `/chat/completions`)
@@ -64,6 +64,7 @@ impl AnthropicProvider {
         }
 
         let client = reqwest::Client::builder()
+            .user_agent(rusty_core::rusty_user_agent())
             .default_headers(headers)
             .timeout(std::time::Duration::from_secs(600))
             .build()
@@ -677,19 +678,19 @@ mod tests {
 
     #[test]
     fn endpoint_appends_messages() {
-        let provider = make_provider("https://api.kimi.com/coding/v1");
+        let provider = make_provider("https://api.kimi.com/coding");
         assert_eq!(
             provider.endpoint(),
-            "https://api.kimi.com/coding/v1/messages"
+            "https://api.kimi.com/coding/messages"
         );
     }
 
     #[test]
     fn endpoint_strips_trailing_slash() {
-        let provider = make_provider("https://api.kimi.com/coding/v1/");
+        let provider = make_provider("https://api.kimi.com/coding/");
         assert_eq!(
             provider.endpoint(),
-            "https://api.kimi.com/coding/v1/messages"
+            "https://api.kimi.com/coding/messages"
         );
     }
 

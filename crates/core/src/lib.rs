@@ -19,3 +19,10 @@ pub use history::*;
 pub use memory::*;
 pub use permissions::*;
 pub use types::*;
+
+/// User-Agent string for all Rusty HTTP requests.
+///
+/// Format: `Rusty/{cargo_package_version}`
+pub fn rusty_user_agent() -> &'static str {
+    concat!("Rusty/", env!("CARGO_PKG_VERSION"))
+}

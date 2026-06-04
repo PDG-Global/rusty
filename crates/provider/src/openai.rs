@@ -39,6 +39,7 @@ impl OpenAiProvider {
         }
 
         let client = reqwest::Client::builder()
+            .user_agent(rusty_core::rusty_user_agent())
             .default_headers(headers)
             .timeout(Duration::from_secs(600))
             .build()

@@ -48,6 +48,7 @@ impl WebFetchTool {
                 reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(30))
                     .redirect(policy)
+                    .user_agent(rusty_core::rusty_user_agent())
                     .build()
                     .expect("Failed to build HTTP client")
             },
@@ -188,6 +189,7 @@ impl Tool for WebFetchTool {
                 .timeout(std::time::Duration::from_secs(30))
                 .redirect(redirect_policy)
                 .resolve(host, socket_addr)
+                .user_agent(rusty_core::rusty_user_agent())
                 .build()
                 .map_err(|e| RustyError::Tool(format!("Failed to build HTTP client: {e}")))?
         } else {

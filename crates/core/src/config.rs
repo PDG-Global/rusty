@@ -228,6 +228,10 @@ pub struct Config {
     /// When true, instructs the model to actively use `todowrite` for task tracking.
     /// Implies Plan permission mode (read-only + todowrite).
     pub plan_with_tasks: bool,
+    /// Provider type, set by presets and resolved through model registry.
+    /// Used as a fallback when no model entry is active.
+    #[serde(default)]
+    pub provider_type: ProviderType,
 }
 
 impl Default for Config {
@@ -248,6 +252,7 @@ impl Default for Config {
             thinking_level: None,
             temperature: None,
             plan_with_tasks: false,
+            provider_type: ProviderType::default(),
         }
     }
 }

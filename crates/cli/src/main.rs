@@ -280,7 +280,8 @@ async fn main() -> Result<()> {
                 }
             }
             "kimi" | "moonshot" => {
-                config.api_base = Some("https://api.kimi.com/coding/v1".to_string());
+                config.api_base = Some("https://api.kimi.com/coding/v1/".to_string());
+                config.provider_type = rusty_core::ProviderType::Anthropic;
                 if args.model.is_none() && settings.default_model.is_none() {
                     config.model = "kimi-k2.6".to_string();
                 }
@@ -426,7 +427,7 @@ async fn main() -> Result<()> {
     } else {
         // Legacy path: no registry entry, build config from flat fields
         rusty_provider::create_provider(
-            rusty_core::ProviderType::OpenAI,
+            config.provider_type,
             ProviderConfig {
                 api_key,
                 api_base,
