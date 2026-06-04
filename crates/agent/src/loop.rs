@@ -8,7 +8,7 @@ use rusty_core::permissions::{
     PermissionLevel, PermissionRequest,
 };
 use rusty_core::{
-    model_context_window, Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
+    Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
 };
 use rusty_core::{dynamic_thinking_level, level_to_budget, ThinkingLevel};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
@@ -250,16 +250,18 @@ impl Agent {
                         if let Some(todos) = input.get("todos").and_then(|v| v.as_array()) {
                             let incomplete: Vec<(String, String)> = todos
                                 .iter()
-                                .filter(|t| {
-                                    t.get("status")
-                                        .and_then(|s| s.as_str())
-                                        .map(|s| s != "completed" && s != "cancelled")
-                                        .unwrap_or(false)
-                                })
                                 .filter_map(|t| {
-                                    let status = t.get("status")?.as_str()?.to_string();
+                                    // Default to "pending" when status is missing (it's
+                                    // optional in the schema and most models omit it).
+                                    let status = t
+                                        .get("status")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("pending");
+                                    if status == "completed" || status == "cancelled" {
+                                        return None;
+                                    }
                                     let content = t.get("content")?.as_str()?.to_string();
-                                    Some((status, content))
+                                    Some((status.to_string(), content))
                                 })
                                 .collect();
                             if !incomplete.is_empty() {
@@ -308,12 +310,12 @@ impl Agent {
             }
 
             // Maybe compact before sending
-            maybe_compact(&mut self.messages, &*self.provider, &self.system_prompt).await?;
+            let context_window = self.config.effective_context_window();
+            maybe_compact(&mut self.messages, &*self.provider, &self.system_prompt, context_window).await?;
 
             let tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();
 
             // Compute dynamic thinking level based on context fill
-            let context_window = model_context_window(&self.config.model);
             let estimated_chars: usize = self.messages.iter().map(|m| m.get_all_text().len()).sum();
             let estimated_tokens = estimated_chars / 4;
             let context_pct = estimated_tokens as f64 / context_window as f64;
