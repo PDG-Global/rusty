@@ -161,6 +161,8 @@ impl Agent {
             .map(|t| (t.name().to_string(), Arc::from(t)))
             .collect();
 
+        let max_turns = config.max_turns;
+
         Self {
             provider,
             tools: tool_map,
@@ -171,7 +173,7 @@ impl Agent {
             total_usage: UsageInfo::default(),
             current_context_tokens: 0,
             permission_mode: PermissionMode::Default,
-            max_turns: 50,
+            max_turns,
             permission_callback: None,
             session_allowlist: HashSet::new(),
             permanent_allowlist: HashSet::new(),
@@ -226,7 +228,18 @@ impl Agent {
     /// Scan recent messages for the most recent `todowrite` tool call and
     /// check whether any tasks are still pending or in_progress.
     fn has_incomplete_tasks(&self) -> bool {
-        // Look at the last ~10 messages for a todowrite ToolUse block
+        self.incomplete_task_count() > 0
+    }
+
+    /// Count incomplete tasks from the most recent `todowrite` call.
+    /// Returns 0 if no todowrite was found or all tasks are completed/cancelled.
+    fn incomplete_task_count(&self) -> usize {
+        self.incomplete_task_details().len()
+    }
+
+    /// Extract details of incomplete tasks from the most recent `todowrite` call.
+    /// Returns a vec of (status, content) pairs for tasks that are not completed/cancelled.
+    fn incomplete_task_details(&self) -> Vec<(String, String)> {
         for msg in self.messages.iter().rev().take(10) {
             if msg.role != Role::Assistant {
                 continue;
@@ -235,18 +248,30 @@ impl Agent {
                 if let ContentBlock::ToolUse { name, input, .. } = block {
                     if name == "todowrite" {
                         if let Some(todos) = input.get("todos").and_then(|v| v.as_array()) {
-                            return todos.iter().any(|t| {
-                                t.get("status")
-                                    .and_then(|s| s.as_str())
-                                    .map(|s| s != "completed" && s != "cancelled")
-                                    .unwrap_or(false)
-                            });
+                            let incomplete: Vec<(String, String)> = todos
+                                .iter()
+                                .filter(|t| {
+                                    t.get("status")
+                                        .and_then(|s| s.as_str())
+                                        .map(|s| s != "completed" && s != "cancelled")
+                                        .unwrap_or(false)
+                                })
+                                .filter_map(|t| {
+                                    let status = t.get("status")?.as_str()?.to_string();
+                                    let content = t.get("content")?.as_str()?.to_string();
+                                    Some((status, content))
+                                })
+                                .collect();
+                            if !incomplete.is_empty() {
+                                return incomplete;
+                            }
+                            return vec![];
                         }
                     }
                 }
             }
         }
-        false
+        vec![]
     }
 
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
@@ -598,20 +623,34 @@ impl Agent {
             match stop_reason.as_deref() {
                 Some("end_turn") | None => {
                     // If there are incomplete tasks, nudge the model to continue
-                    // instead of letting it stop.
-                    if self.task_nudge_count < 3
-                        && self.has_incomplete_tasks()
-                    {
+                    // instead of letting it stop. Allow more nudges for larger task lists
+                    // since each task needs ~2 turns (do work + update todowrite).
+                    let incomplete = self.incomplete_task_details();
+                    let nudge_limit = (incomplete.len() as u32 * 2).max(8);
+                    if !incomplete.is_empty() && self.task_nudge_count < nudge_limit {
                         warn!(
-                            "Model tried to stop with incomplete tasks (nudge {}/3); nudging to continue",
-                            self.task_nudge_count + 1
+                            "Model tried to stop with {} incomplete tasks (nudge {}/{}); nudging to continue",
+                            incomplete.len(),
+                            self.task_nudge_count + 1,
+                            nudge_limit
                         );
                         self.task_nudge_count += 1;
+                        let task_list: String = incomplete
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (status, content))| format!("  {}. [{}] {}", i + 1, status, content))
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         self.messages.push(Message::user(
-                            "STOP. You have incomplete tasks. Do NOT narrate what you will do next. \
-                             Execute the first pending or in_progress task from your task list RIGHT NOW by calling the appropriate tool. \
-                             After completing it, update the task list and immediately start the next one. \
-                             Repeat until all tasks are `completed` or `cancelled`."
+                            format!(
+                                "STOP. You have {} incomplete tasks remaining:\n{}\n\n\
+                                 Do NOT narrate what you will do. Do NOT re-plan. \
+                                 Execute the first incomplete task RIGHT NOW by calling the appropriate tool. \
+                                 After completing it, call todowrite to mark it completed, then immediately \
+                                 execute the next task. Repeat until every task is `completed` or `cancelled`.",
+                                incomplete.len(),
+                                task_list,
+                            )
                         ));
                         continue;
                     }

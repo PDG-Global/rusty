@@ -10,10 +10,10 @@ use crate::{Tool, ToolContext, ToolResult};
 pub struct TodoWriteTool;
 
 #[derive(Debug, Clone)]
-struct TodoItem {
-    content: String,
-    status: String,
-    priority: String,
+pub struct TodoItem {
+    pub content: String,
+    pub status: String,
+    pub priority: String,
 }
 
 /// Valid status values and their display indicators.
@@ -150,6 +150,16 @@ fn count_by_status(todos: &[TodoItem]) -> std::collections::HashMap<String, usiz
         *map.entry(item.status.clone()).or_insert(0) += 1;
     }
     map
+}
+
+/// Extract incomplete tasks from a parsed JSON todos array.
+/// Returns (status, content) pairs for items not marked completed or cancelled.
+pub fn get_incomplete_tasks(todos: &[TodoItem]) -> Vec<(&str, &str)> {
+    todos
+        .iter()
+        .filter(|t| t.status != "completed" && t.status != "cancelled")
+        .map(|t| (t.status.as_str(), t.content.as_str()))
+        .collect()
 }
 
 fn item_type_name(v: &Value) -> &'static str {

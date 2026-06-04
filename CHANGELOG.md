@@ -22,6 +22,9 @@
 ### Fixes
 
 - **`/init` prompt grounding**: Rewrote the `/init` prompt to require the LLM to explore the repository with tools before generating AGENTS.md, preventing hallucinated content.
+- **Agent loop turn budget**: `Agent::new()` now respects `config.max_turns` from `--max-turns` CLI flag instead of always hardcoding 50.
+- **Task nudge scaling**: Nudge limit now scales with incomplete task count (`max(num_tasks * 2, 8)`) instead of being hardcoded to 3, preventing the agent from abandoning multi-task lists.
+- **Informative task nudges**: Nudge messages now include remaining task count, incomplete task details, and explicit instructions to continue working, instead of generic "you stopped early" text.
 
 ## v0.1.2 (2026-06-02)
 
