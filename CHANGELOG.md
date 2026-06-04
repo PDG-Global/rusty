@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.5 (2026-06-03)
+
+### Fixes
+
+- **`/init` prompt grounding**: Rewrote the `/init` prompt to require the LLM to explore the repository with tools before generating AGENTS.md. Previously the prompt prescribed a fixed 12-section template, causing the LLM to hallucinate content to fill sections that had no basis in the actual repo.
+
 ## v0.1.2 (2026-06-02)
 
 ### Features

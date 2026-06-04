@@ -8,6 +8,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use crossterm::event::{EnableBracketedPaste, DisableBracketedPaste};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use rusty_agent::{Agent, AgentCallbacks};
 use rusty_core::permissions::{PermissionDecision, PermissionRequest};
@@ -777,49 +778,21 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
 
 /// Build the prompt for /init — instructs the agent to analyze the codebase and write AGENTS.md
 fn build_init_prompt() -> String {
-    r#"Analyze this codebase thoroughly and write an AGENTS.md file at the project root.
+    r#"Write an AGENTS.md file at the project root that describes this repository.
 
-The file should serve as a comprehensive guide for any AI agent (or developer) working in this repository. Write it in plain, direct language. No emojis. No filler. Structure it for both human readability and machine parseability.
+CRITICAL RULES:
+- First, explore the repository. Use glob, file_read, grep, and bash to discover every file and understand what they contain.
+- Describe ONLY what actually exists. Do not invent, assume, or hallucinate features, modules, architectures, or tools that are not present in the files.
+- If the repository contains a single SQLite database and nothing else, say exactly that. Do not describe an application that doesn't exist.
+- If there is no build system, no tests, no modules, no dependencies file — do not create sections for them.
+- Every claim in AGENTS.md must be traceable to an actual file or directory you inspected.
 
-Cover all of the following sections:
+APPROACH:
+1. List all files in the repository (glob **/* and check hidden files).
+2. Read each file to understand its purpose and contents.
+3. Write AGENTS.md based strictly on what you found.
 
-## Overview
-What this project is, what language/framework it uses, what problem it solves, and the high-level architecture. Include the runtime/async model if relevant.
-
-## Workspace Structure
-A tree view of the directory layout with one-line descriptions of each directory and key file. Show the dependency graph between modules/packages.
-
-## Key Modules and Files
-For each major module or crate, list the files with their purpose. Include the main types, traits, and functions exported. Note the data flow between modules.
-
-## Configuration
-How the project is configured: config files, environment variables, CLI flags, presets. Include the search/resolution order for overlapping config sources.
-
-## Building and Running
-Exact commands to build, run, test, lint, and format. Include both debug and release builds. Show example invocations with common flags.
-
-## Architecture Patterns
-The key patterns used in the codebase: streaming, callbacks, error handling strategy, permission model, plugin/extension points. Be specific — name the types and traits involved.
-
-## Data Flow
-Trace the main request/response path from user input through to output. Include tool execution, permission checks, and any async/streaming pipeline.
-
-## Testing
-Where tests live, how to run them, what's covered. Note any test utilities or fixtures.
-
-## Adding New Functionality
-Step-by-step guides for common extension tasks: adding a new tool, adding a new provider, adding a new command. List the files to touch and the interfaces to implement.
-
-## Error Handling
-The error types used, how errors propagate, retry logic, and how to add new error variants.
-
-## Dependencies
-Key external crates/libraries and what they're used for. Note any version constraints or compatibility concerns.
-
-## Troubleshooting
-Common issues and their fixes. Include debug logging setup.
-
-Write the file as AGENTS.md in the project root. Use markdown headers, tables where they help, and code blocks for commands and file paths. Keep it under 500 lines — dense and useful, not verbose."#.to_string()
+The file should help any AI agent or developer understand this repository. Use whatever sections are appropriate for what's actually here — do not force a template. Write in plain, direct language. No emojis. No filler. Factual and concise."#.to_string()
 }
 
 /// A permission request bundled with a oneshot sender for the response.
@@ -880,7 +853,7 @@ async fn run_tui(
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
 
     // Install panic hook to restore terminal + stderr on crash.
     // The flag prevents the hook from yanking the terminal out of raw/alternate
@@ -902,7 +875,7 @@ async fn run_tui(
         // task and handle cleanup gracefully.
         if !tui_active_hook.load(Ordering::SeqCst) {
             let _ = disable_raw_mode();
-            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableBracketedPaste);
         }
         original_hook(info);
     }));
@@ -1299,11 +1272,36 @@ async fn run_tui(
     let mut tui_app = rusty_tui::app::AppState::default();
     tui_app.status.model = model.to_string();
 
+    // Spawn dedicated crossterm event reading thread to avoid blocking the tokio runtime.
+    // crossterm's event::poll/read are synchronous and can block on macOS, starving
+    // the async runtime of CPU time and causing input drops under load.
+    let (crossterm_tx, crossterm_rx) = mpsc::unbounded_channel::<Event>();
+    std::thread::Builder::new()
+        .name("crossterm-events".into())
+        .spawn(move || {
+            loop {
+                match event::poll(Duration::from_millis(200)) {
+                    Ok(true) => match event::read() {
+                        Ok(evt) => {
+                            if crossterm_tx.send(evt).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    },
+                    Ok(false) => continue,
+                    Err(_) => break,
+                }
+            }
+        })
+        .expect("failed to spawn crossterm event thread");
+
     let tui_result = tui_main_loop(
         &mut terminal,
         &mut tui_app,
         &cmd_tx,
         &mut event_rx,
+        crossterm_rx,
         agent_handle,
         working_dir,
         tui_active.clone(),
@@ -1321,7 +1319,7 @@ async fn run_tui(
     }
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableBracketedPaste)?;
     terminal.show_cursor()?;
 
     // Wait for agent task to return messages for session save
@@ -1347,6 +1345,7 @@ async fn tui_main_loop(
     app: &mut rusty_tui::app::AppState,
     cmd_tx: &mpsc::UnboundedSender<rusty_tui::app::TuiCommand>,
     event_rx: &mut mpsc::UnboundedReceiver<AgentTaskEvent>,
+    mut crossterm_rx: mpsc::UnboundedReceiver<Event>,
     agent_handle: tokio::task::JoinHandle<()>,
     working_dir: &PathBuf,
     tui_active: Arc<AtomicBool>,
@@ -1379,183 +1378,12 @@ async fn tui_main_loop(
             last_draw = std::time::Instant::now();
         }
 
-        // Poll terminal events (always, even during agent processing)
-        if event::poll(Duration::from_millis(16))? {
-            loop {
-            match event::read()? {
-                Event::Key(key) => {
-                    // Handle session picker Enter specially
-                    if key.code == KeyCode::Enter && app.session_picker.is_some() {
-                        handle_session_picker_select(app, cmd_tx, working_dir).await;
-                        break;
-                    }
-
-                    // Handle Enter — send message or queue while streaming
-                    if key.code == KeyCode::Enter
-                        && !app.input.is_empty()
-                        && app.permission_prompt.is_none()
-                        && app.session_picker.is_none()
-                        && !app.paste_mode
-                    {
-                        let input = app.input.clone();
-
-                        if app.is_streaming {
-                            if input.starts_with('/') {
-                                app.push_system("Commands cannot be used while the agent is responding.");
-                                app.input.clear();
-                                app.cursor_pos = 0;
-                                app.needs_redraw = true;
-                            } else {
-                                app.queue_current_input();
-                            }
-                        } else if let Some(slash) = rusty_tui::app::SlashCommand::parse(&input) {
-                            app.input.clear();
-                            app.cursor_pos = 0;
-                            app.history.push(input.clone());
-                            app.history_idx = None;
-                            handle_slash_command(app, slash, cmd_tx, working_dir).await;
-                            app.needs_redraw = true;
-                        } else if input.starts_with('/') {
-                            app.push_system(&format!(
-                                "Unknown command: {input}. Type /help for available commands."
-                            ));
-                            app.input.clear();
-                            app.cursor_pos = 0;
-                            app.needs_redraw = true;
-                        } else {
-                            // Regular chat message
-                            app.messages.push(rusty_tui::app::ChatMessage {
-                                role: rusty_tui::app::MessageRole::User,
-                                content: input.clone(),
-                            });
-                            app.history.push(input.clone());
-                            app.history_idx = None;
-                            app.input.clear();
-                            app.cursor_pos = 0;
-                            app.is_streaming = true;
-                            app.streaming_text.clear();
-                            app.streaming_text = "...".to_string();
-                            app.needs_redraw = true;
-                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(input));
-                        }
-                    } else {
-                        // Handle key (including permission prompt responses)
-                        let had_perm = app.permission_prompt.is_some();
-                        app.handle_key(key);
-                        if app.take_cancel_requested() {
-                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Cancel);
-                        }
-                        if let Some(model_key) = app.model_switch_requested.take() {
-                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SwitchModel(model_key));
-                        }
-                        if let Some(level) = app.thinking_level_change_requested.take() {
-                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetThinkingLevel(level));
-                        }
-                        if let Some(mode) = app.permission_mode_change_requested.take() {
-                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetPermissionMode(mode));
-                        }
-                        if had_perm {
-                            app.needs_redraw = true;
-                        }
-                    }
-                }
-                Event::Resize(_, _) => {
-                    app.needs_redraw = true;
-                }
-                Event::Paste(text)
-                    if app.permission_prompt.is_none()
-                        && app.session_picker.is_none()
-                        && !app.is_renaming =>
-                {
-                    app.handle_bracketed_paste(text);
-                }
-                _ => {}
-            }
-            if !event::poll(Duration::ZERO)? {
-                break;
-            }
-            }
-        }
-
-        // Drain agent events (non-blocking)
-        loop {
-            match event_rx.try_recv() {
-                Ok(AgentTaskEvent::Event(event)) => match event {
-                    rusty_tui::app::AgentEvent::TextDelta(text) => {
-                        app.push_streaming_text(&text);
-                    }
-                    rusty_tui::app::AgentEvent::ThinkingDelta(text) => {
-                        app.push_thinking_text(&text);
-                    }
-                    rusty_tui::app::AgentEvent::ResponseComplete(msg) => {
-                        app.finish_streaming();
-                        // Show non-empty completion messages as system feedback
-                        // (e.g. model switch confirmations) when there's no streaming content
-                        if !msg.is_empty() && app.messages.last().map_or(true, |m| m.role != rusty_tui::app::MessageRole::Assistant) {
-                            app.push_system(&msg);
-                        }
-                    }
-                    rusty_tui::app::AgentEvent::Error(msg) => {
-                        app.push_error(&msg);
-                    }
-                    rusty_tui::app::AgentEvent::ToolStart { name, arguments } => {
-                        app.tool_started(&name, &arguments);
-                    }
-                    rusty_tui::app::AgentEvent::ToolDone { name, is_error, output } => {
-                        app.tool_finished(&name, is_error, &output);
-                    }
-                    rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, cached_input_tokens, current_context_tokens } => {
-                        app.status.input_tokens = input_tokens;
-                        app.status.output_tokens = output_tokens;
-                        app.status.cached_input_tokens = cached_input_tokens;
-                        app.status.current_context_tokens = current_context_tokens;
-                        app.needs_redraw = true;
-                    }
-                    rusty_tui::app::AgentEvent::ThinkingLevel(level) => {
-                        app.status.thinking_level = level;
-                        app.needs_redraw = true;
-                    }
-                    rusty_tui::app::AgentEvent::ModelChanged(model) => {
-                        app.status.model = model;
-                        app.needs_redraw = true;
-                    }
-                },
-                Ok(AgentTaskEvent::PermissionRequest(msg)) => {
-                    // Show the permission prompt in the TUI
-                    app.permission_prompt = Some(rusty_tui::app::PermissionPromptState {
-                        request: msg.request,
-                        respond: Some(msg.respond),
-                    });
-                    app.needs_redraw = true;
-                }
-                Ok(AgentTaskEvent::ReadyForInput) => {
-                    // Agent is ready — auto-send any queued message
-                    if let Some(input) = app.take_queued_message() {
-                        app.messages.push(rusty_tui::app::ChatMessage {
-                            role: rusty_tui::app::MessageRole::User,
-                            content: input.clone(),
-                        });
-                        app.history.push(input.clone());
-                        app.history_idx = None;
-                        app.is_streaming = true;
-                        app.streaming_text.clear();
-                        app.streaming_text = "...".to_string();
-                        app.needs_redraw = true;
-                        let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(input));
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-
         // Check if the agent task died (panic or unexpected exit)
         if let Some(ref handle) = agent_handle {
             if handle.is_finished() {
                 let handle = agent_handle.take().unwrap();
                 match handle.await {
                     Ok(()) => {
-                        // Task completed normally — cmd_tx was dropped
-                        // Ensure streaming state is cleared
                         if app.is_streaming {
                             app.finish_streaming();
                         }
@@ -1576,16 +1404,183 @@ async fn tui_main_loop(
             return Ok(());
         }
 
-        // Small yield to prevent busy-waiting
-        if app.needs_redraw {
-            let elapsed = last_draw.elapsed();
-            if elapsed < MIN_DRAW_INTERVAL {
-                tokio::time::sleep(MIN_DRAW_INTERVAL - elapsed).await;
-            }
+        // Calculate wait until next draw deadline
+        let wait_duration = if app.needs_redraw {
+            MIN_DRAW_INTERVAL
+                .saturating_sub(last_draw.elapsed())
+                .max(Duration::from_millis(1))
         } else {
-            tokio::time::sleep(Duration::from_millis(8)).await;
+            Duration::from_millis(100)
+        };
+
+        tokio::select! {
+            biased;
+
+            // Terminal event from dedicated reading thread
+            evt = crossterm_rx.recv() => {
+                match evt {
+                    Some(Event::Key(key)) => {
+                        // Handle session picker Enter specially
+                        if key.code == KeyCode::Enter && app.session_picker.is_some() {
+                            handle_session_picker_select(app, cmd_tx, working_dir).await;
+                            continue;
+                        }
+
+                        // Handle Enter — send message or queue while streaming
+                        if key.code == KeyCode::Enter
+                            && !app.input.is_empty()
+                            && app.permission_prompt.is_none()
+                            && app.session_picker.is_none()
+                            && !app.paste_mode
+                        {
+                            let input = app.input.clone();
+
+                            if app.is_streaming {
+                                if input.starts_with('/') {
+                                    app.push_system("Commands cannot be used while the agent is responding.");
+                                    app.input.clear();
+                                    app.cursor_pos = 0;
+                                    app.needs_redraw = true;
+                                } else {
+                                    app.queue_current_input();
+                                }
+                            } else if let Some(slash) = rusty_tui::app::SlashCommand::parse(&input) {
+                                app.input.clear();
+                                app.cursor_pos = 0;
+                                app.history.push(input.clone());
+                                app.history_idx = None;
+                                handle_slash_command(app, slash, cmd_tx, working_dir).await;
+                                app.needs_redraw = true;
+                            } else if input.starts_with('/') {
+                                app.push_system(&format!(
+                                    "Unknown command: {input}. Type /help for available commands."
+                                ));
+                                app.input.clear();
+                                app.cursor_pos = 0;
+                                app.needs_redraw = true;
+                            } else {
+                                // Regular chat message
+                                app.messages.push(rusty_tui::app::ChatMessage {
+                                    role: rusty_tui::app::MessageRole::User,
+                                    content: input.clone(),
+                                });
+                                app.history.push(input.clone());
+                                app.history_idx = None;
+                                app.input.clear();
+                                app.cursor_pos = 0;
+                                app.is_streaming = true;
+                                app.streaming_text.clear();
+                                app.streaming_text = "...".to_string();
+                                app.needs_redraw = true;
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(input));
+                            }
+                        } else {
+                            // Handle key (including permission prompt responses)
+                            let had_perm = app.permission_prompt.is_some();
+                            app.handle_key(key);
+                            if app.take_cancel_requested() {
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Cancel);
+                            }
+                            if let Some(model_key) = app.model_switch_requested.take() {
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SwitchModel(model_key));
+                            }
+                            if let Some(level) = app.thinking_level_change_requested.take() {
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetThinkingLevel(level));
+                            }
+                            if let Some(mode) = app.permission_mode_change_requested.take() {
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetPermissionMode(mode));
+                            }
+                            if had_perm {
+                                app.needs_redraw = true;
+                            }
+                        }
+                    }
+                    Some(Event::Resize(_, _)) => {
+                        app.needs_redraw = true;
+                    }
+                    Some(Event::Paste(text))
+                        if app.permission_prompt.is_none()
+                            && app.session_picker.is_none()
+                            && !app.is_renaming =>
+                    {
+                        app.handle_bracketed_paste(text);
+                    }
+                    Some(_) => {}
+                    None => break, // crossterm thread exited
+                }
+            }
+            // Agent event
+            evt = event_rx.recv() => {
+                match evt {
+                    Some(AgentTaskEvent::Event(event)) => match event {
+                        rusty_tui::app::AgentEvent::TextDelta(text) => {
+                            app.push_streaming_text(&text);
+                        }
+                        rusty_tui::app::AgentEvent::ThinkingDelta(text) => {
+                            app.push_thinking_text(&text);
+                        }
+                        rusty_tui::app::AgentEvent::ResponseComplete(msg) => {
+                            app.finish_streaming();
+                            if !msg.is_empty() && app.messages.last().map_or(true, |m| m.role != rusty_tui::app::MessageRole::Assistant) {
+                                app.push_system(&msg);
+                            }
+                        }
+                        rusty_tui::app::AgentEvent::Error(msg) => {
+                            app.push_error(&msg);
+                        }
+                        rusty_tui::app::AgentEvent::ToolStart { name, arguments } => {
+                            app.tool_started(&name, &arguments);
+                        }
+                        rusty_tui::app::AgentEvent::ToolDone { name, is_error, output } => {
+                            app.tool_finished(&name, is_error, &output);
+                        }
+                        rusty_tui::app::AgentEvent::Usage { input_tokens, output_tokens, cached_input_tokens, current_context_tokens } => {
+                            app.status.input_tokens = input_tokens;
+                            app.status.output_tokens = output_tokens;
+                            app.status.cached_input_tokens = cached_input_tokens;
+                            app.status.current_context_tokens = current_context_tokens;
+                            app.needs_redraw = true;
+                        }
+                        rusty_tui::app::AgentEvent::ThinkingLevel(level) => {
+                            app.status.thinking_level = level;
+                            app.needs_redraw = true;
+                        }
+                        rusty_tui::app::AgentEvent::ModelChanged(model) => {
+                            app.status.model = model;
+                            app.needs_redraw = true;
+                        }
+                    },
+                    Some(AgentTaskEvent::PermissionRequest(msg)) => {
+                        app.permission_prompt = Some(rusty_tui::app::PermissionPromptState {
+                            request: msg.request,
+                            respond: Some(msg.respond),
+                        });
+                        app.needs_redraw = true;
+                    }
+                    Some(AgentTaskEvent::ReadyForInput) => {
+                        if let Some(input) = app.take_queued_message() {
+                            app.messages.push(rusty_tui::app::ChatMessage {
+                                role: rusty_tui::app::MessageRole::User,
+                                content: input.clone(),
+                            });
+                            app.history.push(input.clone());
+                            app.history_idx = None;
+                            app.is_streaming = true;
+                            app.streaming_text.clear();
+                            app.streaming_text = "...".to_string();
+                            app.needs_redraw = true;
+                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(input));
+                        }
+                    }
+                    None => break, // agent task channel closed
+                }
+            }
+            // Wake up to draw if needed
+            _ = tokio::time::sleep(wait_duration) => {}
         }
     }
+
+    Ok(())
 }
 
 /// Handle a slash command from the TUI
