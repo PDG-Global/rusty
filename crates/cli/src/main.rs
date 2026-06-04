@@ -333,6 +333,9 @@ async fn main() -> Result<()> {
         if args.thinking_budget.is_none() {
             config.thinking_budget = entry.thinking_budget;
         }
+        if config.context_window.is_none() {
+            config.context_window = entry.context_window;
+        }
     } else {
         // Legacy flat settings — only fill gaps not set by preset/CLI
         if config.api_base.is_none() {
@@ -1141,11 +1144,13 @@ async fn run_tui(
                                                         agent.config_mut().max_tokens = entry.max_tokens;
                                                         agent.config_mut().temperature = entry.temperature;
                                                         agent.config_mut().thinking_budget = entry.thinking_budget;
+                                                        let new_context = rusty_core::resolve_context_window(entry.context_window, &entry.model);
+                                                        agent.config_mut().context_window = entry.context_window;
                                                         drop(agent);
                                                         let _ = settings.switch_active_model(&model_key);
                                                         let _ = settings.save().await;
                                                         let _ = event_tx.send(AgentTaskEvent::Event(
-                                                            rusty_tui::app::AgentEvent::ModelChanged(entry.model.clone()),
+                                                            rusty_tui::app::AgentEvent::ModelChanged(entry.model.clone(), new_context),
                                                         ));
                                                         let _ = event_tx.send(AgentTaskEvent::Event(
                                                             rusty_tui::app::AgentEvent::ResponseComplete(
@@ -1272,6 +1277,7 @@ async fn run_tui(
 
     let mut tui_app = rusty_tui::app::AppState::default();
     tui_app.status.model = model.to_string();
+    tui_app.status.context_window = config.effective_context_window();
 
     // Spawn dedicated crossterm event reading thread to avoid blocking the tokio runtime.
     // crossterm's event::poll/read are synchronous and can block on macOS, starving
@@ -1467,13 +1473,15 @@ async fn tui_main_loop(
                                 });
                                 app.history.push(input.clone());
                                 app.history_idx = None;
+                                let blocks = app.build_content_blocks();
                                 app.input.clear();
                                 app.cursor_pos = 0;
+                                app.clear_pasted_content();
                                 app.is_streaming = true;
                                 app.streaming_text.clear();
                                 app.streaming_text = "...".to_string();
                                 app.needs_redraw = true;
-                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: input }]));
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(blocks));
                             }
                         } else {
                             // Handle key (including permission prompt responses)
@@ -1546,8 +1554,9 @@ async fn tui_main_loop(
                             app.status.thinking_level = level;
                             app.needs_redraw = true;
                         }
-                        rusty_tui::app::AgentEvent::ModelChanged(model) => {
+                        rusty_tui::app::AgentEvent::ModelChanged(model, context_window) => {
                             app.status.model = model;
+                            app.status.context_window = context_window;
                             app.needs_redraw = true;
                         }
                     },
@@ -1560,6 +1569,9 @@ async fn tui_main_loop(
                     }
                     Some(AgentTaskEvent::ReadyForInput) => {
                         if let Some(input) = app.take_queued_message() {
+                            let blocks = app.take_queued_blocks().unwrap_or_else(|| {
+                                vec![ContentBlock::Text { text: input.clone() }]
+                            });
                             app.messages.push(rusty_tui::app::ChatMessage {
                                 role: rusty_tui::app::MessageRole::User,
                                 content: input.clone(),
@@ -1570,7 +1582,7 @@ async fn tui_main_loop(
                             app.streaming_text.clear();
                             app.streaming_text = "...".to_string();
                             app.needs_redraw = true;
-                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: input }]));
+                            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(blocks));
                         }
                     }
                     None => break, // agent task channel closed

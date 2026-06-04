@@ -165,7 +165,7 @@ pub enum AgentEvent {
     Error(String),
     Usage { input_tokens: u32, output_tokens: u32, cached_input_tokens: u32, current_context_tokens: u32 },
     ThinkingLevel(Option<rusty_core::ThinkingLevel>),
-    ModelChanged(String),
+    ModelChanged(String, u32),
 }
 
 /// Messages from the TUI to the agent task
@@ -355,6 +355,7 @@ impl ModelFormState {
             temperature,
             thinking_budget,
             extra_headers: None,
+            context_window: None,
         })
     }
 }
@@ -879,6 +880,8 @@ pub struct AppState {
     pub cancel_requested: bool,
     /// Message queued while streaming is active
     pub queued_message: Option<String>,
+    /// Pre-built content blocks for the queued message (preserves image blocks)
+    pub queued_blocks: Option<Vec<rusty_core::ContentBlock>>,
     pub needs_redraw: bool,
     pub should_quit: bool,
     pub permission_prompt: Option<PermissionPromptState>,
@@ -954,6 +957,7 @@ pub enum MessageRole {
 #[derive(Default)]
 pub struct StatusInfo {
     pub model: String,
+    pub context_window: u32,
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cached_input_tokens: u32,
@@ -978,6 +982,7 @@ impl Default for AppState {
             is_thinking: false,
             cancel_requested: false,
             queued_message: None,
+            queued_blocks: None,
             needs_redraw: true,
             should_quit: false,
             permission_prompt: None,
@@ -1748,11 +1753,19 @@ impl AppState {
         self.queued_message.take()
     }
 
+    /// Take pre-built content blocks for the queued message.
+    pub fn take_queued_blocks(&mut self) -> Option<Vec<rusty_core::ContentBlock>> {
+        self.queued_blocks.take()
+    }
+
     /// Queue the current input for sending after streaming finishes.
+    /// Builds content blocks (including image blocks) before clearing input.
     pub fn queue_current_input(&mut self) {
         if !self.input.is_empty() {
+            self.queued_blocks = Some(self.build_content_blocks());
             self.queued_message = Some(std::mem::take(&mut self.input));
             self.cursor_pos = 0;
+            self.clear_pasted_content();
             self.needs_redraw = true;
         }
     }
@@ -1940,6 +1953,96 @@ impl AppState {
             },
         );
         placeholder
+    }
+
+    /// Build Vec<ContentBlock> from current input, replacing paste placeholders
+    /// with proper content blocks (ContentBlock::Image for pasted images,
+    /// inlined text for text pastes).
+    pub fn build_content_blocks(&self) -> Vec<rusty_core::ContentBlock> {
+        use base64::Engine;
+
+        let input = &self.input;
+        if self.pasted_content.is_empty() || !input.contains('\u{27E6}') {
+            return vec![rusty_core::ContentBlock::Text { text: input.clone() }];
+        }
+
+        let placeholders = Self::find_paste_placeholders(input);
+        let mut blocks: Vec<rusty_core::ContentBlock> = Vec::new();
+        let mut last_end = 0;
+
+        for (start, end) in &placeholders {
+            // Add text before this placeholder
+            let text_before = &input[last_end..*start];
+            if !text_before.is_empty() {
+                blocks.push(rusty_core::ContentBlock::Text { text: text_before.to_string() });
+            }
+
+            let placeholder_text = &input[*start..*end];
+
+            // Extract ID from placeholder (format: "id=PASTE_N")
+            if let Some(id_start) = placeholder_text.find("id=") {
+                let id_part = &placeholder_text[id_start + 3..];
+                if let Some(id_end) = id_part.find('\u{27E7}') {
+                    let id = &id_part[..id_end];
+                    if let Some(pasted) = self.pasted_content.get(id) {
+                        match &pasted.content_type {
+                            PastedContentType::Text(text) => {
+                                blocks.push(rusty_core::ContentBlock::Text { text: text.clone() });
+                            }
+                            PastedContentType::Image { data, format, .. } => {
+                                let media_type = match format.as_str() {
+                                    "png" => "image/png",
+                                    "jpeg" | "jpg" => "image/jpeg",
+                                    "gif" => "image/gif",
+                                    "webp" => "image/webp",
+                                    _ => "image/png",
+                                };
+                                let b64 = base64::engine::general_purpose::STANDARD.encode(data);
+                                blocks.push(rusty_core::ContentBlock::Image {
+                                    media_type: media_type.to_string(),
+                                    data: b64,
+                                });
+                            }
+                        }
+                    } else {
+                        blocks.push(rusty_core::ContentBlock::Text { text: placeholder_text.to_string() });
+                    }
+                } else {
+                    blocks.push(rusty_core::ContentBlock::Text { text: placeholder_text.to_string() });
+                }
+            } else {
+                blocks.push(rusty_core::ContentBlock::Text { text: placeholder_text.to_string() });
+            }
+
+            last_end = *end;
+        }
+
+        // Add remaining text after last placeholder
+        let text_after = &input[last_end..];
+        if !text_after.is_empty() {
+            blocks.push(rusty_core::ContentBlock::Text { text: text_after.to_string() });
+        }
+
+        // Merge adjacent text blocks
+        let mut merged: Vec<rusty_core::ContentBlock> = Vec::new();
+        for block in blocks {
+            match block {
+                rusty_core::ContentBlock::Text { text } => {
+                    if let Some(rusty_core::ContentBlock::Text { text: prev }) = merged.last_mut() {
+                        prev.push_str(&text);
+                    } else {
+                        merged.push(rusty_core::ContentBlock::Text { text });
+                    }
+                }
+                other => merged.push(other),
+            }
+        }
+
+        if merged.is_empty() {
+            merged.push(rusty_core::ContentBlock::Text { text: String::new() });
+        }
+
+        merged
     }
 
     /// Reconstruct full input text with pasted content inlined
