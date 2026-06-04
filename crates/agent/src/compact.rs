@@ -14,9 +14,8 @@ const KEEP_RECENT: usize = 10;
 const COMPACT_MESSAGE_THRESHOLD: usize = 40;
 
 /// Compute the token threshold for compaction based on the model's context window.
-fn compact_token_threshold(model: &str) -> usize {
-    let window = rusty_core::model_context_window(model);
-    (window as f64 * COMPACT_THRESHOLD_FRACTION) as usize
+fn compact_token_threshold(context_window: u32) -> usize {
+    (context_window as f64 * COMPACT_THRESHOLD_FRACTION) as usize
 }
 
 /// Check if compaction is needed and perform it
@@ -24,9 +23,10 @@ pub async fn maybe_compact(
     messages: &mut Vec<Message>,
     provider: &dyn LlmProvider,
     system_prompt: &str,
+    context_window: u32,
 ) -> Result<(), RustyError> {
     let estimated_tokens = estimate_tokens(messages);
-    let token_threshold = compact_token_threshold(provider.model());
+    let token_threshold = compact_token_threshold(context_window);
 
     let needs_compact = messages.len() >= COMPACT_MESSAGE_THRESHOLD
         || estimated_tokens >= token_threshold;

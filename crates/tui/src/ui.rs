@@ -1278,7 +1278,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
     let state_text = if app.is_streaming { "streaming" } else { "ready" };
 
     // Context-window usage warning
-    let context_window = rusty_core::model_context_window(&app.status.model);
+    let context_window = app.status.context_window;
     let current_context = app.status.current_context_tokens;
     let usage_pct = if context_window > 0 {
         (current_context as f64 / context_window as f64 * 100.0) as u32

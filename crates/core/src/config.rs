@@ -166,6 +166,11 @@ pub struct ModelEntry {
     /// Used by providers like Kimi that require custom headers for routing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_headers: Option<HashMap<String, String>>,
+    /// Context window size in tokens for this specific model.
+    /// When set, overrides the hardcoded lookup in `model_context_window()`.
+    /// Used for auto-compaction thresholds and TUI context-usage display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
 }
 
 impl ModelEntry {
@@ -232,6 +237,11 @@ pub struct Config {
     /// Used as a fallback when no model entry is active.
     #[serde(default)]
     pub provider_type: ProviderType,
+    /// Context window size in tokens for the active model.
+    /// When set, overrides the hardcoded lookup in `model_context_window()`.
+    /// Populated from the active `ModelEntry.context_window` at startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
 }
 
 impl Default for Config {
@@ -253,16 +263,17 @@ impl Default for Config {
             temperature: None,
             plan_with_tasks: false,
             provider_type: ProviderType::default(),
+            context_window: None,
         }
     }
 }
 
 /// Return the known context-window size (in tokens) for a model name.
 /// Falls back to 128k for unknown models.
-pub fn model_context_window(model: &str) -> u32 {
+fn model_context_window(model: &str) -> u32 {
     let lower = model.to_lowercase();
     if lower.contains("mimo") {
-        200_000
+        1_000_000
     } else if lower.contains("kimi") || lower.contains("k2.6") || lower.contains("moonshot") {
         200_000
     } else if lower.contains("gpt-4o") || lower.contains("gpt-4-turbo") {
@@ -278,6 +289,13 @@ pub fn model_context_window(model: &str) -> u32 {
     }
 }
 
+/// Resolve the effective context window for a model.
+/// Checks `override_value` first (e.g. from `Config.context_window` or `ModelEntry.context_window`),
+/// falling back to the hardcoded lookup via `model_context_window()`.
+pub fn resolve_context_window(override_value: Option<u32>, model: &str) -> u32 {
+    override_value.unwrap_or_else(|| model_context_window(model))
+}
+
 impl Config {
     pub fn resolve_api_key(&self) -> Option<String> {
         self.api_key
@@ -291,6 +309,12 @@ impl Config {
             .clone()
             .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
             .unwrap_or_else(|| "https://token-plan-cn.xiaomimimo.com/v1".to_string())
+    }
+
+    /// Return the effective context window for this config's model.
+    /// Uses `self.context_window` if set, otherwise falls back to the hardcoded lookup.
+    pub fn effective_context_window(&self) -> u32 {
+        resolve_context_window(self.context_window, &self.model)
     }
 
     pub fn config_dir() -> PathBuf {
@@ -447,6 +471,7 @@ impl Settings {
             temperature: None,
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         };
         self.models.push(entry);
         self.active_model = "default".to_string();

@@ -462,6 +462,7 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
         temperature: Some(0.7),
         thinking_budget: None,
         extra_headers: preset.extra_headers.clone().map(|h| h.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()),
+        context_window: None,
     };
     settings.add_model(entry);
     settings.active_model = preset.entry_name.to_string();

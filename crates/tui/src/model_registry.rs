@@ -31,6 +31,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         ModelEntry {
             group: "Kimi".into(),
@@ -43,6 +44,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         // ── Xiaomi MiMo ──────────────────────────────────────────────────
         ModelEntry {
@@ -56,6 +58,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         ModelEntry {
             group: "Xiaomi MiMo".into(),
@@ -68,6 +71,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         // ── DeepSeek ─────────────────────────────────────────────────────
         ModelEntry {
@@ -81,6 +85,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         ModelEntry {
             group: "DeepSeek".into(),
@@ -93,6 +98,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         // ── Zhipu GLM ────────────────────────────────────────────────────
         ModelEntry {
@@ -106,6 +112,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         ModelEntry {
             group: "Zhipu GLM".into(),
@@ -118,6 +125,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         // ── MiniMax ──────────────────────────────────────────────────────
         ModelEntry {
@@ -135,6 +143,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         ModelEntry {
             group: "MiniMax".into(),
@@ -151,6 +160,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         // ── OpenAI ───────────────────────────────────────────────────────
         ModelEntry {
@@ -170,6 +180,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
         // ── Ollama (local) ───────────────────────────────────────────────
         ModelEntry {
@@ -183,6 +194,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         },
     ]
 }
@@ -280,6 +292,7 @@ mod tests {
             temperature: None,
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         };
         let line = format_entry_line(&entry, true);
         assert!(line.starts_with('●'));

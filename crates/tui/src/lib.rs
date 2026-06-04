@@ -28,6 +28,7 @@ pub type InputHandler = Box<
 /// that streams agent events back for that turn.
 pub async fn run(
     model: &str,
+    context_window: u32,
     on_input: InputHandler,
 ) -> Result<(), anyhow::Error> {
     enable_raw_mode()?;
@@ -42,6 +43,7 @@ pub async fn run(
 
     let mut app = AppState::default();
     app.status.model = model.to_string();
+    app.status.context_window = context_window;
     app.working_dir = std::env::current_dir()
         .ok()
         .and_then(|p| p.to_str().map(String::from));
@@ -144,8 +146,9 @@ async fn run_loop(
                         app.status.thinking_level = level;
                         app.needs_redraw = true;
                     }
-                    AgentEvent::ModelChanged(model) => {
+                    AgentEvent::ModelChanged(model, context_window) => {
                         app.status.model = model;
+                        app.status.context_window = context_window;
                         app.needs_redraw = true;
                     }
                 },
