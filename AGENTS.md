@@ -44,15 +44,16 @@ cli → agent → provider
 
 | File | Purpose |
 |---|---|
-| `types.rs` | `Role` (User/Assistant), `ContentBlock` (Text/ToolUse/ToolResult/Thinking), `Message`, `MessageContent` (Text/Blocks), `UsageInfo`, `ToolDefinition`. Message helpers: `user()`, `assistant()`, `user_blocks()`, `assistant_blocks()`, `get_text()`, `get_all_text()`, `has_tool_use()`, `get_tool_use_blocks()`. |
-| `config.rs` | `Config` (runtime config: model, api_key, api_base, max_tokens, temperature, permission_mode, thinking_budget, plan_with_tasks, auto_compact, system_prompt). `Settings` (persisted `~/.rusty/settings.json`: api_key, api_base, default_model, allowed_tools, credential_store). `CredentialStore` enum (Keyring / SettingsFile). `add_permanent_permission()`. |
+| `types.rs` | `Role` (User/Assistant), `ContentBlock` (Text/Image/ToolUse/ToolResult/Thinking), `Message`, `MessageContent` (Text/Blocks), `UsageInfo`, `ToolDefinition`. `ContentBlock::Image` carries `media_type` (MIME) and base64-encoded `data` for pasted images. Message helpers: `user()`, `assistant()`, `user_blocks()`, `assistant_blocks()`, `get_text()`, `get_all_text()`, `has_tool_use()`, `get_tool_use_blocks()`, `has_image_blocks()`, `get_image_blocks()`. |
+| `config.rs` | `Config` (runtime config: model, api_key, api_base, max_tokens, temperature, permission_mode, thinking_budget, thinking_level, plan_with_tasks, auto_compact, system_prompt, append_system_prompt, no_claude_md, provider_type, context_window). `Settings` (persisted `~/.rusty/settings.json`: api_key, api_base, default_model, models, active_model, api_keys, allowed_tools, credential_store, thinking_level, permission_mode, permissions). `ModelEntry` struct: group, name, provider (ProviderType), api_base, model, available_models, max_tokens, temperature, thinking_budget, extra_headers, context_window. `ProviderType` enum: `OpenAI`, `Anthropic`. `CredentialStore` enum (Keyring / SettingsFile). `add_permanent_permission()`. |
 | `credentials.rs` | `CredentialManager` - tiered API key resolution. Priority: (1) env vars `RUSTY_API_KEY` then `OPENAI_API_KEY`, (2) OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service), (3) settings file. Also provides `store_in_keyring()`, `delete_from_keyring()`, `is_keyring_available()`. |
 | `setup_wizard.rs` | Interactive first-run wizard. Provider selection (Xiaomi, Kimi, OpenAI, DeepSeek, Ollama, Custom), API key entry with masked input, credential storage choice (keyring vs settings file), model selection, connectivity test. Plain terminal mode, no TUI dependency. |
-| `permissions.rs` | `PermissionMode` (Default/AcceptEdits/Bypass/Plan), `PermissionLevel` (None/ReadOnly/Write/Execute), `PermissionRequest`/`PermissionDecision`, bash command classifier (`classify_bash_command`), `build_tool_description`, `make_allow_key`. |
+| `permissions.rs` | `PermissionMode` (Default/AcceptEdits/Bypass/Plan), `PermissionLevel` (None/ReadOnly/Write/Execute), `PermissionRequest`/`PermissionDecision`, `PermissionChoice` (AllowOnce/AllowSession/AllowAlways/Deny) user-facing prompt options, bash command classifier (`classify_bash_command`), `build_tool_description`, `make_allow_key`. |
 | `error.rs` | `RustyError` enum: Api, ApiStatus, Auth, PermissionDenied, Tool, Io, Json, Http, RateLimit (with retry_after), ContextWindowExceeded, MaxTokensReached, Cancelled, Config, Other. Helpers: `is_retryable()`, `is_context_limit()`. |
-| `context.rs` | `build_system_context()` (platform info, working directory, git status, recent commits, sandbox notice). `build_user_context()` (discovers AGENTS.md/CLAUDE.md/RUSTY.md files walking up from working dir to root, plus `~/.rusty/` global files, includes current date). |
+| `context.rs` | `build_system_context()` (platform info, working directory, git status, recent commits, sandbox notice). `build_user_context()` (discovers AGENTS.md/CLAUDE.md/RUSTY.md files walking up from working dir to root, plus `~/.rusty/` global files, includes current date). Context files capped at 30KB (`CONTEXT_FILES_MAX_BYTES`). Content sanitised: `<` and `>` escaped to fullwidth equivalents to prevent XML tag breakout from the `<environment_context>` wrapper. |
 | `history.rs` | `ConversationSession` - save/load/list sessions in `~/.rusty/sessions/` as JSON files with id, messages, model, timestamps. |
-| `cost.rs` | `CostTracker` - thread-safe token usage tracking (input/output totals). |
+| `cost.rs` | `CostTracker` - Thread-safe token usage tracking (input/output totals, total thinking tokens). Estimates cost from configurable per-token pricing. Available via `/cost` slash command. |
+| `memory.rs` | `ProjectMemory` - per-project persistent memory storage in `~/.rusty/memory/{project_id}.json`. Project ID derived from git root slug. CRUD operations: save, search (substring), list, delete. 100-entry cap with FIFO eviction. Multi-layer content sanitisation: control character stripping, length truncation (2000 chars), XML tag neutralisation, regex injection pattern matching. |
 
 ### `crates/provider` - LLM API Client
 
@@ -60,7 +61,8 @@ cli → agent → provider
 |---|---|
 | `types.rs` | `StreamEvent` enum (TextDelta, ThinkingDelta, ToolCallDelta, Usage, Done, Error), `MessageRequest`, `ToolDefinition` (API-facing), `ProviderConfig`. OpenAI wire format types (`OaiRequest`, `OaiMessage`, `OaiTool`, `OaiToolCall`, `OaiResponse`, `OaiStreamChunk`) and conversion helpers (`rusty_messages_to_oai`, `rusty_tools_to_oai`, `oai_response_to_rusty`). |
 | `openai.rs` | `OpenAiProvider` - OpenAI Chat Completions streaming implementation with SSE parsing, retry logic (exponential backoff for rate limits/529s), delta accumulation into `StreamEvent`s. |
-| `mod.rs` | `LlmProvider` trait: `create_message_stream()`, `model()`, `messages()`. |
+| `anthropic.rs` | `AnthropicProvider` - Claude Messages API streaming implementation. Native Anthropic wire format (content blocks, `message_delta`, `message_stop` events). Supports tool use, thinking/reasoning blocks, and the `x-api-key` authentication header. |
+| `mod.rs` | `LlmProvider` trait: `create_message_stream()`, `model()`, `messages()`. Factory function `create_provider()` selects the appropriate implementation based on `api_base` URL pattern. |
 
 All LLM communication is streaming-first. The provider yields `Stream<Item = Result<StreamEvent, RustyError>>` which the agent loop consumes.
 
@@ -75,21 +77,22 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `bash.rs` | `bash` | Classified per-command | Execute shell commands. Read-only commands (ls, git status, cargo check, etc.) bypass write permissions via `classify_bash_command`. |
 | `grep.rs` | `grep` | ReadOnly | Regex search across files with glob filtering. Caps at 200 results. Skips binary extensions. |
 | `glob.rs` | `glob` | ReadOnly | File pattern matching. |
-| `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via reqwest (30s timeout). Configurable max_length (default 10000 chars). |
+| `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via reqwest (30s timeout). Configurable max_length (default 10000 chars). Comprehensive SSRF protection (see Security section). |
 | `todowrite.rs` | `todowrite` | None | Structured task list management. Accepts array of todo items with content, status (pending/in_progress/completed/cancelled), and priority (high/medium/low). Renders grouped by priority with status indicators. Persists across conversation. |
 | `agent.rs` | `agent` | None | Spawn sub-agents via `SubAgentFn` callback. Accepts `task` (required) and `context` (optional). |
+| `memory.rs` | `memory` | None | Per-project persistent memory. Actions: `save`, `search`, `list`, `delete`. Backed by `ProjectMemory` in core (`~/.rusty/memory/{project_id}.json`). Capped at 100 entries per project with FIFO eviction. Content sanitised on input and output to prevent prompt injection. |
 
 **Tool trait** (`mod.rs`): `name()`, `description()`, `input_schema()`, `permission_level()`, `execute()`, `definition()`.
 
-**`resolve_path(path_str, working_dir)`** in `mod.rs`: canonicalizes paths, resolves symlinks and `..`, rejects paths that escape the working directory. Used by all file tools and `apply_patch`.
+**`resolve_path(path_str, working_dir)`** in `mod.rs`: canonicalizes paths, resolves symlinks and `..`, rejects paths that escape the working directory. TOCTOU-hardened: avoids `path.exists()` before `canonicalize()` to prevent symlink races. Pre-write verification via `verify_not_escaping_symlink()`, post-write re-verification via `verify_no_symlink_escape()`. Used by all file tools and `apply_patch`.
 
-**`all_tools()`** returns all built-in tools except `agent` (which is wired separately by the CLI with a spawn function).
+**`all_tools()`** returns all built-in tools except `agent` and `memory` (both are wired separately by the CLI with custom callbacks).
 
 ### `crates/agent` - Agent Loop
 
 | File | Purpose |
 |---|---|
-| `loop.rs` | `Agent` struct - core orchestrator. Holds provider, tools, config, message history, permission state. `run()` method: send messages, stream response, accumulate text + tool calls, execute tools, repeat until done/max turns/cancellation. Supports `cancel()` via `AtomicBool`. |
+| `loop.rs` | `Agent` struct - core orchestrator. Holds provider, tools, config, message history, permission state. `run()` method: send messages, stream response, accumulate text + tool calls, execute tools concurrently via `JoinSet`, repeat until done/max turns/cancellation. Supports `cancel()` via `AtomicBool`. |
 | `compact.rs` | Auto-compaction: when messages exceed ~80k tokens or 40 messages, summarizes older messages (keeping last 10) via an LLM call. |
 | `lib.rs` | `spawn_subagent()` (same-process tokio task, BypassPermissions), `make_agent_tool()` (constructs `AgentTool` with spawn callback), `build_system_prompt()` (assembles system prompt with tool descriptions, permissions, platform info, date, optional plan-with-tasks instructions). |
 
@@ -132,13 +135,15 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `/copy` | `/c` | Copy last assistant response to clipboard |
 | `/model` | `/m` | Show current model |
 | `/rename` | | Rename current session |
+| `/permissions` | `/perms` | View or revoke always-approved tool permissions |
+| `/settings` | | Open model registry and general settings overlay (TUI only) |
 | `/quit` | `/exit`, `/q` | Exit (saves session) |
 
 ### `crates/cli` - Binary Entry Point
 
 `main.rs` handles:
 
-1. **CLI args** (clap): `--prompt`, `--model`, `--preset`, `--api-key`, `--api-base`, `--cwd`, `--permissions`, `--plan-with-tasks`, `--resume`, `--list-sessions`, `--headless`, `--max-turns`, `--max-tokens`, `--temperature`, `--thinking-budget`, `--verbose`, `--setup`
+1. **CLI args** (clap): `--prompt`, `--model`, `--preset`, `--api-key`, `--api-base`, `--cwd`, `--permissions`, `--plan-with-tasks`, `--resume`, `--list-sessions`, `--headless`, `--max-turns`, `--max-tokens`, `--temperature`, `--thinking-budget`, `--verbose`, `--setup`, `--no-claude-md`, `--append-system-prompt`
 
 2. **First-run detection**: If `~/.rusty/settings.json` does not exist, the setup wizard launches automatically before any other logic. `--setup` forces the wizard explicitly.
 
@@ -147,9 +152,11 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 4. **Config resolution**: preset defaults, then `~/.rusty/settings.json`, then CLI flags (later wins). Presets define `api_base` and `default_model`.
 
 5. **Three run modes:**
-   - **TUI mode** (default): full terminal UI with streaming, permission prompts, slash commands, session save on exit
+   - **TUI mode** (default): full terminal UI with streaming, permission prompts, slash commands, session save on exit. Supports model registry picker via the sidebar.
    - **Headless mode** (`--prompt`): single prompt, print response, save session
    - **Stdin mode** (`--headless`): interactive line-by-line REPL with slash commands, no TUI
+
+   `--no-claude-md` disables discovery of AGENTS.md/CLAUDE.md/RUSTY.md context files. `--append-system-prompt` appends text to the system prompt.
 
 ---
 
@@ -201,15 +208,19 @@ When given multi-step work, follow this discipline:
 
 4. **Sub-agents as tokio tasks**: The `agent` tool spawns a new `Agent` instance in a separate tokio task with BypassPermissions. Sub-agents get all tools except the agent tool (prevents recursive spawning).
 
-5. **Auto-compaction**: Long conversations are automatically summarized (keeping last 10 messages) to stay within context limits (~80k tokens or 40 messages threshold).
+5. **Concurrent tool execution**: Multiple tool calls within a single LLM response are executed concurrently via `tokio::JoinSet`. Each tool call runs as an independent spawned task, with results collected and returned in call-order once all complete. This significantly reduces wall-clock time when the model issues several independent calls.
 
-6. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume` or `/resume`.
+6. **Auto-compaction**: Long conversations are automatically summarized (keeping last 10 messages) to stay within context limits (~80k tokens or 40 messages threshold).
 
-7. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory.
+7. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume` or `/resume`.
 
-8. **Wire format conversion**: Internal `Message`/`ToolDefinition` types are converted to/from OpenAI wire format via helpers in `provider/types.rs`. Supports reasoning content (`reasoning_content` field for MiMo/DeepSeek models).
+8. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory.
 
-9. **Tiered credential management**: `CredentialManager` resolves API keys through env vars, OS keyring, and settings file. The setup wizard can store keys in the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) or in the settings file.
+9. **Wire format conversion**: Internal `Message`/`ToolDefinition` types are converted to/from OpenAI wire format via helpers in `provider/types.rs`. Supports reasoning content (`reasoning_content` field for MiMo/DeepSeek models).
+
+10. **Multi-provider support**: The `LlmProvider` trait abstracts LLM communication. Built-in providers include `OpenAiProvider` (OpenAI-compatible Chat Completions with SSE) and `AnthropicProvider` (Claude Messages API with Anthropic-native wire format). Both support streaming, retry logic, and tool calling.
+
+11. **Tiered credential management**: `CredentialManager` resolves API keys through env vars, OS keyring, and settings file. The setup wizard can store keys in the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) or in the settings file.
 
 ---
 
@@ -222,13 +233,77 @@ When given multi-step work, follow this discipline:
   "api_key": "sk-...",
   "api_base": "https://api.xiaomimimo.com/v1",
   "default_model": "mimo-v2.5-pro",
+  "models": [
+    {
+      "group": "Xiaomi",
+      "name": "MiMo Pro",
+      "provider": "OpenAI",
+      "api_base": "https://api.xiaomimimo.com/v1",
+      "model": "mimo-v2.5-pro",
+      "available_models": ["mimo-v2.5-pro", "mimo-v2-flash"],
+      "context_window": 131072,
+      "thinking_budget": 4096
+    },
+    {
+      "group": "Anthropic",
+      "name": "Claude Sonnet",
+      "provider": "Anthropic",
+      "api_base": "https://api.anthropic.com",
+      "model": "claude-sonnet-4-20250514",
+      "context_window": 200000
+    }
+  ],
+  "active_model": "mimo-v2.5-pro",
+  "api_keys": {},
   "allowed_tools": [
     "bash:git status",
     "bash:cargo check"
   ],
-  "credential_store": "keyring"
+  "credential_store": "keyring",
+  "thinking_level": "normal",
+  "permission_mode": "default",
+  "permissions": {}
 }
 ```
+
+### Model Registry
+
+The `models` array in `settings.json` defines available LLM models. Each `ModelEntry` has:
+
+| Field | Type | Description |
+|---|---|---|
+| `group` | `String` | Display grouping (e.g. "Xiaomi", "Anthropic") |
+| `name` | `String` | Human-readable name |
+| `provider` | `ProviderType` | `OpenAI` or `Anthropic` (determines wire format) |
+| `api_base` | `String` | API endpoint URL |
+| `model` | `String` | Model ID sent to the API |
+| `available_models` | `Vec<String>` | List of models to offer in the picker |
+| `context_window` | `Option<usize>` | Context window size in tokens |
+| `thinking_budget` | `Option<u32>` | Token budget for reasoning/thinking |
+| `max_tokens` | `Option<u32>` | Max output tokens |
+| `temperature` | `Option<f32>` | Sampling temperature |
+| `extra_headers` | `Option<HashMap>` | Additional HTTP headers |
+
+The `active_model` field selects which model entry is used. Per-model API keys can be stored in `api_keys` (keyed by model ID). The TUI `/settings` command provides a visual editor for the model registry.
+
+Note: `ProviderType::Anthropic` is defined and deserialisable but the `AnthropicProvider` implementation is not yet complete. Use `OpenAI`-compatible endpoints for all currently supported providers.
+
+### Thinking Levels
+
+The `ThinkingLevel` enum controls the token budget allocated to reasoning/thinking:
+
+| Level | Token Budget | Use Case |
+|---|---|---|
+| `minimal` | 1024 | Simple queries, quick responses |
+| `normal` | 4096 | Standard multi-step tasks |
+| `deep` | 16384 | Complex reasoning, architecture decisions |
+
+**Dynamic adjustment** (`dynamic_thinking_level()`): The agent automatically adjusts the thinking level based on context:
+- Multi-step tasks (2+ tool turns) are boosted from Minimal to Normal.
+- Context usage above 70% triggers a one-level step-down.
+- Context usage above 85% forces Minimal regardless of setting.
+
+Set via `--thinking-budget` CLI flag, `thinking_level` in config/settings, or the TUI `/settings` General tab.
 
 ### Environment Variables
 
@@ -282,13 +357,53 @@ Errors are classified as retryable (`is_retryable()`) for automatic retry logic 
 
 ---
 
+## Security
+
+### SSRF Protection (`web_fetch`)
+
+The `web_fetch` tool defends against server-side request forgery with multiple layers:
+
+- **Scheme restriction**: Only `http` and `https` schemes allowed. Blocks `file://`, `ftp://`, etc.
+- **Hostname blocklist**: Rejects `localhost`, `*.localhost`, `*.local`, and variants.
+- **IP blocklist**: Blocks loopback (127.0.0.0/8, ::1), private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7), link-local (169.254.0.0/16, fe80::/10), CGNAT (100.64.0.0/10), TEST-NET ranges, and multicast addresses.
+- **DNS rebinding prevention**: Resolves the hostname, pins the resolved IP, and rejects requests where DNS resolves to a private/blocklisted address. Builds a per-request client with `resolve()` override.
+- **Redirect validation**: Every redirect target is re-checked against the full blocklist before following.
+
+### Path Sandboxing (`resolve_path`)
+
+All file tools use `resolve_path()` which:
+
+- Canonicalizes paths and resolves symlinks and `..` components.
+- Rejects any path that escapes the working directory.
+- TOCTOU-hardened: avoids `path.exists()` before `canonicalize()` to prevent symlink race conditions.
+- Pre-write verification (`verify_not_escaping_symlink()`) and post-write re-verification (`verify_no_symlink_escape()`) guard against symlink attacks during file creation.
+
+### Prompt Injection Defences
+
+- **Memory tool**: Multi-layer sanitisation in `sanitize_content()` on both input and output. Strips control characters, truncates to 2000 chars, neutralises XML tags, and blocks regex injection patterns.
+- **Context files**: `<` and `>` in discovered context files escaped to fullwidth equivalents to prevent breakout from the `<environment_context>` wrapper. 30KB byte budget prevents context flooding.
+- **TUI paste sanitisation**: Strips ANSI escape sequences (CSI, OSC, DCS), C0/C1 control characters (except `\n`, `\t`), Unicode bidi override characters (U+202A-U+202E, U+2066-U+2069), and zero-width characters. 100KB max paste length.
+
+### File Permission Hardening
+
+- Config directories (`~/.rusty/`) created with `0o700` permissions via `ensure_restricted_dir()`.
+- Settings and memory files created with `0o600` permissions via `set_restrictive_file_permissions()`.
+
+### Credential Security
+
+- API keys resolved through a tiered chain (env vars, OS keyring, settings file).
+- OS keyring integration (macOS Keychain, Windows Credential Manager, Linux Secret Service) avoids storing secrets on disk.
+- Setup wizard offers keyring vs settings file choice with clear trade-off explanation.
+
+---
+
 ## Building and Running
 
 ```bash
 # Build
 cargo build --release
 
-# Run (auto-launches setup wizard on first run)
+# Run (auto-launches setup wizard on first run if ~/.rusty/settings.json is missing)
 ./target/release/rusty
 
 # Run with preset

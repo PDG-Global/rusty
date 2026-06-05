@@ -64,7 +64,9 @@
                 <a href="#quickstart" class="hover:text-zinc-950 transition-colors">Quick Start</a>
                 <a href="#specs" class="hover:text-zinc-950 transition-colors">Specifications</a>
                 <a href="#security" class="hover:text-zinc-950 transition-colors">Security</a>
-                <a href="#reference" class="hover:text-zinc-950 transition-colors">API & Tools</a>
+                <a href="#reference" class="hover:text-zinc-950 transition-colors">Reference</a>
+                <a href="#sessions" class="hover:text-zinc-950 transition-colors">Sessions</a>
+                <a href="#configuration" class="hover:text-zinc-950 transition-colors">Config</a>
             </nav>
 
             <div class="flex items-center gap-4">
@@ -101,7 +103,9 @@
             <a href="#quickstart" class="mobile-link py-1">Quick Start</a>
             <a href="#specs" class="mobile-link py-1">Specifications</a>
             <a href="#security" class="mobile-link py-1">Security</a>
-            <a href="#reference" class="mobile-link py-1">API & Tools</a>
+            <a href="#reference" class="mobile-link py-1">Reference</a>
+            <a href="#sessions" class="mobile-link py-1">Sessions</a>
+            <a href="#configuration" class="mobile-link py-1">Configuration</a>
             <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener noreferrer" class="mobile-link py-1 flex items-center gap-1.5">
                 GitHub ↗
             </a>
@@ -112,7 +116,7 @@
     <section class="relative py-20 sm:py-28 px-6 bg-white overflow-hidden">
         <div class="max-w-4xl mx-auto text-left relative z-10">
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-mono mb-8 bg-zinc-50 text-zinc-600 border-zinc-200/80">
-                <span>v0.1.1</span>
+                <span>v0.1.5</span>
                 <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
                 <span>Portable Static Binary</span>
             </div>
@@ -228,7 +232,7 @@
                 
                 <div class="text-zinc-400 font-light">// Environment audit complete. Launching Setup Wizard...</div>
                 
-                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.1</div>
+                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.5</div>
                 <div class="text-zinc-500">Settings database `~/.rusty/settings.json` not found. Entering safe first-run sequence.</div>
                 
                 <div class="space-y-1">
@@ -261,6 +265,49 @@
                     ✓ Configurations written to <code class="bg-zinc-100 px-1 py-0.5 rounded text-zinc-855">~/.rusty/settings.json</code><br />
                     🎉 Setup complete. Run `rusty` to start coding in plan, bypass, or default modes.
                 </div>
+
+                <div class="border-t border-zinc-200 pt-4 mt-2 space-y-2">
+                    <div class="text-zinc-400 font-light">// Session active. Useful commands:</div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-400">></span>
+                        <span class="text-zinc-700">/resume</span>
+                        <span class="text-zinc-400 text-[10px]">// resume a previous session</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-400">></span>
+                        <span class="text-zinc-700">/sessions</span>
+                        <span class="text-zinc-400 text-[10px]">// list saved sessions</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-400">></span>
+                        <span class="text-zinc-700">/model</span>
+                        <span class="text-zinc-400 text-[10px]">// show current model</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-400">></span>
+                        <span class="text-zinc-700">/compact</span>
+                        <span class="text-zinc-400 text-[10px]">// force compaction</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-400">></span>
+                        <span class="text-zinc-700">/quit</span>
+                        <span class="text-zinc-400 text-[10px]">// save and exit</span>
+                    </div>
+                </div>
+
+                <div class="border-t border-zinc-200 pt-4 mt-2 space-y-2">
+                    <div class="flex items-center gap-2 text-zinc-400">
+                        <span>$</span>
+                        <span class="text-zinc-950 font-semibold">rusty --resume SESSION_ID</span>
+                    </div>
+                    <div class="text-zinc-400 font-light">// Resume from CLI with full message history.</div>
+                    <div class="flex items-center gap-2 text-zinc-400">
+                        <span>$</span>
+                        <span class="text-zinc-950 font-semibold">rusty --list-sessions</span>
+                    </div>
+                    <div class="text-zinc-400 font-light">// List all saved sessions.</div>
+                </div>
+
             </div>
 
             <!-- Terminal footer info -->
@@ -425,6 +472,19 @@
                             <div>└── <span class="font-semibold text-zinc-900">cli/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Entry point: parameters bindings, parsing routines, run modes selector.</span></div>
                         </div>
                     </div>
+
+                    <!-- Dependency Graph -->
+                    <div class="space-y-2 pt-2">
+                        <h4 class="text-[10px] uppercase tracking-widest font-bold text-zinc-600 block">Dependency Graph</h4>
+                        <div class="p-4 rounded font-mono text-[11px] leading-relaxed border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm">
+                            <div class="space-y-0.5">
+                                <div><span class="font-semibold text-orange-600">cli</span> <span class="text-zinc-400">→</span> <span class="font-semibold text-orange-600">agent</span> <span class="text-zinc-400">→</span> <span class="font-semibold text-orange-600">provider</span></div>
+                                <div><span class="text-zinc-400">  │</span>       <span class="text-zinc-400">↘</span> <span class="font-semibold text-orange-600">tools</span> <span class="text-zinc-400">→</span> <span class="font-semibold text-orange-600">core</span></div>
+                                <div><span class="text-zinc-400">  ├→</span> <span class="font-semibold text-orange-600">tui</span> <span class="text-zinc-400">──────→</span> <span class="font-semibold text-orange-600">core</span></div>
+                                <div><span class="text-zinc-400">  └→</span> <span class="font-semibold text-orange-600">core</span></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Explanation items -->
@@ -504,16 +564,9 @@
         <div class="flex flex-col sm:flex-row items-center justify-between gap-6 pb-6 border-b border-zinc-200 mb-8">
             <div class="flex items-center p-0.5 rounded border border-zinc-200 bg-white">
                 <button
-                    onclick="switchRefTab('cli')"
-                    id="ref-tab-cli"
-                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all bg-zinc-900 text-white shadow-sm"
-                >
-                    CLI Parameters
-                </button>
-                <button
                     onclick="switchRefTab('tools')"
                     id="ref-tab-tools"
-                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all text-zinc-500 hover:text-zinc-900"
+                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all bg-zinc-900 text-white shadow-sm"
                 >
                     Agent Tools
                 </button>
@@ -609,6 +662,222 @@
         </div>
     </section>
 
+    <!-- SESSION MANAGEMENT SECTION -->
+    <section id="sessions" class="py-20 border-y border-zinc-200 bg-zinc-50/50">
+        <div class="max-w-4xl mx-auto px-6">
+            <div class="text-left mb-12 space-y-3">
+                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Sessions</span>
+                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Persistent conversation history</h2>
+                <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
+                    Every conversation is automatically saved to <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">~/.rusty/sessions/</code> as JSON, including the full message history, model name, and timestamps. Sessions resume from where you left off.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Auto-Save on Exit</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Sessions save automatically when you exit via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/quit</code>, <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/exit</code>, or <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">Ctrl+C</code>. No manual save step required.
+                    </p>
+                </div>
+
+                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Resume from CLI</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Pass <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">--resume SESSION_ID</code> to pick up a conversation directly. Use <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">--list-sessions</code> to see all available session IDs.
+                    </p>
+                </div>
+
+                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Interactive Picker (TUI)</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Type <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/resume</code> inside a session to browse saved conversations with an interactive list. <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/sessions</code> lists all saved sessions without entering the picker.
+                    </p>
+                </div>
+
+                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Auto-Compaction</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        When messages exceed approximately 80k tokens or 40 messages, Rusty summarises older messages automatically (keeping the last 10). Trigger manually with <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/compact</code>.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CONFIGURATION SECTION -->
+    <section id="configuration" class="py-20 border-y border-zinc-200 bg-white">
+        <div class="max-w-4xl mx-auto px-6">
+            <div class="text-left mb-12 space-y-3">
+                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Configuration</span>
+                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Settings, credentials, and presets</h2>
+                <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
+                    Rusty resolves configuration through a layered chain: environment variables take highest precedence, followed by CLI flags, then the settings file. The setup wizard populates <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">~/.rusty/settings.json</code> on first run.
+                </p>
+            </div>
+
+            <!-- Settings File -->
+            <div class="space-y-10">
+                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
+                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Settings File (<code class="font-mono text-[11px]">~/.rusty/settings.json</code>)</h3>
+                    </div>
+                    <div class="p-6 space-y-4 text-xs text-zinc-650 font-light leading-relaxed">
+                        <div class="font-mono text-[11px] p-4 rounded border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm overflow-x-auto">
+<pre>{
+  "api_key": "sk-...",
+  "api_base": "https://api.deepseek.com",
+  "default_model": "deepseek-v4-pro",
+  "allowed_tools": [
+    "bash:git status",
+    "bash:cargo check"
+  ],
+  "credential_store": "keyring"
+}</pre>
+                        </div>
+                        <p>
+                            The <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">allowed_tools</code> array is populated by permanent permission grants during the session. Once you approve a tool and choose "always allow", it is written here and persists across sessions.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Credential Resolution Chain -->
+                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
+                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">API Key Resolution Chain</h3>
+                    </div>
+                    <div class="p-6 space-y-6 text-xs text-zinc-650 font-light leading-relaxed">
+                        <p>
+                            Credentials are resolved in this priority order. The first non-empty value found is used:
+                        </p>
+                        <div class="space-y-3">
+                            <div class="flex items-start gap-3">
+                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">1</span>
+                                <div>
+                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">RUSTY_API_KEY</div>
+                                    <div class="text-zinc-500">Environment variable. Highest priority. Empty strings treated as absent.</div>
+                                </div>
+                            </div>
+                            <div class="flex items-start gap-3">
+                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">2</span>
+                                <div>
+                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">OPENAI_API_KEY</div>
+                                    <div class="text-zinc-500">Environment variable. Standard OpenAI-compatible key. Empty strings treated as absent.</div>
+                                </div>
+                            </div>
+                            <div class="flex items-start gap-3">
+                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">3</span>
+                                <div>
+                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">OS Keyring</div>
+                                    <div class="text-zinc-500">macOS Keychain, Linux Secret Service, or Windows Credential Manager. Used when <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">credential_store</code> is set to <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">keyring</code>.</div>
+                                </div>
+                            </div>
+                            <div class="flex items-start gap-3">
+                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">4</span>
+                                <div>
+                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">Settings File</div>
+                                    <div class="text-zinc-500">The <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">api_key</code> field in <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">~/.rusty/settings.json</code>. Fallback when no other source is available.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Presets Table -->
+                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
+                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Provider Presets</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs font-light">
+                            <thead>
+                                <tr class="border-b border-zinc-200 font-semibold uppercase tracking-wider text-[10px] text-zinc-400 bg-zinc-50/50">
+                                    <th class="p-4">Preset</th>
+                                    <th class="p-4">API Base URL</th>
+                                    <th class="p-4">Default Model</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-zinc-100 text-zinc-650 font-light">
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">xiaomi</td>
+                                    <td class="p-4 font-mono text-[11px]">token-plan-cn.xiaomimimo.com/v1</td>
+                                    <td class="p-4 font-mono text-[11px]">mimo-v2.5-pro</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">kimi</td>
+                                    <td class="p-4 font-mono text-[11px]">api.kimi.com/coding/v1/</td>
+                                    <td class="p-4 font-mono text-[11px]">kimi-k2.6</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">openai</td>
+                                    <td class="p-4 font-mono text-[11px]">api.openai.com/v1</td>
+                                    <td class="p-4 font-mono text-[11px]">gpt-4o</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">deepseek</td>
+                                    <td class="p-4 font-mono text-[11px]">api.deepseek.com</td>
+                                    <td class="p-4 font-mono text-[11px]">deepseek-v4-pro</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">ollama</td>
+                                    <td class="p-4 font-mono text-[11px]">localhost:11434/v1</td>
+                                    <td class="p-4 font-mono text-[11px]">llama3</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Environment Variables -->
+                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
+                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Environment Variables</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs font-light">
+                            <thead>
+                                <tr class="border-b border-zinc-200 font-semibold uppercase tracking-wider text-[10px] text-zinc-400 bg-zinc-50/50">
+                                    <th class="p-4 w-1/3">Variable</th>
+                                    <th class="p-4">Purpose</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-zinc-100 text-zinc-650 font-light">
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">RUSTY_API_KEY</td>
+                                    <td class="p-4">API key. Highest credential priority.</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">OPENAI_API_KEY</td>
+                                    <td class="p-4">API key. Standard OpenAI-compatible key.</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">OPENAI_BASE_URL</td>
+                                    <td class="p-4">API base URL override.</td>
+                                </tr>
+                                <tr class="hover:bg-zinc-50/30 transition-colors">
+                                    <td class="p-4 font-mono font-medium text-zinc-900">RUST_LOG</td>
+                                    <td class="p-4">Logging verbosity (debug, info, warn).</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- FOOTER -->
     <footer class="border-t border-zinc-200 py-16 px-6 bg-zinc-50 text-zinc-500">
         <div class="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8 text-xs">
@@ -653,48 +922,40 @@
         // LOCAL ARCHITECTURE DATA DIRECTORY
         // ==========================================
         const REFERENCE_DATA = {
-            cli: [
-                { name: "-p, --prompt <TEXT>", type: "String", desc: "Launches the agent in non-interactive mode to process a specific, single task directly." },
-                { name: "--permissions <MODE>", type: "default | accept-edits | bypass | plan", desc: "Configures access boundaries. 'plan' triggers fully read-only code exploration." },
-                { name: "--plan-with-tasks", type: "Flag", desc: "Convenience alias for --permissions plan. Task tracking via todowrite is always active." },
-                { name: "--setup", type: "Flag", desc: "Launches the secure interactive offline configuration wizard to link providers and keyring." },
-                { name: "--resume <SESSION_ID>", type: "String", desc: "Reloads chat memory buffers and localized context snapshots of a past workspace session." }
-            ],
             tools: [
-                { name: "file_read", params: "path, offset?, limit?", desc: "Reads file contents with optional line offset and limit. Sandboxed to working directory." },
-                { name: "file_write", params: "path, content", desc: "Creates or overwrites files. Auto-creates parent directories. Sandboxed to working directory." },
-                { name: "file_edit", params: "path, old_text, new_text", desc: "Conducts surgical finding-and-replacing text updates. Inhibits complete model file rewrites." },
-                { name: "apply_patch", params: "path, patch", desc: "Parses, verifies, and applies system-compliant Git unified diff patches directly." },
-                { name: "bash", params: "command", desc: "Runs designated commands inside shell. Read-only commands bypass write permissions automatically." },
-                { name: "grep", params: "pattern, path?, include?", desc: "Regex search across files with optional glob filtering. Caps at 200 results." },
-                { name: "glob", params: "pattern", desc: "File pattern matching to discover files by extension, name, or path structure." },
-                { name: "web_fetch", params: "url, max_length?", desc: "Fetches URL content via HTTP with configurable length limit. Read-only operation." },
-                { name: "todowrite", params: "tasks", desc: "Structured task list management. Accepts items with content, status, and priority. Persists across conversation." }
+                { name: "file_read", params: "path, offset?, limit?", perm: "ReadOnly", desc: "Reads file contents with optional line offset and limit. Sandboxed to working directory." },
+                { name: "file_write", params: "path, content", perm: "Write", desc: "Creates or overwrites files. Auto-creates parent directories. Sandboxed to working directory." },
+                { name: "file_edit", params: "path, old_text, new_text", perm: "Write", desc: "Exact string match-and-replace editing. Avoids full file rewrites for surgical changes." },
+                { name: "apply_patch", params: "patch", perm: "Write", desc: "Applies unified diff patches with fuzzy context matching. Supports Add/Update/Delete File operations." },
+                { name: "bash", params: "command", perm: "Classified", desc: "Executes shell commands. Read-only commands (ls, git status, cargo check) bypass write permissions automatically." },
+                { name: "grep", params: "pattern, path?, include?", perm: "ReadOnly", desc: "Regex search across files with optional glob filtering. Caps at 200 results. Skips binary files." },
+                { name: "glob", params: "pattern", perm: "ReadOnly", desc: "File pattern matching to discover files by extension, name, or path structure." },
+                { name: "web_fetch", params: "url, max_length?", perm: "ReadOnly", desc: "Fetches URL content via HTTP (30s timeout). Configurable max length, default 10000 chars." },
+                { name: "todowrite", params: "tasks[]", perm: "None", desc: "Structured task list management. Accepts items with content, status, and priority. Persists across conversation." },
+                { name: "agent", params: "task, context?", perm: "None", desc: "Spawns a sub-agent in a separate tokio task with BypassPermissions. Sub-agents get all tools except agent (prevents recursion)." }
             ],
             commands: [
                 { name: "/help", alias: "/h, /?", desc: "Displays the list of available slash commands and their descriptions." },
-                { name: "/init", alias: "None", desc: "Scans project code files and compiles structural target workspace configurations to AGENTS.md." },
-                { name: "/resume", alias: "/r", desc: "Restores a previously saved conversation session with full message history and context." },
-                { name: "/sessions", alias: "/s", desc: "Returns a clean catalog of active or historical session identifiers on the machine." },
-                { name: "/compact", alias: "None", desc: "Compresses local conversation histories to maintain optimal context boundary footprints." },
+                { name: "/init", alias: "None", desc: "Scans the project codebase and generates an AGENTS.md file with structural context." },
+                { name: "/resume", alias: "/r", desc: "Restores a previously saved conversation session. Interactive picker in TUI mode." },
+                { name: "/sessions", alias: "/s", desc: "Lists all saved sessions with ID, message count, model, and timestamp." },
+                { name: "/compact", alias: "None", desc: "Forces conversation compaction. Summarises older messages to stay within context limits." },
                 { name: "/clear", alias: "None", desc: "Clears the terminal display while preserving the active conversation state." },
                 { name: "/copy", alias: "/c", desc: "Copies the most recent assistant response to the system clipboard." },
                 { name: "/model", alias: "/m", desc: "Displays the currently active model identifier for the session." },
                 { name: "/rename", alias: "None", desc: "Assigns a human-readable label to the current conversation session." },
-                { name: "/permissions", alias: "/perms", desc: "Manages the always-approved tools allowlist for the current session." },
-                { name: "/settings", alias: "None", desc: "Opens the interactive TUI for provider configuration and model registry management." },
-                { name: "/quit", alias: "/q, /exit", desc: "Saves remaining local checkpoint buffers and cleanly terminates active terminal agent loops." }
+                { name: "/quit", alias: "/q, /exit", desc: "Saves the current session and cleanly exits the agent." }
             ]
         };
 
-        let activeRefTab = 'cli';
+        let activeRefTab = 'tools';
 
         // ==========================================
         // INITIALIZATION
         // ==========================================
         window.onload = function() {
             // Render default references
-            switchRefTab('cli');
+            switchRefTab('tools');
 
             // Set up mobile menu interactions
             const menuBtn = document.getElementById('mobile-menu-btn');
@@ -831,6 +1092,11 @@
                     badgeContent = `Type: <code class="text-zinc-600 font-medium">${item.type}</code>`;
                 } else if (item.params) {
                     badgeContent = `Params: <code class="text-zinc-600 font-medium">${item.params}</code>`;
+                    if (item.perm) {
+                        const permColors = { 'ReadOnly': 'text-green-600 bg-green-50', 'Write': 'text-amber-600 bg-amber-50', 'Classified': 'text-orange-600 bg-orange-50', 'None': 'text-zinc-500 bg-zinc-100' };
+                        const pc = permColors[item.perm] || 'text-zinc-500 bg-zinc-100';
+                        badgeContent += ` <span class="text-[10px] font-mono font-bold ${pc} px-1.5 py-0.5 rounded ml-2">${item.perm}</span>`;
+                    }
                 } else if (item.alias) {
                     badgeContent = `Alias: <code class="text-zinc-600 font-medium">${item.alias}</code>`;
                 }
