@@ -20,7 +20,7 @@ use rusty_provider::ProviderConfig;
 use rusty_tools::{all_tools, Tool};
 use std::collections::HashSet;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -220,11 +220,17 @@ async fn main() -> Result<()> {
         }
     }
 
+    let working_dir = args
+        .cwd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let sessions_dir = rusty_core::Config::sessions_dir(&working_dir);
+
     // Handle --list-sessions early exit
     if args.list_sessions {
         // Run session cleanup in background before listing
-        let _ = rusty_core::ConversationSession::cleanup_expired().await;
-        let sessions = rusty_core::ConversationSession::list().await?;
+        let _ = rusty_core::ConversationSession::cleanup(&sessions_dir).await;
+        let sessions = rusty_core::ConversationSession::list(&sessions_dir).await?;
         if sessions.is_empty() {
             println!("No saved sessions.");
         } else {
@@ -259,17 +265,14 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let working_dir = args
-        .cwd
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
     // Load config
     let settings = Settings::load().await.unwrap_or_default();
     let mut config = Config::default();
 
-    // Fire-and-forget session cleanup (M2/L2): remove sessions older than 30 days
-    tokio::spawn(async {
-        let _ = rusty_core::ConversationSession::cleanup_expired().await;
+    // Fire-and-forget session cleanup: remove sessions older than 30 days
+    let cleanup_dir = sessions_dir.clone();
+    tokio::spawn(async move {
+        let _ = rusty_core::ConversationSession::cleanup(&cleanup_dir).await;
     });
 
     // Apply preset first (can be overridden by explicit flags)
@@ -484,7 +487,7 @@ async fn main() -> Result<()> {
 
     // Load or create session
     let mut agent = if let Some(session_id) = &args.resume {
-        if let Some(session) = rusty_core::ConversationSession::load(session_id).await? {
+        if let Some(session) = rusty_core::ConversationSession::load(&sessions_dir, session_id).await? {
             info!("Resumed session: {}", session.id);
             let mut a = Agent::new(
                 provider.clone(),
@@ -525,10 +528,10 @@ async fn main() -> Result<()> {
         run_headless(&mut agent, &prompt).await?;
     } else if args.headless {
         // Headless mode with stdin
-        run_headless_stdin(&mut agent, &config.model).await?;
+        run_headless_stdin(&mut agent, &config.model, &sessions_dir).await?;
     } else {
         // Interactive TUI mode — moves agent into spawned task, handles session save internally
-        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings).await?;
+        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir).await?;
         return Ok(());
     }
 
@@ -542,7 +545,7 @@ async fn main() -> Result<()> {
         model: config.model,
         working_dir: working_dir.display().to_string(),
     };
-    session.save().await?;
+    session.save(&sessions_dir).await?;
     info!("Session saved: {}", session.id);
 
     Ok(())
@@ -570,7 +573,7 @@ async fn run_headless(agent: &mut Agent, prompt: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
+async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path) -> Result<()> {
     use std::io::{self, BufRead};
     let stdin = io::stdin();
     let mut _session_name: Option<String> = None;
@@ -607,7 +610,7 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
                 }
                 Some(rusty_tui::app::SlashCommand::Quit) => break,
                 Some(rusty_tui::app::SlashCommand::Sessions) => {
-                    let sessions = ConversationSession::list().await?;
+                    let sessions = ConversationSession::list(sessions_dir).await?;
                     if sessions.is_empty() {
                         println!("No saved sessions.");
                     } else {
@@ -717,7 +720,7 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str) -> Result<()> {
                     continue;
                 }
                 Some(rusty_tui::app::SlashCommand::Resume) => {
-                    let sessions = ConversationSession::list().await?;
+                    let sessions = ConversationSession::list(sessions_dir).await?;
                     if sessions.is_empty() {
                         println!("No saved sessions to resume.");
                     } else {
@@ -824,6 +827,7 @@ async fn run_tui(
     working_dir: &PathBuf,
     log_path: &std::path::Path,
     mut settings: Settings,
+    sessions_dir: &Path,
 ) -> Result<()> {
     use rusty_core::Message;
 
@@ -1312,6 +1316,7 @@ async fn run_tui(
         agent_handle,
         working_dir,
         tui_active.clone(),
+        sessions_dir,
     )
     .await;
 
@@ -1341,7 +1346,7 @@ async fn run_tui(
         model: config.model.clone(),
         working_dir: working_dir.display().to_string(),
     };
-    session.save().await?;
+    session.save(sessions_dir).await?;
     info!("Session saved: {}", session.id);
 
     tui_result
@@ -1356,6 +1361,7 @@ async fn tui_main_loop(
     agent_handle: tokio::task::JoinHandle<()>,
     working_dir: &PathBuf,
     tui_active: Arc<AtomicBool>,
+    sessions_dir: &Path,
 ) -> Result<()> {
     let mut agent_handle = Some(agent_handle);
     let mut last_draw = std::time::Instant::now();
@@ -1429,7 +1435,7 @@ async fn tui_main_loop(
                     Some(Event::Key(key)) => {
                         // Handle session picker Enter specially
                         if key.code == KeyCode::Enter && app.session_picker.is_some() {
-                            handle_session_picker_select(app, cmd_tx, working_dir).await;
+                            handle_session_picker_select(app, cmd_tx, working_dir, sessions_dir).await;
                             continue;
                         }
 
@@ -1456,7 +1462,7 @@ async fn tui_main_loop(
                                 app.cursor_pos = 0;
                                 app.history.push(input.clone());
                                 app.history_idx = None;
-                                handle_slash_command(app, slash, cmd_tx, working_dir).await;
+                                handle_slash_command(app, slash, cmd_tx, working_dir, sessions_dir).await;
                                 app.needs_redraw = true;
                             } else if input.starts_with('/') {
                                 app.push_system(&format!(
@@ -1602,6 +1608,7 @@ async fn handle_slash_command(
     cmd: rusty_tui::app::SlashCommand,
     cmd_tx: &mpsc::UnboundedSender<rusty_tui::app::TuiCommand>,
     _working_dir: &PathBuf,
+    sessions_dir: &Path,
 ) {
     match cmd {
         rusty_tui::app::SlashCommand::Help => {
@@ -1626,7 +1633,7 @@ async fn handle_slash_command(
         }
         rusty_tui::app::SlashCommand::Resume => {
             // Load sessions and show the picker
-            match ConversationSession::list().await {
+            match ConversationSession::list(sessions_dir).await {
                 Ok(sessions) => {
                     if sessions.is_empty() {
                         app.push_system("No saved sessions to resume.");
@@ -1642,7 +1649,7 @@ async fn handle_slash_command(
             app.needs_redraw = true;
         }
         rusty_tui::app::SlashCommand::Sessions => {
-            match ConversationSession::list().await {
+            match ConversationSession::list(sessions_dir).await {
                 Ok(sessions) => {
                     if sessions.is_empty() {
                         app.push_system("No saved sessions.");
@@ -1812,6 +1819,7 @@ async fn handle_session_picker_select(
     app: &mut rusty_tui::app::AppState,
     cmd_tx: &mpsc::UnboundedSender<rusty_tui::app::TuiCommand>,
     _working_dir: &PathBuf,
+    sessions_dir: &Path,
 ) {
     let picker = match app.session_picker.take() {
         Some(p) => p,
@@ -1829,7 +1837,7 @@ async fn handle_session_picker_select(
     };
 
     // Load the full session from disk
-    match ConversationSession::load(&session_id).await {
+    match ConversationSession::load(sessions_dir, &session_id).await {
         Ok(Some(session)) => {
             let msg_count = session.messages.len();
             app.messages.clear();

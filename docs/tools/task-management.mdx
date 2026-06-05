@@ -1,0 +1,87 @@
+---
+title: Task Management
+description: Structured task tracking with todowrite
+---
+
+## Overview
+
+The `todowrite` tool provides structured task list management within a conversation. It allows the LLM to plan, track, and report progress on multi-step work.
+
+## Parameters
+
+The tool accepts an array of task items:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content` | string | Yes | The task description |
+| `status` | enum | No | `pending`, `in_progress`, `completed`, or `cancelled` |
+| `priority` | enum | No | `high`, `medium`, or `low` |
+
+## Task Statuses
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Not yet started |
+| `in_progress` | Currently being worked on |
+| `completed` | Finished successfully |
+| `cancelled` | Skipped or blocked (with reason) |
+
+## How It Works
+
+The task list persists across the conversation. Each call to `todowrite` replaces the full list, so the current state must always be passed. Tasks are rendered grouped by priority with status indicators.
+
+## Workflow
+
+The recommended workflow for multi-step tasks:
+
+<Steps>
+  <Step title="Plan">
+    Create a task list with concrete, actionable items. Each task should be specific (e.g. "Add X field to Y struct in Z.rs"), not vague (e.g. "Improve error handling").
+  </Step>
+  <Step title="Execute">
+    Work through tasks sequentially. Mark each task `in_progress` before starting and `completed` when done.
+  </Step>
+  <Step title="Track">
+    If new work is discovered during execution, add it to the list. If a task is blocked, mark it `cancelled` with a reason.
+  </Step>
+  <Step title="Verify">
+    After all tasks are done, review the work against the original request.
+  </Step>
+</Steps>
+
+## Example
+
+A typical task list during execution:
+
+```json
+[
+  {
+    "content": "Add error variant for network timeouts in error.rs",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "content": "Update provider to map timeout errors",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Add retry logic with exponential backoff",
+    "status": "pending",
+    "priority": "medium"
+  },
+  {
+    "content": "Write tests for timeout handling",
+    "status": "pending",
+    "priority": "medium"
+  }
+]
+```
+
+## Best Practices
+
+- **Keep lists short.** 3-7 tasks is typical. Break larger work into phases.
+- **Be specific.** Each task should describe a concrete action, not a goal.
+- **Update immediately.** Mark tasks in_progress/completed as you work, not in batches.
+- **Add discovered work.** If you find new tasks during execution, add them.
+- **Never stop early.** Continue until all tasks are completed or cancelled.

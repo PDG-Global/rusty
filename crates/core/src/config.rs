@@ -327,8 +327,37 @@ impl Config {
         Self::config_dir().join("settings.json")
     }
 
-    pub fn sessions_dir() -> PathBuf {
-        Self::config_dir().join("sessions")
+    pub fn sessions_dir(working_dir: &Path) -> PathBuf {
+        Self::config_dir()
+            .join("sessions")
+            .join(Self::project_hash(working_dir))
+    }
+
+    /// Generate a short deterministic hash of the canonical working directory.
+    ///
+    /// Uses the directory name as a human-readable prefix and a truncated
+    /// SHA-256 hex suffix for uniqueness. Sessions are stored per-project
+    /// under `~/.rusty/sessions/<project_hash>/` so different projects
+    /// never see each other's history.
+    pub fn project_hash(working_dir: &Path) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Canonicalise to ensure the same directory always produces the same hash,
+        // regardless of how the user invoked rusty (e.g. via symlink or trailing /).
+        let canonical = std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
+
+        let dir_name = canonical
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "project".to_string());
+
+        let mut hasher = DefaultHasher::new();
+        canonical.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        // Format as <dir_name>-<12 hex chars> for readability + uniqueness.
+        format!("{}-{:012x}", dir_name, hash)
     }
 
     pub fn memory_dir() -> PathBuf {
@@ -692,8 +721,17 @@ mod tests {
 
     #[test]
     fn sessions_dir_contains_sessions() {
-        let path = Config::sessions_dir();
-        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "sessions");
+        let path = Config::sessions_dir(std::path::Path::new("/tmp/test-project"));
+        // The last two components should be "sessions" and then the project hash.
+        let file_name = path.file_name().unwrap().to_str().unwrap();
+        assert!(
+            file_name.contains('-'),
+            "project hash should contain a dash: {file_name}"
+        );
+        assert_eq!(
+            path.parent().unwrap().file_name().unwrap().to_str().unwrap(),
+            "sessions"
+        );
     }
 
     #[test]
