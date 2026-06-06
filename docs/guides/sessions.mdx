@@ -7,16 +7,28 @@ description: Save, resume, and manage conversation sessions
 
 Rusty automatically saves conversation sessions to `~/.rusty/sessions/` as JSON files. Each session stores the full message history, model information, and timestamps.
 
-## Session Storage
+Sessions are scoped **per project**: the working directory you launch Rusty from determines which set of sessions you see. Different projects never see each other's history.
 
-Sessions are stored at:
+## Session storage
+
+Sessions are stored under a per-project subdirectory derived from the working directory:
 
 ```
 ~/.rusty/sessions/
-├── <session-id>.json
-├── <session-id>.json
-└── ...
+├── <project_hash>/
+│   ├── <session-id>.json
+│   ├── <session-id>.json
+│   └── ...
+└── <project_hash>/
+    └── <session-id>.json
 ```
+
+`<project_hash>` is formatted as `<dir_name>-<12-hex-chars>`, where:
+
+- `<dir_name>` is the name of the working directory (e.g. `rusty`, `my-app`).
+- `<12-hex-chars>` is a truncated hash of the **canonicalised** absolute path to that directory.
+
+Because the path is canonicalised before hashing, symlinks, trailing slashes, and other path variations all resolve to the same project bucket. Launching Rusty from `~/code/myapp`, `~/code/myapp/`, or a symlink that points to it all read and write the same session history.
 
 Each session file contains:
 
@@ -26,17 +38,17 @@ Each session file contains:
 - **created_at**: Session start timestamp
 - **updated_at**: Last activity timestamp
 
-## Listing Sessions
+## Listing sessions
 
-View all saved sessions:
+View saved sessions for the current project:
 
 ```bash
 rusty --list-sessions
 ```
 
-This displays a table of sessions with their IDs, models, and timestamps.
+This displays a table of sessions with their IDs, models, and timestamps. Only sessions created in the current working directory are listed — to see sessions from another project, run the command from that project's directory (or pass `--cwd`).
 
-## Resuming a Session
+## Resuming a session
 
 Resume a previous session by its ID:
 
@@ -44,11 +56,13 @@ Resume a previous session by its ID:
 rusty --resume <session-id>
 ```
 
-In TUI mode, use the `/resume` slash command for an interactive picker that lets you browse and select from saved sessions.
+Resume must be run from the same working directory the session was created in, since session lookup is scoped to that project's storage bucket.
 
-## Session Management
+In TUI mode, use the `/resume` slash command for an interactive picker that lets you browse and select from the current project's saved sessions.
 
-### Auto-Save
+## Session management
+
+### Auto-save
 
 Sessions are saved automatically:
 
@@ -56,34 +70,41 @@ Sessions are saved automatically:
 - In headless mode: after the response completes
 - In stdin REPL mode: when you exit
 
-### Session Naming
+### Session naming
 
 Sessions can be renamed using the `/rename` slash command in TUI or stdin REPL mode.
 
-### Session Limits
+### Session limits and retention
 
-There is no hard limit on the number of saved sessions. Sessions accumulate in `~/.rusty/sessions/` until manually cleaned up.
+Rusty bounds per-project session storage automatically:
 
-## Workflow Examples
+- **30-day TTL**: Sessions older than 30 days are deleted on the next cleanup pass. Cleanup runs in the background on startup, when listing sessions, and after every save.
+- **50 sessions per project cap**: Each project keeps at most 50 sessions. When a new session is saved and the cap is exceeded, the oldest sessions (by `updated_at`) are evicted first.
 
-### Long-Running Development
+Both limits apply independently to each `<project_hash>` bucket — a busy project will not evict sessions from a different project. No manual cleanup is required for normal use.
+
+## Workflow examples
+
+### Long-running development
 
 Start a session, work on a feature, exit when done:
 
 ```bash
+cd ~/code/myapp
 rusty
 # ... work on the feature ...
 # /quit to exit and save
 ```
 
-Resume the next day:
+Resume the next day from the same directory:
 
 ```bash
+cd ~/code/myapp
 rusty --resume <session-id>
 # or in TUI: /resume
 ```
 
-### Scripting with Context
+### Scripting with context
 
 Use headless mode to build up context across multiple calls:
 
@@ -94,3 +115,5 @@ rusty --prompt "Analyse the crate structure" --headless
 # Resume for follow-up (session auto-saved from previous call)
 rusty --resume <session-id> --prompt "Now suggest improvements"
 ```
+
+Run both commands from the same working directory so they share the same per-project session store.
