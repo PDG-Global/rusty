@@ -165,6 +165,25 @@ impl Plan {
             .collect()
     }
 
+    /// Transition all `InProgress` items to `Completed`.
+    /// Called when the agent loop exits to ensure the plan reflects finished work.
+    /// Returns the number of items that were finalised.
+    pub fn finalize_in_progress(&mut self) -> usize {
+        let mut count = 0;
+        for item in &mut self.items {
+            if item.status == PlanItemStatus::InProgress {
+                item.status = PlanItemStatus::Completed;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            if let Err(e) = self.save() {
+                eprintln!("Warning: failed to save plan after finalising {count} tasks: {e}");
+            }
+        }
+        count
+    }
+
     /// Format the plan for injection into the system prompt.
     /// Returns an empty string if there are no items.
     pub fn format_for_system_prompt(&self) -> String {

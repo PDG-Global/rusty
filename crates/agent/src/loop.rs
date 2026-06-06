@@ -261,6 +261,18 @@ impl Agent {
         vec![]
     }
 
+    /// Finalise any `InProgress` plan items to `Completed` and log.
+    /// Called on every exit path from the agent loop.
+    async fn finalize_plan(&self) {
+        if let Some(plan) = &self.plan {
+            let mut plan = plan.lock().await;
+            let count = plan.finalize_in_progress();
+            if count > 0 {
+                debug!("Finalised {count} in-progress task(s) to completed");
+            }
+        }
+    }
+
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
     /// Pass a `CancelToken` via callbacks to allow mid-turn cancellation (immediate via `tokio::select!`).
     pub async fn run(
@@ -284,6 +296,7 @@ impl Agent {
         for turn in 0..self.max_turns {
             if let Some(c) = cancel {
                 if c.is_cancelled() {
+                    self.finalize_plan().await;
                     return Ok("Turn cancelled by user.".to_string());
                 }
             }
@@ -347,6 +360,7 @@ impl Agent {
                 Ok(s) => s,
                 Err(e) => {
                     warn!("LLM API call failed after retries: {e}");
+                    self.finalize_plan().await;
                     return Err(e);
                 }
             };
@@ -361,6 +375,7 @@ impl Agent {
                     tokio::select! {
                         event = stream.next() => event,
                         _ = c.cancelled() => {
+                            self.finalize_plan().await;
                             return Ok("Turn cancelled by user.".to_string());
                         }
                     }
@@ -417,6 +432,7 @@ impl Agent {
                         break;
                     }
                     StreamEvent::Error(msg) => {
+                        self.finalize_plan().await;
                         return Err(RustyError::Api(msg));
                     }
                 }
@@ -456,6 +472,7 @@ impl Agent {
             if !tool_calls.is_empty() {
                 if let Some(c) = cancel {
                     if c.is_cancelled() {
+                        self.finalize_plan().await;
                         return Ok("Turn cancelled by user.".to_string());
                     }
                 }
@@ -645,6 +662,7 @@ impl Agent {
                         ));
                         continue;
                     }
+                    self.finalize_plan().await;
                     return Ok(assistant_text);
                 }
                 Some("max_tokens") => {
@@ -653,10 +671,12 @@ impl Agent {
                         "{}\n\n[Response truncated: hit max_tokens limit. Consider using /compact if context is full.]",
                         assistant_text
                     );
+                    self.finalize_plan().await;
                     return Ok(warning);
                 }
                 Some(other) => {
                     debug!("Unexpected stop reason: {other}");
+                    self.finalize_plan().await;
                     return Ok(assistant_text);
                 }
             }
@@ -683,7 +703,10 @@ impl Agent {
 
         let mut stream = match self.provider.create_message_stream(summary_request).await {
             Ok(s) => s,
-            Err(e) => return Err(e),
+            Err(e) => {
+                self.finalize_plan().await;
+                return Err(e);
+            }
         };
 
         let mut summary = String::new();
@@ -692,6 +715,7 @@ impl Agent {
                 tokio::select! {
                     event = stream.next() => event,
                     _ = c.cancelled() => {
+                        self.finalize_plan().await;
                         return Ok("Turn cancelled by user.".to_string());
                     }
                 }
@@ -714,6 +738,7 @@ impl Agent {
         if !summary.is_empty() {
             self.messages.push(Message::assistant(&summary));
         }
+        self.finalize_plan().await;
         Ok(summary)
     }
 
