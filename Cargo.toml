@@ -10,6 +10,7 @@ members = [
     "crates/agent",
     "crates/tui",
     "crates/cli",
+    "crates/keymap",
 ]
 
 [workspace.package]

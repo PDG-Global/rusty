@@ -21,6 +21,7 @@ rusty-provider = { path = "../provider" }
 rusty-tools = { path = "../tools" }
 rusty-agent = { path = "../agent" }
 rusty-tui = { path = "../tui" }
+rusty-keymap = { path = "../keymap" }
 tokio.workspace = true
 clap.workspace = true
 serde_json.workspace = true

@@ -205,7 +205,7 @@ impl ProjectMemory {
 }
 
 /// Find the git root for the given directory.
-async fn find_git_root(dir: &Path) -> Option<PathBuf> {
+pub async fn find_git_root(dir: &Path) -> Option<PathBuf> {
     let output = tokio::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(dir)
@@ -224,7 +224,7 @@ async fn find_git_root(dir: &Path) -> Option<PathBuf> {
 
 /// Convert a path to a safe filename slug.
 /// e.g. `/Users/jeremy/Development/rusty` -> `Users_jeremy_Development_rusty`
-fn slugify_path(path: &Path) -> String {
+pub fn slugify_path(path: &Path) -> String {
     let s = path.to_string_lossy();
     s.trim_start_matches('/')
         .trim_start_matches('\\')

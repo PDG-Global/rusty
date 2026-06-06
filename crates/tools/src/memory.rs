@@ -244,6 +244,7 @@ mod tests {
         ToolContext {
             working_dir: dir.to_path_buf(),
             permission_mode: rusty_core::PermissionMode::BypassPermissions,
+            cancel: None,
         }
     }
 

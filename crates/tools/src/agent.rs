@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use async_trait::async_trait;
-use rusty_core::{PermissionLevel, RustyError};
+use rusty_core::{CancelToken, PermissionLevel, RustyError};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use crate::{Tool, ToolContext, ToolResult};
 
 /// Function type for spawning sub-agents
 pub type SubAgentFn = Arc<
-    dyn Fn(String, PathBuf) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RustyError>> + Send>>
+    dyn Fn(String, PathBuf, Option<CancelToken>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RustyError>> + Send>>
         + Send
         + Sync,
 >;
@@ -65,7 +65,7 @@ impl Tool for AgentTool {
             format!("{task}\n\nAdditional context: {context}")
         };
 
-        match (self.spawn_fn)(full_task, ctx.working_dir.clone()).await {
+        match (self.spawn_fn)(full_task, ctx.working_dir.clone(), ctx.cancel.clone()).await {
             Ok(result) => Ok(ToolResult::success(result)),
             Err(e) => Ok(ToolResult::error(format!("Sub-agent error: {e}"))),
         }

@@ -11,6 +11,8 @@ use crossterm::{
 use crossterm::event::{EnableBracketedPaste, DisableBracketedPaste};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use rusty_agent::{Agent, AgentCallbacks};
+use rusty_core::CancelToken;
+use rusty_core::plan::Plan;
 use rusty_core::permissions::{PermissionDecision, PermissionRequest};
 use rusty_core::ContentBlock;
 use rusty_core::{Config, ConversationSession, CredentialManager, PermissionMode, Settings};
@@ -18,6 +20,7 @@ use rusty_core::setup_wizard::{run_setup_wizard, is_first_run};
 use rusty_core::config::{ensure_restricted_dir, set_restrictive_file_permissions};
 use rusty_provider::ProviderConfig;
 use rusty_tools::{all_tools, Tool};
+use rusty_keymap as keymap_lib;
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -101,6 +104,10 @@ struct Args {
     /// Run the interactive first-run setup wizard
     #[arg(long)]
     setup: bool,
+
+    /// Path to a JSON keymap file for custom key bindings
+    #[arg(long)]
+    keymap: Option<PathBuf>,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -461,17 +468,25 @@ async fn main() -> Result<()> {
     } else {
         Some(memory_context.clone())
     };
+
+    // Create plan for task management (shared between TodoWriteTool and Agent system prompt)
+    let plan = Arc::new(tokio::sync::Mutex::new(Plan::new(working_dir.to_string_lossy().to_string())));
+
     let system_prompt = rusty_agent::build_system_prompt(
         &config,
         &working_dir,
         memory_context_opt.as_deref(),
+        None, // plan state is injected dynamically by refresh_system_prompt before each LLM call
     )
     .await;
 
-    // Build tools (including agent tool and memory tool)
+    // Build tools (including agent tool, memory tool, and plan tool)
     let mut tools: Vec<Box<dyn Tool>> = all_tools();
     let memory_tool = rusty_tools::memory::MemoryTool::new(project_memory);
     tools.push(Box::new(memory_tool));
+
+    let plan_tool = rusty_tools::todowrite::TodoWriteTool::new(plan.clone());
+    tools.push(Box::new(plan_tool));
 
     // Add agent tool with spawn function — uses the full system prompt so
     // sub-agents inherit the same context (AGENTS.md, CLAUDE.md, git info, etc.)
@@ -521,6 +536,7 @@ async fn main() -> Result<()> {
         )
     };
     agent.set_permission_mode(config.permission_mode);
+    agent.set_plan(plan.clone());
 
     // Run mode
     if let Some(prompt) = args.prompt {
@@ -531,7 +547,13 @@ async fn main() -> Result<()> {
         run_headless_stdin(&mut agent, &config.model, &sessions_dir).await?;
     } else {
         // Interactive TUI mode — moves agent into spawned task, handles session save internally
-        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir).await?;
+        // Load keymap if --keymap was specified
+        let keymap = if let Some(ref keymap_path) = args.keymap {
+            load_keymap(keymap_path)
+        } else {
+            None
+        };
+        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir, keymap, plan.clone()).await?;
         return Ok(());
     }
 
@@ -818,6 +840,23 @@ enum AgentTaskEvent {
     ReadyForInput,
 }
 
+/// Load a keymap from a JSON file path. Returns None on failure with a warning to stderr.
+fn load_keymap(path: &std::path::Path) -> Option<keymap_lib::KeyMap> {
+    match std::fs::read_to_string(path) {
+        Ok(json) => match serde_json::from_str::<keymap_lib::BindingConfig>(&json) {
+            Ok(config) => Some(keymap_lib::KeyMap::from_config(&config)),
+            Err(e) => {
+                eprintln!("Warning: failed to parse keymap {}: {e}", path.display());
+                None
+            }
+        },
+        Err(e) => {
+            eprintln!("Warning: failed to read keymap {}: {e}", path.display());
+            None
+        }
+    }
+}
+
 #[allow(unused_variables)]
 async fn run_tui(
     agent: Agent,
@@ -828,6 +867,8 @@ async fn run_tui(
     log_path: &std::path::Path,
     mut settings: Settings,
     sessions_dir: &Path,
+    keymap: Option<keymap_lib::KeyMap>,
+    plan: Arc<tokio::sync::Mutex<Plan>>,
 ) -> Result<()> {
     use rusty_core::Message;
 
@@ -930,7 +971,7 @@ async fn run_tui(
                 agent: Arc<tokio::sync::Mutex<Agent>>,
                 event_tx: mpsc::UnboundedSender<AgentTaskEvent>,
                 input: Vec<ContentBlock>,
-                cancel: rusty_agent::CancelToken,
+                cancel: CancelToken,
             ) -> tokio::task::JoinHandle<()> {
                 tokio::spawn(async move {
                     let mut agent = agent.lock().await;
@@ -1016,7 +1057,7 @@ async fn run_tui(
                 })
             }
 
-            let mut current_run: Option<(tokio::task::JoinHandle<()>, rusty_agent::CancelToken)> = None;
+            let mut current_run: Option<(tokio::task::JoinHandle<()>, CancelToken)> = None;
             let mut queued_chat: Option<Vec<ContentBlock>> = None;
 
             loop {
@@ -1050,7 +1091,7 @@ async fn run_tui(
 
                         // Auto-start queued chat immediately
                         if let Some(input) = queued_chat.take() {
-                            let cancel = rusty_agent::CancelToken::new();
+                            let cancel = CancelToken::new();
                             current_run = Some((start_run(agent_arc.clone(), event_tx.clone(), input, cancel.clone()), cancel));
                         }
                     }
@@ -1077,7 +1118,7 @@ async fn run_tui(
                                 ));
                             }
                             Some(rusty_tui::app::TuiCommand::Chat(input)) => {
-                                let cancel = rusty_agent::CancelToken::new();
+                                let cancel = CancelToken::new();
                                 current_run = Some((start_run(agent_arc.clone(), event_tx.clone(), input, cancel.clone()), cancel));
                             }
                             Some(rusty_tui::app::TuiCommand::Compact) => {
@@ -1317,6 +1358,7 @@ async fn run_tui(
         working_dir,
         tui_active.clone(),
         sessions_dir,
+        keymap,
     )
     .await;
 
@@ -1352,6 +1394,113 @@ async fn run_tui(
     tui_result
 }
 
+/// Convert a crossterm KeyEvent to a rusty_keymap KeyEvent.
+fn crossterm_to_keymap_key(key: crossterm::event::KeyEvent) -> keymap_lib::KeyEvent {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let key_str = match key.code {
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "enter".into(),
+        KeyCode::Esc => "esc".into(),
+        KeyCode::Backspace => "backspace".into(),
+        KeyCode::Tab => "tab".into(),
+        KeyCode::Up => "up".into(),
+        KeyCode::Down => "down".into(),
+        KeyCode::Left => "left".into(),
+        KeyCode::Right => "right".into(),
+        KeyCode::Home => "home".into(),
+        KeyCode::End => "end".into(),
+        KeyCode::PageUp => "pageup".into(),
+        KeyCode::PageDown => "pagedown".into(),
+        KeyCode::Delete => "delete".into(),
+        KeyCode::Insert => "insert".into(),
+        KeyCode::F(n) => format!("f{n}"),
+        _ => return keymap_lib::KeyEvent::plain("__unmapped__"),
+    };
+
+    let mut mods = Vec::new();
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        mods.push(keymap_lib::Modifier::Ctrl);
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        mods.push(keymap_lib::Modifier::Alt);
+    }
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        mods.push(keymap_lib::Modifier::Shift);
+    }
+
+    keymap_lib::KeyEvent::new(key_str, mods)
+}
+
+/// Dispatch a keymap action name to the appropriate AppState mutation or command.
+/// Returns Ok(true) if the action was handled, Ok(false) if not recognised.
+fn dispatch_keymap_action(
+    action: &str,
+    app: &mut rusty_tui::app::AppState,
+    cmd_tx: &mpsc::UnboundedSender<rusty_tui::app::TuiCommand>,
+) -> bool {
+    match action {
+        "quit" | "exit" => {
+            app.slash_command = Some("quit".into());
+            true
+        }
+        "copy" => {
+            app.slash_command = Some("copy".into());
+            true
+        }
+        "compact" => {
+            app.slash_command = Some("compact".into());
+            true
+        }
+        "paste" => {
+            // Paste from system clipboard
+            if let Ok(mut ctx) = arboard::Clipboard::new() {
+                if let Ok(text) = ctx.get_text() {
+                    app.handle_bracketed_paste(text);
+                }
+            }
+            true
+        }
+        "scroll-up" => {
+            app.scroll_up(3);
+            true
+        }
+        "scroll-down" => {
+            app.scroll_down(3);
+            true
+        }
+        "page-up" => {
+            app.scroll_up(app.viewport_height.max(3));
+            true
+        }
+        "page-down" => {
+            app.scroll_down(app.viewport_height.max(3));
+            true
+        }
+        "top" => {
+            app.scroll_top();
+            true
+        }
+        "bottom" => {
+            app.scroll_bottom();
+            true
+        }
+        "new-line" => {
+            app.input.insert(app.cursor_pos, '\n');
+            app.cursor_pos += 1;
+            app.needs_redraw = true;
+            true
+        }
+        _ if action.starts_with('/') => {
+            if let Some(cmd) = rusty_tui::app::SlashCommand::parse(action) {
+                app.execute_slash_command(cmd, cmd_tx);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 async fn tui_main_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut rusty_tui::app::AppState,
@@ -1362,8 +1511,10 @@ async fn tui_main_loop(
     working_dir: &PathBuf,
     tui_active: Arc<AtomicBool>,
     sessions_dir: &Path,
+    keymap: Option<keymap_lib::KeyMap>,
 ) -> Result<()> {
     let mut agent_handle = Some(agent_handle);
+    let mut prefix_active = false;
     let mut last_draw = std::time::Instant::now();
     const MIN_DRAW_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
 
@@ -1439,6 +1590,37 @@ async fn tui_main_loop(
                             continue;
                         }
 
+                        // Keymap lookup: only in normal input mode (no modal overlays)
+                        if let Some(ref km) = keymap {
+                            if app.permission_prompt.is_none()
+                                && app.session_picker.is_none()
+                                && app.file_picker.is_none()
+                                && !app.is_renaming
+                            {
+                                let km_key = crossterm_to_keymap_key(key);
+
+                                // Check prefix key first
+                                if km.has_prefix() && km.is_prefix(&km_key) {
+                                    prefix_active = true;
+                                    continue;
+                                }
+
+                                let lookup = km.lookup(&km_key, prefix_active);
+                                // Reset prefix mode after any non-prefix keypress
+                                if prefix_active {
+                                    prefix_active = false;
+                                }
+
+                                if let Some((action, _consumed_prefix)) = lookup {
+                                    if dispatch_keymap_action(&action, app, cmd_tx) {
+                                        app.needs_redraw = true;
+                                        continue;
+                                    }
+                                }
+                                // No binding matched: fall through to default handling
+                            }
+                        }
+
                         // Handle Enter — send message or queue while streaming
                         if key.code == KeyCode::Enter
                             && !app.input.is_empty()
@@ -1487,6 +1669,7 @@ async fn tui_main_loop(
                                 app.is_streaming = true;
                                 app.streaming_text.clear();
                                 app.streaming_text = "...".to_string();
+                                app.scroll_offset = 0;
                                 app.needs_redraw = true;
                                 let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(blocks));
                             }
@@ -1589,6 +1772,7 @@ async fn tui_main_loop(
                             app.is_streaming = true;
                             app.streaming_text.clear();
                             app.streaming_text = "...".to_string();
+                            app.scroll_offset = 0;
                             app.needs_redraw = true;
                             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(blocks));
                         }
@@ -1629,6 +1813,7 @@ async fn handle_slash_command(
             app.is_streaming = true;
             app.streaming_text.clear();
             app.streaming_text = "...".to_string();
+            app.scroll_offset = 0;
             app.needs_redraw = true;
             let init_prompt = build_init_prompt();
             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: init_prompt }]));

@@ -6,7 +6,7 @@ use rusty_core::{ConversationSession, PermissionDecision, PermissionRequest};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 /// Threshold for detecting paste events from timing.
 /// Events arriving faster than this (in nanoseconds) are considered part of a paste.
@@ -916,6 +916,8 @@ pub struct AppState {
     last_key_time: Option<Instant>,
     /// Whether we're currently in paste mode (rapid input detected)
     pub paste_mode: bool,
+    /// Number of lines the user has scrolled up from the bottom (0 = at bottom)
+    pub scroll_offset: usize,
     /// Set by the Enter handler in the Models tab — the TUI main loop
     /// picks this up and sends `TuiCommand::SwitchModel` to the agent task.
     pub model_switch_requested: Option<String>,
@@ -931,6 +933,10 @@ pub struct AppState {
     /// picks up and sends to the agent task (needed because key handlers
     /// borrow `self` mutably so we can't send directly).
     pub pending_commands: std::collections::VecDeque<TuiCommand>,
+    /// Last known viewport (chat area) height in rows, set by the draw loop.
+    pub viewport_height: usize,
+    /// Slash command queued for execution by the main loop (set by keymap dispatch).
+    pub slash_command: Option<String>,
 }
 
 pub struct PendingTool {
@@ -1003,11 +1009,14 @@ impl Default for AppState {
             file_picker: None,
             last_key_time: None,
             paste_mode: false,
+            scroll_offset: 0,
             model_switch_requested: None,
             model_form: None,
             thinking_level_change_requested: None,
             permission_mode_change_requested: None,
             pending_commands: std::collections::VecDeque::new(),
+            viewport_height: 20,
+            slash_command: None,
         }
     }
 }
@@ -1492,6 +1501,12 @@ impl AppState {
                 self.cancel_requested = true;
                 self.needs_redraw = true;
             }
+            KeyCode::PageUp => {
+                self.scroll_up(15);
+            }
+            KeyCode::PageDown => {
+                self.scroll_down(15);
+            }
             KeyCode::Char('@') if !self.is_streaming => {
                 // Insert the @ character
                 self.input.insert(self.cursor_pos, '@');
@@ -1639,6 +1654,35 @@ impl AppState {
         }
     }
 
+    /// Scroll up by `n` lines (toward older messages).
+    pub fn scroll_up(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_add(n);
+        self.needs_redraw = true;
+    }
+
+    /// Scroll down by `n` lines (toward newer messages).
+    pub fn scroll_down(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(n);
+        self.needs_redraw = true;
+    }
+
+    /// Jump to the bottom (most recent content). Resets scroll offset to 0.
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+        self.needs_redraw = true;
+    }
+
+    /// Scroll to the very top (oldest message).
+    pub fn scroll_top(&mut self) {
+        self.scroll_offset = usize::MAX;
+        self.needs_redraw = true;
+    }
+
+    /// Scroll to the very bottom (newest message). Alias for scroll_to_bottom.
+    pub fn scroll_bottom(&mut self) {
+        self.scroll_to_bottom();
+    }
+
     /// Read clipboard via arboard and handle the paste
     fn paste_from_clipboard(&mut self) {
         use arboard::Clipboard;
@@ -1736,6 +1780,33 @@ impl AppState {
     /// Check if the current input is a slash command (starts with /)
     pub fn is_slash_input(&self) -> bool {
         self.input.starts_with('/')
+    }
+
+    /// Record a parsed slash command for the main loop to consume.
+    /// Clears the input buffer after recording.
+    pub fn execute_slash_command(
+        &mut self,
+        cmd: SlashCommand,
+        _cmd_tx: &mpsc::UnboundedSender<TuiCommand>,
+    ) {
+        let name = match cmd {
+            SlashCommand::Help => "help",
+            SlashCommand::Init => "init",
+            SlashCommand::Resume => "resume",
+            SlashCommand::Sessions => "sessions",
+            SlashCommand::Compact => "compact",
+            SlashCommand::Clear => "clear",
+            SlashCommand::Quit => "quit",
+            SlashCommand::Copy => "copy",
+            SlashCommand::Model => "model",
+            SlashCommand::Rename => "rename",
+            SlashCommand::Permissions => "permissions",
+            SlashCommand::Settings => "settings",
+        };
+        self.slash_command = Some(name.to_string());
+        self.input.clear();
+        self.cursor_pos = 0;
+        self.needs_redraw = true;
     }
 
     /// Returns true if Enter was pressed and we have input to send

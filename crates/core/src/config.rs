@@ -978,6 +978,7 @@ mod tests {
             temperature: None,
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         };
         let mut settings = Settings {
             api_key: Some("sk-legacy".into()),
@@ -1026,6 +1027,7 @@ mod tests {
             temperature: None,
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         });
 
         assert!(settings.switch_active_model("gpt4"));
@@ -1057,6 +1059,7 @@ mod tests {
             temperature: Some(0.7),
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         };
         settings.add_model(updated);
 
@@ -1090,6 +1093,7 @@ mod tests {
             temperature: None,
             thinking_budget: None,
             extra_headers: None,
+            context_window: None,
         });
         settings.set_api_key("extra", "sk-extra".into());
 

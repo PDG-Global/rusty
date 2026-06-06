@@ -1,6 +1,7 @@
 // Copyright (C) 2026 PDG Global Limited
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+pub mod cancel;
 pub mod config;
 pub mod context;
 pub mod cost;
@@ -9,9 +10,11 @@ pub mod error;
 pub mod history;
 pub mod memory;
 pub mod permissions;
+pub mod plan;
 pub mod setup_wizard;
 pub mod types;
 
+pub use cancel::*;
 pub use config::*;
 pub use credentials::*;
 pub use error::*;

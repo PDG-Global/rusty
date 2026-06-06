@@ -14,7 +14,7 @@ pub mod todowrite;
 pub mod web_fetch;
 
 use async_trait::async_trait;
-use rusty_core::{PermissionLevel, RustyError, ToolDefinition};
+use rusty_core::{CancelToken, PermissionLevel, RustyError, ToolDefinition};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 pub struct ToolContext {
     pub working_dir: PathBuf,
     pub permission_mode: rusty_core::PermissionMode,
+    pub cancel: Option<CancelToken>,
 }
 
 /// Resolve a path against the working directory and validate it stays within the sandbox.
@@ -190,7 +191,7 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult, RustyError>;
 }
 
-/// Returns all built-in tools (excluding AgentTool which requires special construction)
+/// Returns all built-in tools (excluding AgentTool, MemoryTool, and TodoWriteTool which require special construction)
 pub fn all_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(apply_patch::ApplyPatchTool),
@@ -200,7 +201,6 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
         Box::new(file_write::FileWriteTool),
         Box::new(glob::GlobTool),
         Box::new(grep::GrepTool),
-        Box::new(todowrite::TodoWriteTool),
         Box::new(web_fetch::WebFetchTool::new()),
     ]
 }

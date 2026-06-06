@@ -10,7 +10,9 @@ use rusty_tools::Tool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use r#loop::{Agent, AgentCallbacks, CancelToken, PermissionCallback, ToolStatus};
+pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, ToolStatus};
+// Re-export CancelToken so downstream crates (e.g. rusty CLI) can use `rusty_agent::CancelToken`.
+pub use rusty_core::CancelToken;
 
 /// Spawn a sub-agent as a same-process tokio task.
 /// Returns the sub-agent's final text response.
@@ -26,6 +28,7 @@ pub async fn spawn_subagent(
     system_prompt: String,
     task: String,
     parent_permission_mode: PermissionMode,
+    cancel: Option<CancelToken>,
 ) -> Result<String, RustyError> {
     // Sub-agents cannot prompt the user interactively, so Default mode
     // must be promoted to AcceptEdits (auto-allow writes, deny execute
@@ -37,7 +40,11 @@ pub async fn spawn_subagent(
     let handle = tokio::spawn(async move {
         let mut agent = Agent::new(provider, tools, config, working_dir, system_prompt);
         agent.set_permission_mode(effective_mode);
-        agent.run(vec![ContentBlock::Text { text: task }], AgentCallbacks::default()).await
+        let callbacks = AgentCallbacks {
+            cancel: cancel.as_ref(),
+            ..AgentCallbacks::default()
+        };
+        agent.run(vec![ContentBlock::Text { text: task }], callbacks).await
     });
 
     handle
@@ -53,14 +60,14 @@ pub fn make_agent_tool(
     config: Config,
 ) -> rusty_tools::agent::AgentTool {
     let parent_mode = config.permission_mode;
-    let spawn_fn = Arc::new(move |task: String, working_dir: PathBuf| {
+    let spawn_fn = Arc::new(move |task: String, working_dir: PathBuf, cancel: Option<CancelToken>| {
         let provider = provider.clone();
         let system_prompt = system_prompt.clone();
         let config = config.clone();
         Box::pin(async move {
             // Sub-agents get all tools except the agent tool (to prevent recursive spawning)
             let tools: Vec<Box<dyn rusty_tools::Tool>> = rusty_tools::all_tools();
-            spawn_subagent(provider, tools, config, working_dir, system_prompt, task, parent_mode).await
+            spawn_subagent(provider, tools, config, working_dir, system_prompt, task, parent_mode, cancel).await
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RustyError>> + Send>>
     });
 
@@ -73,6 +80,7 @@ pub async fn build_system_prompt(
     config: &Config,
     working_dir: &Path,
     memory_context: Option<&str>,
+    plan_context: Option<&str>,
 ) -> String {
     let mut parts = Vec::new();
 
@@ -172,6 +180,13 @@ pub async fn build_system_prompt(
     if let Some(mem_ctx) = memory_context {
         if !mem_ctx.is_empty() {
             parts.push(mem_ctx.to_string());
+        }
+    }
+
+    // Inject current plan if available
+    if let Some(plan_ctx) = plan_context {
+        if !plan_ctx.is_empty() {
+            parts.push(plan_ctx.to_string());
         }
     }
 

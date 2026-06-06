@@ -7,8 +7,9 @@ use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,
     PermissionLevel, PermissionRequest,
 };
+use rusty_core::plan::Plan;
 use rusty_core::{
-    Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
+    CancelToken, Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
 };
 use rusty_core::{dynamic_thinking_level, level_to_budget, ThinkingLevel};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
@@ -17,7 +18,6 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -76,47 +76,6 @@ pub type PermissionCallback = Arc<
         + Sync,
 >;
 
-/// Lightweight cancellation token for cooperative cancellation of agent turns.
-/// Checked between stream events so the agent can abort mid-stream or mid-tool.
-#[derive(Clone)]
-pub struct CancelToken {
-    flag: Arc<AtomicBool>,
-    notify: Arc<tokio::sync::Notify>,
-}
-
-impl CancelToken {
-    pub fn new() -> Self {
-        Self {
-            flag: Arc::new(AtomicBool::new(false)),
-            notify: Arc::new(tokio::sync::Notify::new()),
-        }
-    }
-    pub fn cancel(&self) {
-        self.flag.store(true, Ordering::Relaxed);
-        self.notify.notify_waiters();
-    }
-    pub fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Relaxed)
-    }
-    pub fn reset(&self) {
-        self.flag.store(false, Ordering::Relaxed);
-    }
-    /// Async cancellation future — resolves immediately if already cancelled,
-    /// otherwise waits until `cancel()` is called.
-    pub async fn cancelled(&self) {
-        if self.is_cancelled() {
-            return;
-        }
-        self.notify.notified().await;
-    }
-}
-
-impl Default for CancelToken {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 pub struct Agent {
     provider: Arc<dyn LlmProvider>,
     tools: HashMap<String, Arc<dyn Tool>>,
@@ -124,6 +83,8 @@ pub struct Agent {
     working_dir: PathBuf,
     messages: Vec<Message>,
     system_prompt: String,
+    /// Base system prompt without plan context (used to rebuild with fresh plan each turn).
+    base_system_prompt: String,
     total_usage: UsageInfo,
     /// The input token count from the most recent API call (current context size).
     /// Unlike `total_usage.input_tokens`, this is NOT accumulated across turns.
@@ -136,6 +97,8 @@ pub struct Agent {
     /// How many times we've nudged the model to finish incomplete tasks.
     /// Prevents infinite loops when the model is stuck.
     task_nudge_count: u32,
+    /// Persistent plan, injected into system prompt each turn.
+    plan: Option<Arc<tokio::sync::Mutex<Plan>>>,
 }
 
 #[derive(Default)]
@@ -169,6 +132,7 @@ impl Agent {
             config,
             working_dir,
             messages: Vec::new(),
+            base_system_prompt: system_prompt.clone(),
             system_prompt,
             total_usage: UsageInfo::default(),
             current_context_tokens: 0,
@@ -178,6 +142,7 @@ impl Agent {
             session_allowlist: HashSet::new(),
             permanent_allowlist: HashSet::new(),
             task_nudge_count: 0,
+            plan: None,
         }
     }
 
@@ -191,6 +156,26 @@ impl Agent {
 
     pub fn set_permanent_allowlist(&mut self, allowlist: HashSet<String>) {
         self.permanent_allowlist = allowlist;
+    }
+
+    /// Set the persistent plan for this agent.
+    pub fn set_plan(&mut self, plan: Arc<tokio::sync::Mutex<Plan>>) {
+        self.plan = Some(plan);
+    }
+
+    /// Refresh the system prompt with current plan context.
+    /// Called before each LLM call so the model always sees the latest plan state.
+    async fn refresh_system_prompt(&mut self) {
+        let mut prompt = self.base_system_prompt.clone();
+        if let Some(plan) = &self.plan {
+            let plan = plan.lock().await;
+            let ctx = plan.format_for_system_prompt();
+            if !ctx.is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&ctx);
+            }
+        }
+        self.system_prompt = prompt;
     }
 
     /// Replace the LLM provider at runtime (used for model switching).
@@ -303,6 +288,9 @@ impl Agent {
                 }
             }
             debug!("Agent turn {}/{}", turn + 1, self.max_turns);
+
+            // Refresh system prompt with current plan context
+            self.refresh_system_prompt().await;
 
             // Warn when approaching max turns
             if turn == self.max_turns.saturating_sub(3) && self.max_turns > 5 {
@@ -491,6 +479,7 @@ impl Agent {
                 let ctx = ToolContext {
                     working_dir: self.working_dir.clone(),
                     permission_mode: self.permission_mode,
+                    cancel: callbacks.cancel.cloned(),
                 };
 
                 // Phase 1: Check permissions for all tool calls (sequential)

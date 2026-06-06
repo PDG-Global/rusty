@@ -1,0 +1,31 @@
+{
+  "prefix": {
+    "key": "b",
+    "modifiers": ["ctrl"]
+  },
+
+  "bindings": [
+    { "key": "q", "action": "quit" },
+    { "key": "c", "modifiers": ["ctrl"], "action": "copy" },
+    { "key": "v", "modifiers": ["ctrl"], "action": "paste" },
+    { "key": "Tab", "action": "next_panel" },
+    { "key": "Tab", "modifiers": ["shift"], "action": "prev_panel" },
+    { "key": "F1", "action": "help" },
+
+    { "key": "c", "after_prefix": true, "action": "new_pane" },
+    { "key": "x", "after_prefix": true, "action": "close_pane" },
+    { "key": "h", "after_prefix": true, "action": "focus_left" },
+    { "key": "l", "after_prefix": true, "action": "focus_right" },
+    { "key": "j", "after_prefix": true, "action": "focus_down" },
+    { "key": "k", "after_prefix": true, "action": "focus_up" }
+  ],
+
+  "terminal_overrides": {
+    "kitty": [
+      { "raw_escape": "\u001b[1;5A", "maps_to": { "key": "Up", "modifiers": ["ctrl"] } },
+      { "raw_escape": "\u001b[1;5B", "maps_to": { "key": "Down", "modifiers": ["ctrl"] } },
+      { "raw_escape": "\u001b[1;5C", "maps_to": { "key": "Right", "modifiers": ["ctrl"] } },
+      { "raw_escape": "\u001b[1;5D", "maps_to": { "key": "Left", "modifiers": ["ctrl"] } }
+    ]
+  }
+}

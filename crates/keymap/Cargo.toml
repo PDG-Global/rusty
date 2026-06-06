@@ -1,0 +1,12 @@
+# Copyright (C) 2026 PDG Global Limited
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "rusty-keymap"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

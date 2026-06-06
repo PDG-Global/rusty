@@ -215,9 +215,12 @@ fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
         ]));
     }
 
-    // Scroll to bottom
+    // Scroll — prefer user's manual offset, otherwise auto-scroll to bottom
     let visible_height = inner.height as usize;
-    let scroll = if lines.len() > visible_height {
+    let scroll = if app.scroll_offset > 0 {
+        // User has scrolled up; start line = total - viewport - offset
+        lines.len().saturating_sub(visible_height + app.scroll_offset)
+    } else if lines.len() > visible_height {
         lines.len() - visible_height
     } else {
         0
