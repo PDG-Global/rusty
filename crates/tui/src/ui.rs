@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 
-use crate::app::{AppState, MessageRole};
+use crate::app::{AppState, AutocompleteState, MessageRole};
 
 pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
     // Dynamically size the input area based on content length.
@@ -51,9 +51,25 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
         draw_todos(app, chunks[idx], buf);
         idx += 1;
     }
+    let input_area_idx = idx;
     draw_input(app, chunks[idx], buf);
     idx += 1;
     draw_status(app, chunks[idx], buf);
+
+    // Overlay autocomplete dropdown below input area
+    if let Some(ref ac) = app.autocomplete {
+        if !ac.matches.is_empty() {
+            let input_area = chunks[input_area_idx];
+            draw_autocomplete(
+                ac,
+                input_area.x + 1,
+                input_area.y + input_area.height,
+                input_area.width.saturating_sub(2),
+                area,
+                buf,
+            );
+        }
+    }
 
     // Overlay session picker if active
     if app.session_picker.is_some() {
@@ -1997,4 +2013,75 @@ fn draw_model_form(app: &AppState, area: Rect, buf: &mut Buffer) {
     ]);
     let footer_para = Paragraph::new(footer_line);
     Widget::render(&footer_para, footer_area, buf);
+}
+
+fn draw_autocomplete(
+    ac: &AutocompleteState,
+    x: u16,
+    y: u16,
+    width: u16,
+    screen_area: Rect,
+    buf: &mut Buffer,
+) {
+    let max_visible = 8u16;
+    let count = ac.matches.len() as u16;
+    let visible = count.min(max_visible);
+    if visible == 0 {
+        return;
+    }
+
+    // Clamp to screen bounds
+    let available_below = screen_area.height.saturating_sub(y);
+    let visible = visible.min(available_below.saturating_sub(1));
+    if visible == 0 {
+        return;
+    }
+
+    let area = Rect {
+        x,
+        y,
+        width: width.min(screen_area.width.saturating_sub(x)),
+        height: visible,
+    };
+
+    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+    let normal_style = Style::default().fg(Color::White);
+    let desc_style = Style::default().fg(Color::DarkGray);
+
+    for (i, (name, desc)) in ac.matches.iter().enumerate().take(visible as usize) {
+        let row_y = area.y + i as u16;
+        let style = if i == ac.selected { selected_style } else { normal_style };
+
+        // Clear row
+        for col in 0..area.width {
+            buf[(area.x + col, row_y)].set_char(' ').set_style(style);
+        }
+
+        // Draw command name
+        let name_chars: Vec<char> = name.chars().collect();
+        for (ci, &ch) in name_chars.iter().enumerate() {
+            let col = ci as u16;
+            if col + 1 >= area.width {
+                break;
+            }
+            buf[(area.x + col, row_y)].set_char(ch).set_style(style);
+        }
+
+        // Draw description right-aligned if space permits
+        let desc_text = desc.as_str();
+        let desc_len = desc_text.chars().count() as u16;
+        let name_len = name_chars.len() as u16;
+        let min_gap = 2u16;
+        if i != ac.selected && name_len + min_gap + desc_len < area.width {
+            let desc_start = area.width.saturating_sub(desc_len);
+            let style = if i == ac.selected { selected_style } else { desc_style };
+            for (ci, ch) in desc_text.chars().enumerate() {
+                let col = desc_start + ci as u16;
+                if col >= area.width {
+                    break;
+                }
+                buf[(area.x + col, row_y)].set_char(ch).set_style(style);
+            }
+        }
+    }
 }

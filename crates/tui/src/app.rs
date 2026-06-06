@@ -944,6 +944,8 @@ pub struct AppState {
     pub slash_command: Option<String>,
     /// New version available from GitHub, if detected by the background update check.
     pub update_available: Option<String>,
+    /// Autocomplete popup state for slash commands.
+    pub autocomplete: Option<AutocompleteState>,
 }
 
 pub struct PendingTool {
@@ -953,6 +955,59 @@ pub struct PendingTool {
     pub line_start: usize,
     pub output: Option<String>,
     pub is_error: bool,
+}
+
+/// All available slash commands with their descriptions
+pub const SLASH_COMMANDS: &[(&str, &str)] = &[
+    ("/help", "Show available commands"),
+    ("/init", "Generate AGENTS.md for the codebase"),
+    ("/resume", "Resume a saved session"),
+    ("/sessions", "List saved sessions"),
+    ("/compact", "Force conversation compaction"),
+    ("/clear", "Clear current conversation"),
+    ("/copy", "Copy last assistant response"),
+    ("/model", "Show current model"),
+    ("/rename", "Rename current session"),
+    ("/permissions", "Manage tool permissions"),
+    ("/settings", "Open settings overlay"),
+    ("/version", "Show version and check for updates"),
+    ("/quit", "Exit"),
+];
+
+/// State for the slash command autocomplete popup.
+#[derive(Debug, Clone)]
+pub struct AutocompleteState {
+    /// Matching commands (command string, description)
+    pub matches: Vec<(String, String)>,
+    /// Currently selected index in the matches list
+    pub selected: usize,
+}
+
+impl AutocompleteState {
+    /// Compute matches for the given input text. Returns None if input does not start
+    /// with `/` or there are no matching commands.
+    pub fn compute(input: &str) -> Option<Self> {
+        if !input.starts_with('/') {
+            return None;
+        }
+        let partial = input.trim().to_lowercase();
+        let matches: Vec<(String, String)> = SLASH_COMMANDS
+            .iter()
+            .filter(|(cmd, _)| cmd.starts_with(&partial))
+            .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
+            .collect();
+
+        if matches.is_empty() {
+            None
+        } else {
+            Some(Self { matches, selected: 0 })
+        }
+    }
+
+    /// Get the currently selected command text.
+    pub fn selected_command(&self) -> &str {
+        &self.matches[self.selected].0
+    }
 }
 
 pub struct ChatMessage {
@@ -1025,6 +1080,7 @@ impl Default for AppState {
             viewport_height: 20,
             slash_command: None,
             update_available: None,
+            autocomplete: None,
         }
     }
 }
@@ -1487,6 +1543,49 @@ impl AppState {
         }
 
         match key.code {
+            // Autocomplete popup navigation
+            KeyCode::Up if self.autocomplete.is_some() => {
+                let ac = self.autocomplete.as_mut().unwrap();
+                ac.selected = ac.selected.saturating_sub(1);
+                self.needs_redraw = true;
+                return;
+            }
+            KeyCode::Down if self.autocomplete.is_some() => {
+                let ac = self.autocomplete.as_mut().unwrap();
+                if ac.selected + 1 < ac.matches.len() {
+                    ac.selected += 1;
+                }
+                self.needs_redraw = true;
+                return;
+            }
+            KeyCode::Tab if self.autocomplete.is_some() => {
+                let cmd = self.autocomplete.as_ref().unwrap().selected_command().to_string();
+                self.input = cmd;
+                self.cursor_pos = self.input.len();
+                self.autocomplete = None;
+                self.needs_redraw = true;
+                return;
+            }
+            KeyCode::Enter if self.autocomplete.is_some() => {
+                let cmd = self.autocomplete.as_ref().unwrap().selected_command().to_string();
+                self.input = cmd;
+                self.cursor_pos = self.input.len();
+                self.autocomplete = None;
+                self.needs_redraw = true;
+                // Fall through to submit the command
+            }
+            KeyCode::Esc if self.autocomplete.is_some() => {
+                self.autocomplete = None;
+                self.needs_redraw = true;
+                return;
+            }
+            _ => {}
+        }
+        // Dismiss autocomplete on any other key if it's active (e.g. typing continues)
+        // but only for non-character keys that we haven't handled above.
+        // Character input will update autocomplete below.
+
+        match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
@@ -1535,6 +1634,7 @@ impl AppState {
             KeyCode::Char(c) => {
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
+                self.autocomplete = AutocompleteState::compute(&self.input);
                 self.needs_redraw = true;
             }
             KeyCode::Backspace if self.cursor_pos > 0 => {
@@ -1545,6 +1645,7 @@ impl AppState {
                     .unwrap_or(0);
                 self.input.drain(prev..self.cursor_pos);
                 self.cursor_pos = prev;
+                self.autocomplete = AutocompleteState::compute(&self.input);
                 self.needs_redraw = true;
             }
             KeyCode::Delete if self.cursor_pos < self.input.len() => {
@@ -1554,6 +1655,7 @@ impl AppState {
                     .map(|(i, _)| self.cursor_pos + i)
                     .unwrap_or(self.input.len());
                 self.input.drain(self.cursor_pos..next);
+                self.autocomplete = AutocompleteState::compute(&self.input);
                 self.needs_redraw = true;
             }
             KeyCode::Left if self.cursor_pos > 0 => {
@@ -1617,7 +1719,18 @@ impl AppState {
                 // Tab-complete slash commands only when input is a bare command prefix (no spaces)
                 && self.input.starts_with('/')
                 && !self.input.contains(' ') => {
-                    self.autocomplete_slash();
+                    if self.autocomplete.is_none() {
+                        self.autocomplete = AutocompleteState::compute(&self.input);
+                    }
+                    if let Some(ref ac) = self.autocomplete {
+                        if !ac.matches.is_empty() {
+                            let cmd = ac.matches[ac.selected].0.clone();
+                            self.input = cmd;
+                            self.cursor_pos = self.input.len();
+                            self.autocomplete = None;
+                            self.needs_redraw = true;
+                        }
+                    }
                 }
             KeyCode::Enter if self.paste_mode => {
                 // In paste mode, insert newline instead of submitting
@@ -1630,37 +1743,7 @@ impl AppState {
         }
     }
 
-    /// Tab-complete slash commands from partial input
-    fn autocomplete_slash(&mut self) {
-        let partial = self.input.trim().to_lowercase();
-        let commands = [
-            "/help", "/init", "/resume", "/sessions", "/compact", "/clear", "/copy", "/model", "/rename", "/permissions", "/quit",
-        ];
-        let matches: Vec<&str> = commands
-            .iter()
-            .filter(|c| c.starts_with(&partial))
-            .copied()
-            .collect();
 
-        if matches.len() == 1 {
-            self.input = matches[0].to_string();
-            self.cursor_pos = self.input.len();
-            self.needs_redraw = true;
-        } else if matches.len() > 1 {
-            // Find longest common prefix
-            let mut prefix = matches[0].to_string();
-            for m in &matches[1..] {
-                while !m.starts_with(&prefix) {
-                    prefix.pop();
-                }
-            }
-            if prefix.len() > partial.len() {
-                self.input = prefix;
-                self.cursor_pos = self.input.len();
-                self.needs_redraw = true;
-            }
-        }
-    }
 
     /// Scroll up by `n` lines (toward older messages).
     pub fn scroll_up(&mut self, n: usize) {
