@@ -1444,6 +1444,7 @@ async fn tui_main_loop(
                             && !app.input.is_empty()
                             && app.permission_prompt.is_none()
                             && app.session_picker.is_none()
+                            && app.file_picker.is_none()
                             && !app.paste_mode
                         {
                             let input = app.input.clone();
@@ -1516,6 +1517,7 @@ async fn tui_main_loop(
                     Some(Event::Paste(text))
                         if app.permission_prompt.is_none()
                             && app.session_picker.is_none()
+                            && app.file_picker.is_none()
                             && !app.is_renaming =>
                     {
                         app.handle_bracketed_paste(text);
