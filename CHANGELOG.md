@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.6 (2026-06-06)
+
+### Features
+
+- **Multimodal image support**: New `ContentBlock::Image` variant wired through the full stack (core, provider, agent, TUI, CLI). Pasted images are sent as data URIs to the LLM via the OpenAI vision API spec.
+- **Per-project session storage**: Sessions now stored per-project under `~/.rusty/sessions/<project_hash>/` so different working directories have separate histories. Uses directory name prefix with truncated SHA-256 suffix for uniqueness.
+- **Cancellation support**: `CancelToken` extracted from agent loop into a dedicated `core::cancel` module using `tokio::Notify` for immediate async cancellation. Ctrl+C in TUI interrupts agent turns. Cancellation threaded through sub-agent spawning and tool context.
+- **Plan system**: Per-project plan persistence with system prompt injection. Plans back the todowrite tool and are refreshed per agent turn. Stored under `~/.rusty/plans/`.
+- **Keymap crate**: New `rusty-keymap` crate providing JSON-defined keybindings with support for multi-key sequences (prefix keys), modifier combos, and an action dispatcher. Ships with an example keybindings file.
+- **Configurable context window**: Optional `context_window` field on `ModelEntry` allows overriding the hardcoded model lookup. Introduced `resolve_context_window()` and `Config::effective_context_window()` helpers. MiMo context window corrected from 200k to 1M tokens.
+- **Documentation site**: Added `docs/` directory with Mintlify configuration covering quickstart, installation, settings, credentials, presets, and permissions.
+
+### Fixes
+
+- **Respect `max_turns` config**: `Agent::new()` now reads `config.max_turns` from the `--max-turns` CLI flag instead of always hardcoding 50.
+- **Scaled task nudge limit**: Nudge limit now scales as `max(num_tasks * 2, 8)` instead of being hardcoded to 3, preventing the agent from abandoning multi-task lists.
+- **Informative task nudges**: Nudge messages now include remaining task count and incomplete task details instead of generic "you stopped early" text.
+- **Incomplete task detection**: Tasks without an explicit `status` field (which the schema defaults to pending) are now correctly detected as incomplete instead of being treated as completed.
+- **Enter/Paste bypass fix**: Added guards to prevent Enter key and Paste events from bypassing the open file picker, matching the existing session picker guard pattern.
+- **Site nav overflow**: Reduced top nav items from 7 to 5 to prevent layout squashing on narrow viewports.
+
 ## v0.1.5 (2026-06-04)
 
 ### Features
