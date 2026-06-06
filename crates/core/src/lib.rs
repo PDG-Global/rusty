@@ -10,6 +10,7 @@ pub mod error;
 pub mod history;
 pub mod memory;
 pub mod permissions;
+pub mod update;
 pub mod plan;
 pub mod setup_wizard;
 pub mod types;
@@ -21,6 +22,7 @@ pub use error::*;
 pub use history::*;
 pub use memory::*;
 pub use permissions::*;
+pub use update::*;
 pub use types::*;
 
 /// User-Agent string for all Rusty HTTP requests.

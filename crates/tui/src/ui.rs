@@ -1340,6 +1340,14 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         Span::styled(format!("| {cwd_display}"), separator_style)
     };
 
+    let update_span = match &app.update_available {
+        Some(ver) => Span::styled(
+            format!("| update: {ver} "),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+        None => Span::styled("", separator_style),
+    };
+
     let spans = vec![
         Span::styled(format!(" {} ", app.status.model), model_style),
         Span::styled("| ", separator_style),
@@ -1349,6 +1357,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         Span::styled(format!("{state_text} "), state_style),
         think_span,
         cwd_span,
+        update_span,
     ];
     let paragraph = Paragraph::new(Line::from(spans));
     Widget::render(&paragraph, area, buf);

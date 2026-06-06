@@ -166,6 +166,7 @@ pub enum AgentEvent {
     Usage { input_tokens: u32, output_tokens: u32, cached_input_tokens: u32, current_context_tokens: u32 },
     ThinkingLevel(Option<rusty_core::ThinkingLevel>),
     ModelChanged(String, u32),
+    UpdateAvailable(rusty_core::update::UpdateCheckResult),
 }
 
 /// Messages from the TUI to the agent task
@@ -387,6 +388,8 @@ pub enum SlashCommand {
     Permissions,
     /// /settings — open the settings/model registry TUI
     Settings,
+    /// /version — show current version and check for updates
+    Version,
 }
 
 impl SlashCommand {
@@ -407,6 +410,7 @@ impl SlashCommand {
             "/permissions" | "/perms" => Some(SlashCommand::Permissions),
             _ if trimmed.starts_with("/permissions ") || trimmed.starts_with("/perms ") => Some(SlashCommand::Permissions),
             "/settings" => Some(SlashCommand::Settings),
+            "/version" | "/v" => Some(SlashCommand::Version),
             _ => None,
         }
     }
@@ -424,6 +428,7 @@ impl SlashCommand {
             ("/rename", "Rename the current session"),
             ("/permissions", "Manage always-approved tools list"),
             ("/settings", "Open settings and model registry"),
+            ("/version", "Show current version and update status"),
             ("/quit", "Exit rusty"),
         ]
     }
@@ -937,6 +942,8 @@ pub struct AppState {
     pub viewport_height: usize,
     /// Slash command queued for execution by the main loop (set by keymap dispatch).
     pub slash_command: Option<String>,
+    /// New version available from GitHub, if detected by the background update check.
+    pub update_available: Option<String>,
 }
 
 pub struct PendingTool {
@@ -1017,6 +1024,7 @@ impl Default for AppState {
             pending_commands: std::collections::VecDeque::new(),
             viewport_height: 20,
             slash_command: None,
+            update_available: None,
         }
     }
 }
@@ -1802,6 +1810,7 @@ impl AppState {
             SlashCommand::Rename => "rename",
             SlashCommand::Permissions => "permissions",
             SlashCommand::Settings => "settings",
+            SlashCommand::Version => "version",
         };
         self.slash_command = Some(name.to_string());
         self.input.clear();

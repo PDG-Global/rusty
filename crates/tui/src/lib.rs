@@ -152,6 +152,10 @@ async fn run_loop(
                         app.status.context_window = context_window;
                         app.needs_redraw = true;
                     }
+                    AgentEvent::UpdateAvailable(result) => {
+                        app.update_available = Some(result.latest_version);
+                        app.needs_redraw = true;
+                    }
                 },
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => break,

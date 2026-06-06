@@ -777,6 +777,23 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path)
                     println!("Settings panel is not available in headless mode. Edit ~/.rusty/settings.json directly.");
                     continue;
                 }
+                Some(rusty_tui::app::SlashCommand::Version) => {
+                    let current = rusty_core::update::current_version();
+                    println!("rusty v{current}");
+                    match rusty_core::update::check_for_update().await {
+                        Ok(Some(update)) => {
+                            println!("Update available: v{}", update.latest_version);
+                            println!("https://github.com/PDG-Global/rusty/releases");
+                        }
+                        Ok(None) => {
+                            println!("You are running the latest version.");
+                        }
+                        Err(e) => {
+                            println!("Could not check for updates: {e}");
+                        }
+                    }
+                    continue;
+                }
                 None => {
                     println!("Unknown command: {line}. Type /help for available commands.");
                     continue;
@@ -941,6 +958,7 @@ async fn run_tui(
     // Spawn the agent task
     let perm_mode = config.permission_mode;
     let agent = Arc::new(tokio::sync::Mutex::new(agent));
+    let update_event_tx = event_tx.clone(); // clone before move into agent task
     let agent_handle = tokio::spawn({
         let agent_arc = agent.clone();
         async move {
@@ -1323,6 +1341,20 @@ async fn run_tui(
     let mut tui_app = rusty_tui::app::AppState::default();
     tui_app.status.model = model.to_string();
     tui_app.status.context_window = config.effective_context_window();
+
+    // Spawn background update check (non-blocking)
+    {
+        let update_tx = update_event_tx;
+        tokio::spawn(async move {
+            match rusty_core::update::check_for_update().await {
+                Ok(Some(result)) => {
+                    let _ = update_tx.send(AgentTaskEvent::Event(rusty_tui::app::AgentEvent::UpdateAvailable(result)));
+                }
+                Ok(None) => {}
+                Err(_) => {} // Silently ignore check failures
+            }
+        });
+    }
 
     // Spawn dedicated crossterm event reading thread to avoid blocking the tokio runtime.
     // crossterm's event::poll/read are synchronous and can block on macOS, starving
@@ -1750,6 +1782,10 @@ async fn tui_main_loop(
                             app.status.context_window = context_window;
                             app.needs_redraw = true;
                         }
+                        rusty_tui::app::AgentEvent::UpdateAvailable(result) => {
+                            app.update_available = Some(result.latest_version);
+                            app.needs_redraw = true;
+                        }
                     },
                     Some(AgentTaskEvent::PermissionRequest(msg)) => {
                         app.permission_prompt = Some(rusty_tui::app::PermissionPromptState {
@@ -1996,6 +2032,21 @@ async fn handle_slash_command(
             }
             app.input.clear();
             app.cursor_pos = 0;
+            app.needs_redraw = true;
+        }
+        rusty_tui::app::SlashCommand::Version => {
+            let current = rusty_core::update::current_version();
+            let mut msg = format!("rusty v{current}");
+            match app.update_available.as_ref() {
+                Some(update) => {
+                    msg.push_str(&format!("\nUpdate available: v{}", update));
+                    msg.push_str("\nhttps://github.com/PDG-Global/rusty/releases");
+                }
+                None => {
+                    msg.push_str("\nYou are running the latest version.");
+                }
+            }
+            app.push_system(&msg);
             app.needs_redraw = true;
         }
     }
