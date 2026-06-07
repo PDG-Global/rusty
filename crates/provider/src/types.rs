@@ -314,21 +314,25 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                 let tool_calls: Vec<OaiToolCall> = blocks
                     .iter()
                     .filter_map(|b| match b {
-                        ContentBlock::ToolUse { id, name, input } => Some(OaiToolCall {
-                            id: id.clone(),
-                            call_type: "function".to_string(),
-                            function: OaiFunctionCall {
-                                name: name.clone(),
-                                // Ensure arguments is always a JSON object string.
-                                // Some LLM APIs fail if they receive "null" or a non-object
-                                // here (e.g. "Can only get item pairs from a mapping").
-                                arguments: if input.is_object() {
-                                    input.to_string()
-                                } else {
-                                    "{}".to_string()
+                        ContentBlock::ToolUse { id, name, input }
+                            if !name.trim().is_empty() && !id.trim().is_empty() =>
+                        {
+                            Some(OaiToolCall {
+                                id: id.clone(),
+                                call_type: "function".to_string(),
+                                function: OaiFunctionCall {
+                                    name: name.clone(),
+                                    // Ensure arguments is always a JSON object string.
+                                    // Some LLM APIs fail if they receive "null" or a non-object
+                                    // here (e.g. "Can only get item pairs from a mapping").
+                                    arguments: if input.is_object() {
+                                        input.to_string()
+                                    } else {
+                                        "{}".to_string()
+                                    },
                                 },
-                            },
-                        }),
+                            })
+                        }
                         _ => None,
                     })
                     .collect();

@@ -539,9 +539,26 @@ impl Agent {
                     });
                 }
 
-                // Detect truncated tool calls: if the response hit max_tokens and any
-                // tool call has non-empty but unparsable arguments, skip execution and
-                // tell the model to retry with smaller chunks.
+                // Detect malformed tool calls: empty name/id (can happen with some
+                // providers that omit the function name in streaming deltas) or
+                // truncated arguments when max_tokens is hit.
+                let empty_name: Vec<_> = tool_calls
+                    .iter()
+                    .filter(|tc| tc.name.trim().is_empty() || tc.id.trim().is_empty())
+                    .collect();
+                if !empty_name.is_empty() {
+                    warn!(
+                        "Skipping {} tool call(s) with empty name/id — provider sent malformed deltas",
+                        empty_name.len()
+                    );
+                    self.messages.push(Message::user(
+                        "One or more tool calls in your previous response were malformed (missing a name or ID). \
+                         Please retry the request."
+                            .to_string(),
+                    ));
+                    continue;
+                }
+
                 if stop_reason.as_deref() == Some("max_tokens") {
                     let bad: Vec<_> = tool_calls
                         .iter()

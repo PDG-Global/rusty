@@ -117,42 +117,116 @@
 
     <!-- HERO SECTION -->
     <section class="relative py-20 sm:py-28 px-6 bg-white overflow-hidden">
-        <div class="max-w-4xl mx-auto text-left relative z-10">
-            <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-mono mb-8 bg-zinc-50 text-zinc-600 border-zinc-200/80">
-                <span>v0.1.5</span>
-                <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-                <span>Portable Static Binary</span>
-            </div>
+        <div class="max-w-5xl mx-auto relative z-10">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-stretch">
+                <!-- Left: Text -->
+                <div class="text-left">
+                    <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-mono mb-8 bg-zinc-50 text-zinc-600 border-zinc-200/80">
+                        <span>v0.1.5</span>
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
+                        <span>Portable Static Binary</span>
+                    </div>
 
-            <h1 class="text-4xl sm:text-6xl font-light tracking-tight text-zinc-900 leading-[1.08] mb-8 max-w-3xl">
-                Lightweight terminal coding agent <span class="font-normal italic text-orange-600">built in Rust.</span>
-            </h1>
+                    <h1 class="text-4xl sm:text-6xl font-light tracking-tight text-zinc-900 leading-[1.08] mb-8 max-w-xl">
+                        Lightweight terminal coding agent <span class="font-normal italic text-orange-600">built in Rust.</span>
+                    </h1>
 
-            <p class="text-base sm:text-lg max-w-2xl mb-10 leading-relaxed font-light text-zinc-500">
-                Statically compiled to run natively with zero dependencies. Safeguards your development environment using local directory sandboxing, OS keychain integration, and absolute privacy. No runtime, no telemetry, no backdoors.
-            </p>
+                    <p class="text-base sm:text-lg max-w-lg mb-10 leading-relaxed font-light text-zinc-500">
+                        Statically compiled to run natively with zero dependencies. Safeguards your development environment using local directory sandboxing, OS keychain integration, and absolute privacy. No runtime, no telemetry, no backdoors.
+                    </p>
 
-            <div class="flex flex-col sm:flex-row items-stretch gap-3 max-w-xl">
-                <div class="w-full sm:w-80 flex items-center justify-between font-mono text-xs px-4 h-11 rounded border bg-zinc-50 border-zinc-200 text-zinc-800 shadow-sm">
-                    <span id="install-cmd">cargo build --release</span>
-                    <button 
-                        onclick="copyText('cargo build --release', 'install-cmd-btn')" 
-                        id="install-cmd-btn"
-                        class="p-1 rounded text-zinc-400 hover:text-zinc-900 transition-colors"
-                        title="Copy"
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-                    </button>
+                    <div class="flex flex-col sm:flex-row items-stretch gap-3 max-w-xl">
+                        <div class="w-full sm:w-80 flex items-center justify-between font-mono text-xs px-4 h-11 rounded border bg-zinc-50 border-zinc-200 text-zinc-800 shadow-sm">
+                            <span id="install-cmd">cargo build --release</span>
+                            <button 
+                                onclick="copyText('cargo build --release', 'install-cmd-btn')" 
+                                id="install-cmd-btn"
+                                class="p-1 rounded text-zinc-400 hover:text-zinc-900 transition-colors"
+                                title="Copy"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+                            </button>
+                        </div>
+                        <a 
+                            href="https://github.com/PDG-Global/rusty" 
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="w-full sm:w-auto px-5 h-11 rounded text-[11px] font-bold uppercase tracking-wider bg-zinc-900 hover:bg-zinc-800 text-white transition-all text-center shrink-0 shadow-sm flex items-center justify-center gap-2"
+                        >
+                            Get Source Code on GitHub
+                            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+                        </a>
+                    </div>
                 </div>
-                <a 
-                    href="https://github.com/PDG-Global/rusty" 
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="w-full sm:w-auto px-5 h-11 rounded text-[11px] font-bold uppercase tracking-wider bg-zinc-900 hover:bg-zinc-800 text-white transition-all text-center shrink-0 shadow-sm flex items-center justify-center gap-2"
-                >
-                    Get Source Code on GitHub
-                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
-                </a>
+
+                <!-- Right: Terminal SVG Illustration -->
+                <div class="hidden lg:flex justify-end items-stretch">
+                    <svg viewBox="0 0 480 500" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-full h-full drop-shadow-lg">
+                        <defs>
+                            <clipPath id="term-clip">
+                                <rect x="4" y="4" width="472" height="492" rx="12"/>
+                            </clipPath>
+                        </defs>
+                        <!-- Shadow -->
+                        <rect x="6" y="10" width="472" height="492" rx="12" fill="#e4e4e7" opacity="0.3"/>
+                        <!-- Terminal window frame -->
+                        <rect x="4" y="4" width="472" height="492" rx="12" fill="#1e1e2e" stroke="#313244" stroke-width="1"/>
+                        <!-- Title bar -->
+                        <rect x="4" y="4" width="472" height="40" rx="12" fill="#181825"/>
+                        <rect x="4" y="32" width="472" height="12" fill="#181825"/>
+                        <!-- macOS traffic lights -->
+                        <circle cx="26" cy="24" r="6" fill="#f38ba8"/>
+                        <circle cx="46" cy="24" r="6" fill="#f9e2af"/>
+                        <circle cx="66" cy="24" r="6" fill="#a6e3a1"/>
+                        <!-- Title -->
+                        <text x="240" y="29" font-family="monospace" font-size="11" fill="#6c7086" text-anchor="middle">rusty  ~  bash</text>
+
+                        <g clip-path="url(#term-clip)">
+                            <!-- User prompt -->
+                            <text x="24" y="72" font-family="monospace" font-size="13" fill="#f5c2e7" font-weight="600">you</text>
+                            <text x="52" y="72" font-family="monospace" font-size="13" fill="#89dceb">@</text>
+                            <text x="64" y="72" font-family="monospace" font-size="13" fill="#a6e3a1" font-weight="600">rusty</text>
+                            <text x="24" y="96" font-family="monospace" font-size="13" fill="#cdd6f4">Add error handling to the config parser</text>
+
+                            <!-- Separator -->
+                            <line x1="24" y1="114" x2="456" y2="114" stroke="#313244" stroke-width="1"/>
+
+                            <!-- Thinking block -->
+                            <rect x="24" y="126" width="72" height="18" rx="4" fill="#313244"/>
+                            <text x="34" y="139" font-family="monospace" font-size="10" fill="#f9e2af" font-weight="500">thinking</text>
+                            <text x="24" y="164" font-family="monospace" font-size="11.5" fill="#585b70" font-style="italic">The config parser in config.rs needs proper</text>
+                            <text x="24" y="182" font-family="monospace" font-size="11.5" fill="#585b70" font-style="italic">error handling for malformed JSON...</text>
+
+                            <!-- Tool call: file_read -->
+                            <line x1="24" y1="200" x2="456" y2="200" stroke="#313244" stroke-width="1"/>
+                            <rect x="24" y="214" width="12" height="12" rx="2" fill="#89b4fa" opacity="0.2"/>
+                            <text x="42" y="225" font-family="monospace" font-size="11.5" fill="#89b4fa" font-weight="500">file_read</text>
+                            <text x="114" y="225" font-family="monospace" font-size="11.5" fill="#6c7086">src/config.rs</text>
+
+                            <!-- Tool call: apply_patch -->
+                            <rect x="24" y="240" width="12" height="12" rx="2" fill="#a6e3a1" opacity="0.2"/>
+                            <text x="42" y="251" font-family="monospace" font-size="11.5" fill="#a6e3a1" font-weight="500">apply_patch</text>
+                            <text x="130" y="251" font-family="monospace" font-size="11.5" fill="#6c7086">src/config.rs</text>
+                            <line x1="24" y1="268" x2="456" y2="268" stroke="#313244" stroke-width="1"/>
+
+                            <!-- Assistant response -->
+                            <text x="24" y="296" font-family="monospace" font-size="11.5" fill="#cdd6f4">Added proper error handling with descriptive</text>
+                            <text x="24" y="314" font-family="monospace" font-size="11.5" fill="#cdd6f4">messages for invalid JSON, missing fields, and</text>
+                            <text x="24" y="332" font-family="monospace" font-size="11.5" fill="#cdd6f4">type mismatches. The parser now returns</text>
+                            <text x="24" y="350" font-family="monospace" font-size="11.5" fill="#a6e3a1">RustyError::Config</text>
+                            <text x="180" y="350" font-family="monospace" font-size="11.5" fill="#cdd6f4">instead of panicking.</text>
+
+                            <!-- New prompt line -->
+                            <text x="24" y="392" font-family="monospace" font-size="13" fill="#f5c2e7" font-weight="600">you</text>
+                            <text x="52" y="392" font-family="monospace" font-size="13" fill="#89dceb">@</text>
+                            <text x="64" y="392" font-family="monospace" font-size="13" fill="#a6e3a1" font-weight="600">rusty</text>
+                            <!-- Blinking cursor -->
+                            <rect x="24" y="404" width="9" height="15" rx="1" fill="#f5e0dc" opacity="0.8">
+                                <animate attributeName="opacity" values="0.8;0;0.8" dur="1.2s" repeatCount="indefinite"/>
+                            </rect>
+                        </g>
+                    </svg>
+                </div>
             </div>
         </div>
     </section>
@@ -294,9 +368,9 @@
 
             <!-- Main Comparison Table -->
             <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
-                <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50 flex items-center justify-between">
-                    <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Rusty vs Node/Python Agents</h3>
-                    <span class="text-[9px] uppercase tracking-wider font-semibold text-zinc-400 font-mono">Platform Profiles</span>
+                <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Qualitative Differences</h3>
+                    <p class="text-[10px] text-zinc-400 mt-0.5">Beyond raw performance numbers. Resource metrics shown in the chart above.</p>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left text-xs font-light">
@@ -304,7 +378,7 @@
                             <tr class="border-b border-zinc-200 font-semibold uppercase tracking-wider text-[10px] text-zinc-400 bg-zinc-50/50">
                                 <th class="p-4 w-1/4">Aspect</th>
                                 <th class="p-4 w-1/4 text-zinc-900 font-bold bg-zinc-50/50">Rusty (Rust)</th>
-                                <th class="p-4 w-1/4 text-zinc-500">Node/TS Agents</th>
+                                <th class="p-4 w-1/4 text-zinc-500">Node / TS Agents</th>
                                 <th class="p-4 w-1/4 text-zinc-500">Python Agents</th>
                             </tr>
                         </thead>
@@ -314,30 +388,6 @@
                                 <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Single static binary</td>
                                 <td class="p-4 text-zinc-500">Node runtime + 100MB+ node_modules</td>
                                 <td class="p-4 text-zinc-500">Python interpreter + pip dependency tree</td>
-                            </tr>
-                            <tr class="hover:bg-zinc-50/30 transition-colors">
-                                <td class="p-4 font-medium text-zinc-800">Install Size</td>
-                                <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~12 MB</td>
-                                <td class="p-4 text-zinc-500">200 MB - 500 MB</td>
-                                <td class="p-4 text-zinc-500">150 MB - 400 MB</td>
-                            </tr>
-                            <tr class="hover:bg-zinc-50/30 transition-colors">
-                                <td class="p-4 font-medium text-zinc-800">Memory (Idle)</td>
-                                <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~4.8 MB</td>
-                                <td class="p-4 text-zinc-500">~60 - 120 MB</td>
-                                <td class="p-4 text-zinc-500">~45 - 90 MB</td>
-                            </tr>
-                            <tr class="hover:bg-zinc-50/30 transition-colors">
-                                <td class="p-4 font-medium text-zinc-800">Startup Latency</td>
-                                <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">&lt; 15ms</td>
-                                <td class="p-4 text-zinc-500">200ms - 1s (V8 boot + module resolution)</td>
-                                <td class="p-4 text-zinc-500">100ms - 500ms (interpreter + imports)</td>
-                            </tr>
-                            <tr class="hover:bg-zinc-50/30 transition-colors">
-                                <td class="p-4 font-medium text-zinc-800">macOS WindowServer</td>
-                                <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~0.0% CPU</td>
-                                <td class="p-4 text-zinc-500">25-50% CPU spikes (Electron/Chrome)</td>
-                                <td class="p-4 text-zinc-500">Variable (high with Tcl/Tk or Electron)</td>
                             </tr>
                             <tr class="hover:bg-zinc-50/30 transition-colors">
                                 <td class="p-4 font-medium text-zinc-800">API Key Storage</td>
@@ -358,16 +408,10 @@
                                 <td class="p-4 text-zinc-500">Nested pip supply chain packages</td>
                             </tr>
                             <tr class="hover:bg-zinc-50/30 transition-colors">
-                                <td class="p-4 font-medium text-zinc-800">License</td>
-                                <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">AGPL-3.0 (fully open)</td>
-                                <td class="p-4 text-zinc-500">Varies (often proprietary core)</td>
-                                <td class="p-4 text-zinc-500">Varies (often proprietary core)</td>
-                            </tr>
-                            <tr class="hover:bg-zinc-50/30 transition-colors">
                                 <td class="p-4 font-medium text-zinc-800">Telemetry</td>
                                 <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Zero</td>
-                                <td class="p-4 text-zinc-500">Analytics, usage tracking, phone-home</td>
-                                <td class="p-4 text-zinc-500">Analytics, usage tracking, phone-home</td>
+                                <td class="p-4 text-zinc-500">Analytics, usage tracking</td>
+                                <td class="p-4 text-zinc-500">Analytics, usage tracking</td>
                             </tr>
                         </tbody>
                     </table>
@@ -417,8 +461,10 @@
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                        </div>
                         <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Auto-Plan with Task Tracking</h4>
                     </div>
                     <p class="text-xs text-zinc-500 font-light leading-relaxed">
@@ -427,8 +473,10 @@
                 </div>
 
                 <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        </div>
                         <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Concurrent Tool Execution</h4>
                     </div>
                     <p class="text-xs text-zinc-500 font-light leading-relaxed">
@@ -437,8 +485,10 @@
                 </div>
 
                 <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        </div>
                         <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Multimodal Image Support</h4>
                     </div>
                     <p class="text-xs text-zinc-500 font-light leading-relaxed">
@@ -447,8 +497,10 @@
                 </div>
 
                 <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                        </div>
                         <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Model Registry &amp; Picker</h4>
                     </div>
                     <p class="text-xs text-zinc-500 font-light leading-relaxed">
@@ -457,8 +509,10 @@
                 </div>
 
                 <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        </div>
                         <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Dynamic Thinking Budget</h4>
                     </div>
                     <p class="text-xs text-zinc-500 font-light leading-relaxed">
@@ -467,8 +521,10 @@
                 </div>
 
                 <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+                        </div>
                         <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Per-Project Memory</h4>
                     </div>
                     <p class="text-xs text-zinc-500 font-light leading-relaxed">
@@ -477,17 +533,32 @@
                 </div>
 
                 <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Session Memory</h4>
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                        </div>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Multi-Provider Support</h4>
                     </div>
                     <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Maintain per-session searchable notes with the <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">memory</code> tool. Save context, search by substring, list entries, and delete stale notes. Separate from per-project memory, scoped to the active conversation.
+                        OpenAI-compatible and native Anthropic wire formats. Built-in presets for Xiaomi MiMo, Kimi, DeepSeek, OpenAI, and Ollama. Per-model API keys, endpoints, and context windows. The setup wizard handles provider configuration on first run.
+                    </p>
+                </div>
+
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded bg-orange-50 border border-orange-200/60 flex items-center justify-center shrink-0">
+                            <svg class="w-3.5 h-3.5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        </div>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Session Persistence</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Full message history saved to <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">~/.rusty/sessions/</code> as JSON. Resume with <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--resume</code> or <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">/resume</code>. Auto-compaction summarises older messages at ~80k tokens.
                     </p>
                 </div>
             </div>
         </div>
     </section>
+
 
     <!-- ARCHITECTURE & SECURITY SECTION -->
     <section id="architecture" class="py-20 border-y border-zinc-200 bg-white">
@@ -516,13 +587,43 @@
                     <!-- Dependency Graph -->
                     <div class="space-y-2 pt-2">
                         <h4 class="text-[10px] uppercase tracking-widest font-bold text-zinc-600 block">Dependency Graph</h4>
-                        <div class="p-4 rounded font-mono text-[11px] leading-relaxed border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm">
-                            <div class="space-y-0.5">
-                                <div><span class="font-semibold text-orange-600">cli</span> <span class="text-zinc-400">&rarr;</span> <span class="font-semibold text-orange-600">agent</span> <span class="text-zinc-400">&rarr;</span> <span class="font-semibold text-orange-600">provider</span></div>
-                                <div><span class="text-zinc-400">  &#9474;</span>       <span class="text-zinc-400">&#8598;</span> <span class="font-semibold text-orange-600">tools</span> <span class="text-zinc-400">&rarr;</span> <span class="font-semibold text-orange-600">core</span></div>
-                                <div><span class="text-zinc-400">  &#9500;&#8594;</span> <span class="font-semibold text-orange-600">tui</span> <span class="text-zinc-400">&#9472;&#9472;&#9472;&#9472;&#9472;&#8594;</span> <span class="font-semibold text-orange-600">core</span></div>
-                                <div><span class="text-zinc-400">  &#9492;&#8594;</span> <span class="font-semibold text-orange-600">core</span></div>
-                            </div>
+                        <div class="p-4 rounded border border-zinc-200 bg-white shadow-sm">
+                            <svg viewBox="0 0 400 200" fill="none" xmlns="http://www.w3.org/2000/svg" class="w-full">
+                                <!-- cli node -->
+                                <rect x="10" y="80" width="70" height="36" rx="6" fill="#f97316" opacity="0.1" stroke="#f97316" stroke-width="1.5"/>
+                                <text x="45" y="103" font-family="monospace" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">cli</text>
+                                <!-- agent node -->
+                                <rect x="120" y="80" width="70" height="36" rx="6" fill="#f97316" opacity="0.1" stroke="#f97316" stroke-width="1.5"/>
+                                <text x="155" y="103" font-family="monospace" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">agent</text>
+                                <!-- provider node -->
+                                <rect x="230" y="80" width="70" height="36" rx="6" fill="#f97316" opacity="0.1" stroke="#f97316" stroke-width="1.5"/>
+                                <text x="265" y="103" font-family="monospace" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">provider</text>
+                                <!-- tools node -->
+                                <rect x="175" y="20" width="70" height="36" rx="6" fill="#f97316" opacity="0.1" stroke="#f97316" stroke-width="1.5"/>
+                                <text x="210" y="43" font-family="monospace" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">tools</text>
+                                <!-- core node -->
+                                <rect x="285" y="20" width="70" height="36" rx="6" fill="#f97316" opacity="0.1" stroke="#f97316" stroke-width="1.5"/>
+                                <text x="320" y="43" font-family="monospace" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">core</text>
+                                <!-- tui node -->
+                                <rect x="120" y="140" width="70" height="36" rx="6" fill="#f97316" opacity="0.1" stroke="#f97316" stroke-width="1.5"/>
+                                <text x="155" y="163" font-family="monospace" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">tui</text>
+                                <!-- core (bottom) node -->
+                                <rect x="230" y="140" width="70" height="36" rx="6" fill="#f97316" opacity="0.1" stroke="#f97316" stroke-width="1.5"/>
+                                <text x="265" y="163" font-family="monospace" font-size="12" font-weight="600" fill="#ea580c" text-anchor="middle">core</text>
+                                <!-- Arrows -->
+                                <line x1="80" y1="98" x2="120" y2="98" stroke="#d4d4d8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+                                <line x1="190" y1="98" x2="230" y2="98" stroke="#d4d4d8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+                                <line x1="155" y1="80" x2="210" y2="56" stroke="#d4d4d8" stroke-width="1" stroke-dasharray="4 2"/>
+                                <line x1="245" y1="56" x2="285" y2="38" stroke="#d4d4d8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+                                <line x1="45" y1="116" x2="135" y2="140" stroke="#d4d4d8" stroke-width="1" stroke-dasharray="4 2"/>
+                                <line x1="190" y1="158" x2="230" y2="158" stroke="#d4d4d8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+                                <line x1="45" y1="116" x2="265" y2="140" stroke="#d4d4d8" stroke-width="1" stroke-dasharray="4 2"/>
+                                <defs>
+                                    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                        <polygon points="0 0, 8 3, 0 6" fill="#d4d4d8"/>
+                                    </marker>
+                                </defs>
+                            </svg>
                         </div>
                     </div>
                 </div>
@@ -664,6 +765,7 @@
         </div>
     </section>
 
+
     <!-- QUICK START SECTION -->
     <section id="quickstart" class="py-20 max-w-4xl mx-auto px-6 bg-white">
         <div class="text-left mb-12 space-y-3">
@@ -749,8 +851,8 @@
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/cost</span>
-                        <span class="text-zinc-400 text-[10px]">// show token usage</span>
+                        <span class="text-zinc-700">/version</span>
+                        <span class="text-zinc-400 text-[10px]">// show version info</span>
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="text-zinc-400">></span>
@@ -770,6 +872,7 @@
             </div>
         </div>
     </section>
+
 
     <!-- INSTALLATION SECTION -->
     <section id="install" class="py-20 max-w-4xl mx-auto px-6 bg-white">
@@ -834,6 +937,7 @@
             </div>
         </div>
     </section>
+
 
     <!-- CONFIGURATION REFERENCE SECTION -->
     <section id="config" class="py-20 border-y border-zinc-200 bg-zinc-50/50">
@@ -1156,13 +1260,12 @@
                 { name: "/clear", alias: "None", desc: "Clears the terminal display while preserving the active conversation state." },
                 { name: "/copy", alias: "/c", desc: "Copies the most recent assistant response to the system clipboard." },
                 { name: "/model", alias: "/m", desc: "Displays the currently active model identifier for the session." },
-                { name: "/version", alias: "None", desc: "Displays the current Rusty version and checks for available updates." },
-                { name: "/cost", alias: "None", desc: "Displays cumulative token usage and estimated cost for the current session." },
+                { name: "/version", alias: "/v", desc: "Shows current version and checks for updates." },
+                { name: "/plan", alias: "None", desc: "Toggles explicit plan mode. In plan mode, all write and execute tools are disabled for safe read-only exploration and planning." },
                 { name: "/permissions", alias: "/perms", desc: "View or revoke always-approved tool permissions granted during the session." },
                 { name: "/settings", alias: "None", desc: "Opens the model registry and general settings overlay. TUI only." },
                 { name: "/rename", alias: "None", desc: "Assigns a human-readable label to the current conversation session." },
-                { name: "/quit", alias: "/q, /exit", desc: "Saves the current session and cleanly exits the agent." },
-                { name: "/plan", alias: "None", desc: "Toggles explicit plan mode. In plan mode, all write and execute tools are disabled for safe read-only exploration and planning." }
+                { name: "/quit", alias: "/q, /exit", desc: "Saves the current session and cleanly exits the agent." }
             ]
         };
 
