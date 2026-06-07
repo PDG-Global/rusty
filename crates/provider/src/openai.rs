@@ -7,7 +7,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use rusty_core::{RustyError, UsageInfo};
 use std::pin::Pin;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use crate::types::*;
 use crate::{LlmProvider, MessageRequest, MessageResponse, ProviderConfig, StreamEvent};
@@ -235,6 +235,8 @@ impl LlmProvider for OpenAiProvider {
                             continue;
                         }
 
+                        trace!("SSE line: {}", line);
+
                         if line == "data: [DONE]" {
                             return Some((
                                 Ok(StreamEvent::Done {
@@ -362,6 +364,11 @@ impl LlmProvider for OpenAiProvider {
 
                                     // Return first event, buffer the rest
                                     let first = events.remove(0);
+                                    if let Ok(ref ev) = first {
+                                        trace!("SSE event: {:?}", ev);
+                                    } else {
+                                        trace!("SSE error: {:?}", first);
+                                    }
                                     // For simplicity, just return the first event per chunk
                                     // (Most chunks have exactly one event)
                                     return Some((first, (stream, line_buf, tool_calls)));

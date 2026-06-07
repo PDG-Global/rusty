@@ -21,7 +21,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use crate::compact::maybe_compact;
 
@@ -373,7 +373,15 @@ impl Agent {
                 thinking_budget,
             };
 
-            debug!("Calling LLM API (model: {}, messages: {})", self.config.model, self.messages.len());
+            debug!(
+                "Calling LLM API (model: {}, messages: {}, sys_prompt: {} chars, max_tokens: {}, thinking_budget: {:?}, active_tasks: {})",
+                self.config.model,
+                self.messages.len(),
+                self.system_prompt.len(),
+                max_tokens,
+                thinking_budget,
+                has_active_tasks,
+            );
             let mut stream = match self.call_with_retry(&request, on_text).await {
                 Ok(s) => s,
                 Err(e) => {
@@ -421,6 +429,7 @@ impl Agent {
 
                 match next_event {
                     Ok(Some(event)) => {
+                        trace!("Agent received stream event: {:?}", event);
                         match event? {
                             StreamEvent::TextDelta(text) => {
                                 assistant_text.push_str(&text);
@@ -473,11 +482,13 @@ impl Agent {
                         }
                     }
                     Ok(None) => {
+                        trace!("Agent stream ended naturally");
                         // Stream ended naturally (no more events).
                         break None;
                     }
                     Err(_) => {
                         warn!("LLM stream timed out after {}s with no events; aborting turn", per_event_timeout.as_secs());
+                        trace!("Agent stream timed out after {}s", per_event_timeout.as_secs());
                         self.finalize_plan().await;
                         return Ok("Turn timed out — no response from model.".to_string());
                     }
