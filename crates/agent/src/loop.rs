@@ -335,27 +335,30 @@ impl Agent {
             let context_pct = estimated_tokens as f64 / context_window as f64;
             let base_level = self.config.resolve_thinking_level();
             let effective_level = dynamic_thinking_level(base_level, context_pct, turn as u32);
-            // If there are incomplete tasks, ensure at least Normal thinking
+            // When there are active tasks we are in execution mode; disable thinking so the
+            // model spends its tokens doing work rather than re-reasoning.
             let has_active_tasks = self.has_incomplete_tasks();
-            let effective_level = if has_active_tasks {
-                match effective_level {
-                    ThinkingLevel::Minimal => ThinkingLevel::Normal,
-                    other => other,
+            let thinking_budget = if has_active_tasks {
+                None
+            } else {
+                Some(level_to_budget(effective_level))
+            };
+
+            if let Some(_budget) = thinking_budget {
+                if effective_level != base_level {
+                    debug!(
+                        "Thinking reduced from {:?} to {:?} (context {:.1}% full)",
+                        base_level, effective_level, context_pct * 100.0
+                    );
+                }
+                if let Some(cb) = on_thinking_level {
+                    cb(Some(effective_level));
                 }
             } else {
-                effective_level
-            };
-            let thinking_budget = Some(level_to_budget(effective_level));
-
-            if effective_level != base_level {
-                debug!(
-                    "Thinking reduced from {:?} to {:?} (context {:.1}% full)",
-                    base_level, effective_level, context_pct * 100.0
-                );
-            }
-
-            if let Some(cb) = on_thinking_level {
-                cb(Some(effective_level));
+                debug!("Thinking disabled — active task list in execution mode");
+                if let Some(cb) = on_thinking_level {
+                    cb(None);
+                }
             }
 
             // Ensure max_tokens always exceeds thinking_budget + headroom to prevent API hangs.
