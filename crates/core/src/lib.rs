@@ -10,6 +10,7 @@ pub mod error;
 pub mod history;
 pub mod memory;
 pub mod permissions;
+pub mod session_memory;
 pub mod update;
 pub mod plan;
 pub mod setup_wizard;
@@ -22,6 +23,7 @@ pub use error::*;
 pub use history::*;
 pub use memory::*;
 pub use permissions::*;
+pub use session_memory::*;
 pub use update::*;
 pub use types::*;
 

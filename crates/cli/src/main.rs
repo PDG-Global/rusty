@@ -148,6 +148,40 @@ impl From<PermissionModeArg> for PermissionMode {
     }
 }
 
+/// Extract key memories from a completed session and save them to the project memory store.
+/// This runs heuristically (no LLM call) to avoid adding latency at session end.
+async fn extract_and_save_session_memories(
+    session: &rusty_core::ConversationSession,
+    working_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    // Build a simple transcript from the conversation
+    let mut transcript = String::new();
+    for msg in &session.messages {
+        let text = msg.get_all_text();
+        if !text.is_empty() {
+            transcript.push_str(&text);
+            transcript.push('\n');
+        }
+    }
+
+    if transcript.len() < 200 {
+        return Ok(());
+    }
+
+    let memories =
+        rusty_core::session_memory::extract_memories_from_transcript(&transcript, &session.id).await;
+
+    if memories.is_empty() {
+        return Ok(());
+    }
+
+    let mut store =
+        rusty_core::session_memory::SessionMemoryStore::for_working_dir(working_dir).await;
+    store.add_memories(memories);
+    store.save().await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Determine log directory (RUSTY_LOG_DIR env, or platform-appropriate cache dir)
@@ -466,10 +500,25 @@ async fn main() -> Result<()> {
         .await
         .unwrap_or_else(|_| rusty_core::memory::ProjectMemory::new(working_dir.to_string_lossy().to_string()));
     let memory_context = project_memory.format_for_context();
-    let memory_context_opt = if memory_context.is_empty() {
+
+    // Load session memories (auto-extracted from previous sessions)
+    let session_memory_store = rusty_core::session_memory::SessionMemoryStore::for_working_dir(&working_dir).await;
+    let session_memory_context = session_memory_store.format_for_prompt(5).unwrap_or_default();
+
+    // Combine project memory and session memory contexts
+    let combined_memory_context = if memory_context.is_empty() && session_memory_context.is_empty() {
+        String::new()
+    } else if memory_context.is_empty() {
+        session_memory_context
+    } else if session_memory_context.is_empty() {
+        memory_context
+    } else {
+        format!("{}\n\n{}", memory_context, session_memory_context)
+    };
+    let memory_context_opt = if combined_memory_context.is_empty() {
         None
     } else {
-        Some(memory_context.clone())
+        Some(combined_memory_context)
     };
 
     // Create plan for task management (shared between TodoWriteTool and Agent system prompt)
@@ -572,6 +621,9 @@ async fn main() -> Result<()> {
     };
     session.save(&sessions_dir).await?;
     info!("Session saved: {}", session.id);
+
+    // Extract and persist session memories in the background
+    let _ = extract_and_save_session_memories(&session, &working_dir).await;
 
     Ok(())
 }
@@ -1426,6 +1478,9 @@ async fn run_tui(
     };
     session.save(sessions_dir).await?;
     info!("Session saved: {}", session.id);
+
+    // Extract and persist session memories in the background
+    let _ = extract_and_save_session_memories(&session, working_dir).await;
 
     tui_result
 }
