@@ -399,6 +399,8 @@ impl Agent {
             // per-event timeout.  This catches APIs that keep the connection alive with
             // SSE keepalives but never produce any real content.
             let turn_start = std::time::Instant::now();
+            let api_call_start = turn_start;
+            let mut first_event_time: Option<std::time::Instant> = None;
             let max_turn_duration = Duration::from_secs(300);
 
             let stop_reason = loop {
@@ -429,6 +431,11 @@ impl Agent {
 
                 match next_event {
                     Ok(Some(event)) => {
+                        if first_event_time.is_none() {
+                            first_event_time = Some(std::time::Instant::now());
+                            let ttft = api_call_start.elapsed();
+                            debug!("LLM first token received after {:?}", ttft);
+                        }
                         trace!("Agent received stream event: {:?}", event);
                         match event? {
                             StreamEvent::TextDelta(text) => {
@@ -494,6 +501,18 @@ impl Agent {
                     }
                 }
             };
+
+            let turn_duration = turn_start.elapsed();
+            let streaming_time = first_event_time.map(|t| t.elapsed());
+            debug!(
+                "LLM turn complete in {:?} (TTFT: {:?}, streaming: {:?}, stop_reason: {:?}, text_len: {}, tool_calls: {})",
+                turn_duration,
+                first_event_time.map(|t| t.duration_since(api_call_start)),
+                streaming_time,
+                stop_reason,
+                assistant_text.len(),
+                tool_calls.len()
+            );
 
             // Estimate tokens only if the provider didn't report usage
             // (common with OpenAI-compatible providers that don't support stream_options)
