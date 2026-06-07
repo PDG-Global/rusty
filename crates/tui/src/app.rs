@@ -1074,7 +1074,7 @@ impl Default for AppState {
             clear_pending: false,
             is_renaming: false,
             session_name: None,
-            thinking_collapsed: true,
+            thinking_collapsed: false,
             saved_thinking: String::new(),
             thinking_line_count: 0,
             thinking_expanded: false,

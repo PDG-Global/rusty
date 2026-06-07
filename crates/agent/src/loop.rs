@@ -302,6 +302,7 @@ impl Agent {
         &mut self,
         user_content: &[ContentBlock],
         on_approval: Option<&ApprovalCallback>,
+        on_thinking: Option<&ThinkingCallback>,
     ) -> Result<Option<ApprovalDecision>, RustyError> {
         // Build a focused planning system prompt
         let planning_prompt = format!(
@@ -385,7 +386,11 @@ impl Agent {
                     }
                 }
                 StreamEvent::Usage(_) => {}
-                StreamEvent::ThinkingDelta(_) => {}
+                StreamEvent::ThinkingDelta(delta) => {
+                    if let Some(cb) = on_thinking {
+                        cb(&delta);
+                    }
+                }
                 StreamEvent::Done { .. } => break,
                 StreamEvent::Error(e) => return Err(RustyError::Api(e)),
             }
@@ -498,7 +503,7 @@ impl Agent {
                 MessageContent::Text(text) => vec![ContentBlock::Text { text: text.clone() }],
             };
 
-            if let Some(decision) = self.run_auto_plan(&user_blocks, on_approval).await? {
+            if let Some(decision) = self.run_auto_plan(&user_blocks, on_approval, on_thinking).await? {
                 if !decision.approved {
                     debug!("Auto-plan: user rejected plan, stopping agent loop");
                     return Ok("Plan rejected. Provide a different request or try again.".to_string());
