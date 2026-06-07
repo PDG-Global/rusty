@@ -545,6 +545,36 @@ impl Agent {
                     });
                 }
 
+                // Detect truncated tool calls: if the response hit max_tokens and any
+                // tool call has non-empty but unparsable arguments, skip execution and
+                // tell the model to retry with smaller chunks.
+                if stop_reason.as_deref() == Some("max_tokens") {
+                    let bad: Vec<_> = tool_calls
+                        .iter()
+                        .filter(|tc| {
+                            !tc.arguments.trim().is_empty()
+                                && serde_json::from_str::<serde_json::Value>(&tc.arguments)
+                                    .ok()
+                                    .filter(|v| v.is_object())
+                                    .is_none()
+                        })
+                        .collect();
+                    if !bad.is_empty() {
+                        warn!(
+                            "Skipping {} tool call(s) with truncated arguments due to max_tokens",
+                            bad.len()
+                        );
+                        self.messages.push(Message::user(
+                            "Your previous response was truncated because it exceeded the output token limit. \
+                             The tool call(s) you started had incomplete arguments and could not be executed. \
+                             Please retry with a smaller request — for example, write large files in smaller \
+                             chunks instead of all at once."
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+                }
+
                 self.messages.push(Message::assistant_blocks(blocks.clone()));
 
                 // Execute tools concurrently.
