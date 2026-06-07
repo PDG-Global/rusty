@@ -1207,29 +1207,16 @@ fn draw_todos(app: &AppState, area: Rect, buf: &mut Buffer) {
 
 fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     let is_slash = app.input.starts_with('/');
-    let has_queued = app.queued_message.is_some();
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app.is_streaming {
-            if has_queued { Color::Yellow } else { Color::Gray }
-        } else if is_slash {
+        .border_style(Style::default().fg(if is_slash {
             Color::Magenta
         } else {
             Color::Green
         }))
         .title(Span::styled(
-            if app.is_streaming && has_queued {
-                " queued ".to_string()
-            } else if app.is_streaming {
-                " processing... ".to_string()
-            } else if is_slash {
-                " command ".to_string()
-            } else {
-                " input ".to_string()
-            },
-            Style::default().fg(if app.is_streaming {
-                if has_queued { Color::Yellow } else { Color::Gray }
-            } else if is_slash {
+            if is_slash { " command " } else { " input " },
+            Style::default().fg(if is_slash {
                 Color::Magenta
             } else {
                 Color::Green
@@ -1241,20 +1228,7 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Render input text with a visible block cursor at cursor_pos
     let mut spans: Vec<Span<'_>> = Vec::new();
-    if app.is_streaming && app.input.is_empty() && !has_queued {
-        // Show a generic streaming indicator; the tool details are visible
-        // in the output area via pending_tools rendering.
-        if !app.thinking_text.is_empty() {
-            spans.push(Span::styled("Thinking...", Style::default().fg(Color::Gray)));
-        } else {
-            spans.push(Span::styled("Processing...", Style::default().fg(Color::Gray)));
-        }
-    } else if has_queued && app.input.is_empty() {
-        spans.push(Span::styled(
-            format!("[Queued]: {}", app.queued_message.as_ref().unwrap()),
-            Style::default().fg(Color::Yellow),
-        ));
-    } else if app.input.is_empty() {
+    if app.input.is_empty() {
         spans.push(Span::styled(
             "Type a message or / for commands...",
             Style::default().fg(Color::Gray),

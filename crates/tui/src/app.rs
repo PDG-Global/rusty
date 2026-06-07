@@ -1975,12 +1975,18 @@ impl AppState {
 
     /// Queue the current input for sending after streaming finishes.
     /// Builds content blocks (including image blocks) before clearing input.
+    /// Adds a temporary system message so the queued text is visible inline.
     pub fn queue_current_input(&mut self) {
         if !self.input.is_empty() {
+            let text = self.input.clone();
             self.queued_blocks = Some(self.build_content_blocks());
             self.queued_message = Some(std::mem::take(&mut self.input));
             self.cursor_pos = 0;
             self.clear_pasted_content();
+            self.messages.push(ChatMessage {
+                role: MessageRole::System,
+                content: format!("Queued: {}", text),
+            });
             self.needs_redraw = true;
         }
     }
