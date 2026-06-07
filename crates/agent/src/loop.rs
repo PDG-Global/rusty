@@ -11,7 +11,7 @@ use rusty_core::plan::Plan;
 use rusty_core::{
     CancelToken, Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
 };
-use rusty_core::{dynamic_thinking_level, level_to_budget, ThinkingLevel};
+use rusty_core::{level_to_budget, ThinkingLevel};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
 use rusty_tools::{Tool, ToolContext, ToolResult};
 use std::collections::{HashMap, HashSet};
@@ -235,18 +235,6 @@ impl Agent {
         &self.total_usage
     }
 
-    /// Scan recent messages for the most recent `todowrite` tool call and
-    /// check whether any tasks are still pending or in_progress.
-    fn has_incomplete_tasks(&self) -> bool {
-        self.incomplete_task_count() > 0
-    }
-
-    /// Count incomplete tasks from the most recent `todowrite` call.
-    /// Returns 0 if no todowrite was found or all tasks are completed/cancelled.
-    fn incomplete_task_count(&self) -> usize {
-        self.incomplete_task_details().len()
-    }
-
     /// Extract details of incomplete tasks from the most recent `todowrite` call.
     /// Returns a vec of (status, content) pairs for tasks that are not completed/cancelled.
     fn incomplete_task_details(&self) -> Vec<(String, String)> {
@@ -341,36 +329,12 @@ impl Agent {
 
             let tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();
 
-            // Compute dynamic thinking level based on context fill
-            let estimated_chars: usize = self.messages.iter().map(|m| m.get_all_text().len()).sum();
-            let estimated_tokens = estimated_chars / 4;
-            let context_pct = estimated_tokens as f64 / context_window as f64;
-            let base_level = self.config.resolve_thinking_level();
-            let effective_level = dynamic_thinking_level(base_level, context_pct, turn as u32);
-            // When there are active tasks we are in execution mode; disable thinking so the
-            // model spends its tokens doing work rather than re-reasoning.
-            let has_active_tasks = self.has_incomplete_tasks();
-            let thinking_budget = if has_active_tasks {
-                None
-            } else {
-                Some(level_to_budget(effective_level))
-            };
+            // Use the configured thinking level directly — no dynamic downgrade.
+            let level = self.config.resolve_thinking_level();
+            let thinking_budget = Some(level_to_budget(level));
 
-            if let Some(_budget) = thinking_budget {
-                if effective_level != base_level {
-                    debug!(
-                        "Thinking reduced from {:?} to {:?} (context {:.1}% full)",
-                        base_level, effective_level, context_pct * 100.0
-                    );
-                }
-                if let Some(cb) = on_thinking_level {
-                    cb(Some(effective_level));
-                }
-            } else {
-                debug!("Thinking disabled — active task list in execution mode");
-                if let Some(cb) = on_thinking_level {
-                    cb(None);
-                }
+            if let Some(cb) = on_thinking_level {
+                cb(Some(level));
             }
 
             // Ensure max_tokens always exceeds thinking_budget + headroom to prevent API hangs.
@@ -386,13 +350,12 @@ impl Agent {
             };
 
             debug!(
-                "Calling LLM API (model: {}, messages: {}, sys_prompt: {} chars, max_tokens: {}, thinking_budget: {:?}, active_tasks: {})",
+                "Calling LLM API (model: {}, messages: {}, sys_prompt: {} chars, max_tokens: {}, thinking_budget: {:?})",
                 self.config.model,
                 self.messages.len(),
                 self.system_prompt.len(),
                 max_tokens,
                 thinking_budget,
-                has_active_tasks,
             );
             let mut stream = match self.call_with_retry(&request, on_text).await {
                 Ok(s) => s,

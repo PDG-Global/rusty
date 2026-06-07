@@ -39,6 +39,12 @@
         .animate-fade-in {
             animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+        @keyframes barGrow {
+            from { width: 0; }
+        }
+        .animate-bar {
+            animation: barGrow 0.8s ease-out forwards;
+        }
     </style>
 </head>
 <body class="bg-white text-zinc-900 selection:bg-orange-100 min-h-screen flex flex-col">
@@ -221,14 +227,14 @@
                         </div>
                         <div class="space-y-1.5">
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full rounded bg-orange-600 min-w-[20px]" style="width: 2.5%"></div>
+                                <div class="absolute left-0 top-0 h-full rounded bg-orange-600 min-w-[20px] animate-bar" style="width: 2.5%"></div>
                             </div>
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full bg-zinc-900/10 rounded" style="width: 100%"></div>
+                                <div class="absolute left-0 top-0 h-full bg-zinc-900/15 rounded" style="width: 100%"></div>
                                 <div class="absolute left-0 top-0 h-full bg-zinc-900 rounded-l" style="width: 40%; left: 30%"></div>
                             </div>
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full bg-zinc-400/10 rounded" style="width: 80%"></div>
+                                <div class="absolute left-0 top-0 h-full bg-zinc-400/15 rounded" style="width: 80%"></div>
                                 <div class="absolute left-0 top-0 h-full bg-zinc-400 rounded-l" style="width: 30%; left: 20%"></div>
                             </div>
                         </div>
@@ -246,14 +252,14 @@
                         </div>
                         <div class="space-y-1.5">
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full rounded bg-orange-600 min-w-[20px]" style="width: 4%"></div>
+                                <div class="absolute left-0 top-0 h-full rounded bg-orange-600 min-w-[20px] animate-bar" style="width: 4%"></div>
                             </div>
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full bg-zinc-900/10 rounded" style="width: 100%"></div>
+                                <div class="absolute left-0 top-0 h-full bg-zinc-900/15 rounded" style="width: 100%"></div>
                                 <div class="absolute left-0 top-0 h-full bg-zinc-900 rounded-l" style="width: 50%; left: 20%"></div>
                             </div>
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full bg-zinc-400/10 rounded" style="width: 75%"></div>
+                                <div class="absolute left-0 top-0 h-full bg-zinc-400/15 rounded" style="width: 75%"></div>
                                 <div class="absolute left-0 top-0 h-full bg-zinc-400 rounded-l" style="width: 37.5%; left: 12.5%"></div>
                             </div>
                         </div>
@@ -271,14 +277,14 @@
                         </div>
                         <div class="space-y-1.5">
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full rounded bg-orange-600 min-w-[20px]" style="width: 1.5%"></div>
+                                <div class="absolute left-0 top-0 h-full rounded bg-orange-600 min-w-[20px] animate-bar" style="width: 1.5%"></div>
                             </div>
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full bg-zinc-900/10 rounded" style="width: 100%"></div>
+                                <div class="absolute left-0 top-0 h-full bg-zinc-900/15 rounded" style="width: 100%"></div>
                                 <div class="absolute left-0 top-0 h-full bg-zinc-900 rounded-l" style="width: 80%; left: 10%"></div>
                             </div>
                             <div class="relative w-full h-3 bg-zinc-100 rounded overflow-hidden">
-                                <div class="absolute left-0 top-0 h-full bg-zinc-400/10 rounded" style="width: 50%"></div>
+                                <div class="absolute left-0 top-0 h-full bg-zinc-400/15 rounded" style="width: 50%"></div>
                                 <div class="absolute left-0 top-0 h-full bg-zinc-400 rounded-l" style="width: 40%; left: 5%"></div>
                             </div>
                         </div>
@@ -469,6 +475,16 @@
                         Store project-specific notes and decisions in <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">~/.rusty/memory/</code>. Save, search, list, and delete. Capped at 100 entries per project with FIFO eviction and multi-layer content sanitisation.
                     </p>
                 </div>
+
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Session Memory</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Maintain per-session searchable notes with the <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">memory</code> tool. Save context, search by substring, list entries, and delete stale notes. Separate from per-project memory, scoped to the active conversation.
+                    </p>
+                </div>
             </div>
         </div>
     </section>
@@ -551,6 +567,18 @@
                                 <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">SSRF Protection</h4>
                                 <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
                                     The <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">web_fetch</code> tool blocks localhost, private IPs, link-local addresses, and DNS rebinding. Every redirect is re-validated. IP pinning prevents hostname resolution bypasses.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-3">
+                            <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
+                                <span class="w-2 h-2 rounded-full bg-orange-600"></span>
+                            </div>
+                            <div>
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">Protected Files</h4>
+                                <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
+                                    The agent refuses writes to sensitive paths including <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">.git/config</code>, <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">Cargo.lock</code>, <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">.env</code>, and other protected files. Configurable via <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">settings.json</code>.
                                 </p>
                             </div>
                         </div>
@@ -1002,7 +1030,7 @@
                                 </div>
                                 <div class="flex items-start gap-2">
                                     <span class="w-1.5 h-1.5 rounded-full bg-orange-600 mt-1.5 shrink-0"></span>
-                                    <span><strong class="text-zinc-800">Compaction:</strong> Auto-summarises at ~80k tokens or 40 messages (keeps last 10). Manual: <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">/compact</code>.</span>
+                                    <span><strong class="text-zinc-800">Compaction:</strong> Progressive micro-compaction prunes tool results and older messages based on token pressure, keeping recent context intact. Summarisation kicks in at ~80k tokens or 40 messages. Manual: <code class="font-mono text-zinc-700 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">/compact</code>.</span>
                                 </div>
                             </div>
                         </div>
@@ -1115,7 +1143,9 @@
                 { name: "web_fetch", params: "url, max_length?", perm: "ReadOnly", desc: "Fetches URL content via HTTP (30s timeout). Configurable max length, default 10000 chars. Full SSRF protection: blocks localhost, private IPs, link-local, DNS rebinding, and validates all redirects." },
                 { name: "todowrite", params: "tasks[]", perm: "None", desc: "Structured task list management. Accepts items with content, status, and priority. Persists across conversation." },
                 { name: "agent", params: "task, context?", perm: "None", desc: "Spawns a sub-agent in a separate tokio task with BypassPermissions. Sub-agents get all tools except agent (prevents recursion)." },
-                { name: "memory", params: "action, content?, id?, query?", perm: "None", desc: "Per-project persistent memory. Actions: save, search, list, delete. Stored in ~/.rusty/memory/ with 100-entry cap and FIFO eviction. Content sanitised on input and output." }
+                { name: "memory", params: "action, content?, id?, query?", perm: "None", desc: "Per-project persistent memory. Actions: save, search, list, delete. Stored in ~/.rusty/memory/ with 100-entry cap and FIFO eviction. Content sanitised on input and output." },
+                { name: "enter_plan_mode", params: "None", perm: "ReadOnly", desc: "Switches to explicit plan mode. All write and execute tools are disabled. Thinking collapses by default. Use for safe codebase exploration and planning." },
+                { name: "exit_plan_mode", params: "summary?", perm: "ReadOnly", desc: "Exits plan mode and returns to normal execution. Optionally accepts a plan summary for the user to review before resuming." }
             ],
             commands: [
                 { name: "/help", alias: "/h, /?", desc: "Displays the list of available slash commands and their descriptions." },
@@ -1131,7 +1161,8 @@
                 { name: "/permissions", alias: "/perms", desc: "View or revoke always-approved tool permissions granted during the session." },
                 { name: "/settings", alias: "None", desc: "Opens the model registry and general settings overlay. TUI only." },
                 { name: "/rename", alias: "None", desc: "Assigns a human-readable label to the current conversation session." },
-                { name: "/quit", alias: "/q, /exit", desc: "Saves the current session and cleanly exits the agent." }
+                { name: "/quit", alias: "/q, /exit", desc: "Saves the current session and cleanly exits the agent." },
+                { name: "/plan", alias: "None", desc: "Toggles explicit plan mode. In plan mode, all write and execute tools are disabled for safe read-only exploration and planning." }
             ]
         };
 
