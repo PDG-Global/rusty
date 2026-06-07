@@ -608,10 +608,9 @@ impl Agent {
 
             let mut assistant_text = String::new();
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
-            let mut stop_reason = None;
             let mut got_api_usage = false;
 
-            loop {
+            let stop_reason = loop {
                 let next_event = if let Some(c) = cancel {
                     tokio::select! {
                         event = timeout(Duration::from_secs(120), stream.next()) => event.ok().flatten(),
@@ -672,16 +671,13 @@ impl Agent {
                             cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
                         }
                     }
-                    StreamEvent::Done { stop_reason: sr } => {
-                        stop_reason = sr;
-                        break;
-                    }
+                    StreamEvent::Done { stop_reason } => break stop_reason,
                     StreamEvent::Error(msg) => {
                         self.finalize_plan().await;
                         return Err(RustyError::Api(msg));
                     }
                 }
-            }
+            };
 
             // Estimate tokens only if the provider didn't report usage
             // (common with OpenAI-compatible providers that don't support stream_options)
