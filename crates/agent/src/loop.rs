@@ -7,7 +7,7 @@ use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,
     PermissionLevel, PermissionRequest,
 };
-use rusty_core::plan::{ApprovalDecision, ApprovalRequest, ApprovalTask, Plan};
+use rusty_core::plan::{ApprovalDecision, ApprovalRequest, ApprovalTask, Plan, PlanItem, PlanItemPriority, PlanItemStatus};
 use rusty_core::{
     CancelToken, Config, ContentBlock, Message, MessageContent, PermissionMode, Role, RustyError,
     ToolDefinition, UsageInfo,
@@ -247,7 +247,7 @@ impl Agent {
     /// Extract details of incomplete tasks from the most recent `todowrite` call.
     /// Returns a vec of (status, content) pairs for tasks that are not completed/cancelled.
     fn incomplete_task_details(&self) -> Vec<(String, String)> {
-        for msg in self.messages.iter().rev().take(10) {
+        for msg in self.messages.iter().rev().take(20) {
             if msg.role != Role::Assistant {
                 continue;
             }
@@ -299,7 +299,7 @@ impl Agent {
     /// Returns `None` if the task is simple enough to proceed directly, or
     /// `Some(ApprovalDecision)` if a plan was generated and the user was asked to approve.
     async fn run_auto_plan(
-        &self,
+        &mut self,
         user_content: &[ContentBlock],
         on_approval: Option<&ApprovalCallback>,
     ) -> Result<Option<ApprovalDecision>, RustyError> {
@@ -365,7 +365,7 @@ impl Agent {
             tools: vec![todo_def],
             max_tokens: 2048,
             temperature: Some(0.3),
-            thinking_budget: None,
+            thinking_budget: Some(level_to_budget(ThinkingLevel::Deep)),
         };
 
         let mut stream = self.provider.create_message_stream(request).await?;
@@ -431,19 +431,42 @@ impl Agent {
             plan_text.push_str(&format!("{}. [{}] {}\n", i + 1, task.priority, task.content));
         }
 
-        let request = ApprovalRequest { plan_text, tasks };
+        let request = ApprovalRequest { plan_text, tasks: tasks.clone() };
 
         // Invoke the approval callback (prefer callback passed at runtime, fall back to agent field)
         let callback = on_approval.or(self.approval_callback.as_ref());
-        if let Some(cb) = callback {
-            let decision = cb(request).await;
-            debug!("Auto-plan: user {} the plan", if decision.approved { "approved" } else { "rejected" });
-            Ok(Some(decision))
+        let decision = if let Some(cb) = callback {
+            cb(request).await
         } else {
             // No callback available — auto-approve (e.g. headless mode default)
             debug!("Auto-plan: no approval callback, auto-approving plan");
-            Ok(Some(ApprovalDecision { approved: true }))
+            ApprovalDecision { approved: true }
+        };
+
+        if decision.approved {
+            // Persist the approved plan so it is injected into the system prompt
+            if let Some(plan) = &self.plan {
+                let mut plan = plan.lock().await;
+                let items: Vec<PlanItem> = tasks
+                    .into_iter()
+                    .map(|t| PlanItem {
+                        content: t.content,
+                        status: PlanItemStatus::Pending,
+                        priority: PlanItemPriority::from_str(&t.priority),
+                    })
+                    .collect();
+                plan.set_items(items);
+                if let Err(e) = plan.save() {
+                    warn!("Auto-plan: failed to save approved plan: {e}");
+                } else {
+                    debug!("Auto-plan: persisted {} approved task(s)", plan.items.len());
+                }
+            }
+            self.refresh_system_prompt().await;
         }
+
+        debug!("Auto-plan: user {} the plan", if decision.approved { "approved" } else { "rejected" });
+        Ok(Some(decision))
     }
 
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
@@ -825,7 +848,7 @@ impl Agent {
                     // instead of letting it stop. Allow more nudges for larger task lists
                     // since each task needs ~2 turns (do work + update todowrite).
                     let incomplete = self.incomplete_task_details();
-                    let nudge_limit = (incomplete.len() as u32 * 2).max(8);
+                    let nudge_limit = (incomplete.len() as u32 * 4).max(12);
                     if !incomplete.is_empty() && self.task_nudge_count < nudge_limit {
                         warn!(
                             "Model tried to stop with {} incomplete tasks (nudge {}/{}); nudging to continue",
@@ -842,11 +865,10 @@ impl Agent {
                             .join("\n");
                         self.messages.push(Message::user(
                             format!(
-                                "STOP. You have {} incomplete tasks remaining:\n{}\n\n\
-                                 Do NOT narrate what you will do. Do NOT re-plan. \
-                                 Execute the first incomplete task RIGHT NOW by calling the appropriate tool. \
-                                 After completing it, call todowrite to mark it completed, then immediately \
-                                 execute the next task. Repeat until every task is `completed` or `cancelled`.",
+                                "You have {} incomplete task(s) remaining:\n{}\n\n\
+                                 Continue working through them. Execute the next pending task by calling \
+                                 the appropriate tool. When you finish a task, update its status via todowrite \
+                                 in your next turn.",
                                 incomplete.len(),
                                 task_list,
                             )

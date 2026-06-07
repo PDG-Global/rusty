@@ -380,6 +380,8 @@ async fn main() -> Result<()> {
     }
     if let Some(level) = args.thinking_level {
         config.thinking_level = Some(level.into());
+    } else if config.thinking_level.is_none() {
+        config.thinking_level = settings.thinking_level;
     }
     config.verbose = args.verbose;
     config.permission_mode = args.permissions.into();
