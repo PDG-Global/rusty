@@ -56,6 +56,36 @@ rusty --help
 
 This displays all available CLI flags and run modes.
 
+## Upgrading
+
+To upgrade Rusty from source, pull the latest changes and rebuild:
+
+```bash
+cd rusty
+git pull
+cargo build --release
+```
+
+Then copy the new binary into your `PATH` as in the [From Source](#from-source) section.
+
+### Automatic Update Check
+
+On every TUI launch, Rusty performs a non-blocking background check against the [GitHub Releases API](https://api.github.com/repos/PDG-Global/rusty/releases/latest) for the latest published release and compares its tag against the running version (`CARGO_PKG_VERSION`) using simple semver logic.
+
+- The check runs as a fire-and-forget background task, so it never delays startup.
+- A 5-second timeout is applied to the HTTP request.
+- If a newer release is available, the TUI status bar shows a bold yellow `| update: <version>` notification on the right-hand side.
+- If the check fails for any reason (offline, GitHub rate limiting, parse error, timeout), it silently no-ops — no warning is shown and Rusty continues normally.
+- The check only runs in TUI mode. Headless and stdin REPL modes do not perform it.
+
+To see the currently installed version and trigger an on-demand check from inside the TUI or stdin REPL, run the `/version` slash command (aliases: `/v`).
+
+```text
+/version
+```
+
+When an update is available, follow the upgrade steps above to rebuild from source.
+
 ## Shell Completions
 
 Rusty supports shell completions via clap. Generate them for your shell:
