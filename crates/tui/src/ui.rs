@@ -1299,6 +1299,13 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         None => Span::styled("", think_style),
     };
 
+    let plan_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let plan_span = if app.plan_mode {
+        Span::styled("| plan ", plan_style)
+    } else {
+        Span::styled("", plan_style)
+    };
+
     let cwd_display = app
         .working_dir
         .as_deref()
@@ -1346,6 +1353,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         Span::styled("| ", separator_style),
         Span::styled(format!("{state_text} "), state_style),
         think_span,
+        plan_span,
         cwd_span,
         update_span,
     ];

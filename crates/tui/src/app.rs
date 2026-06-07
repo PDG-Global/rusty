@@ -167,6 +167,7 @@ pub enum AgentEvent {
     ThinkingLevel(Option<rusty_core::ThinkingLevel>),
     ModelChanged(String, u32),
     UpdateAvailable(rusty_core::update::UpdateCheckResult),
+    PlanMode(bool),
 }
 
 /// Messages from the TUI to the agent task
@@ -390,6 +391,8 @@ pub enum SlashCommand {
     Settings,
     /// /version — show current version and check for updates
     Version,
+    /// /plan — enter explicit plan mode (read-only planning)
+    Plan,
 }
 
 impl SlashCommand {
@@ -411,6 +414,7 @@ impl SlashCommand {
             _ if trimmed.starts_with("/permissions ") || trimmed.starts_with("/perms ") => Some(SlashCommand::Permissions),
             "/settings" => Some(SlashCommand::Settings),
             "/version" | "/v" => Some(SlashCommand::Version),
+            "/plan" => Some(SlashCommand::Plan),
             _ => None,
         }
     }
@@ -429,6 +433,7 @@ impl SlashCommand {
             ("/permissions", "Manage always-approved tools list"),
             ("/settings", "Open settings and model registry"),
             ("/version", "Show current version and update status"),
+            ("/plan", "Enter explicit plan mode for planning only"),
             ("/quit", "Exit rusty"),
         ]
     }
@@ -932,6 +937,8 @@ pub struct AppState {
     /// Set by the Enter handler in the General tab — the TUI main loop
     /// picks this up and sends `TuiCommand::SetPermissionMode` to the agent task.
     pub permission_mode_change_requested: Option<rusty_core::PermissionMode>,
+    /// Whether the agent is currently in explicit plan mode.
+    pub plan_mode: bool,
     /// Queue of commands dispatched by key handlers that the main event loop
     /// picks up and sends to the agent task (needed because key handlers
     /// borrow `self` mutably so we can't send directly).
@@ -969,6 +976,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/permissions", "Manage tool permissions"),
     ("/settings", "Open settings overlay"),
     ("/version", "Show version and check for updates"),
+    ("/plan", "Enter explicit plan mode for planning only"),
     ("/quit", "Exit"),
 ];
 
@@ -1073,6 +1081,7 @@ impl Default for AppState {
             model_form: None,
             thinking_level_change_requested: None,
             permission_mode_change_requested: None,
+            plan_mode: false,
             pending_commands: std::collections::VecDeque::new(),
             viewport_height: 20,
             slash_command: None,
@@ -1891,6 +1900,7 @@ impl AppState {
             SlashCommand::Permissions => "permissions",
             SlashCommand::Settings => "settings",
             SlashCommand::Version => "version",
+            SlashCommand::Plan => "plan",
         };
         self.slash_command = Some(name.to_string());
         self.input.clear();
@@ -1954,10 +1964,6 @@ impl AppState {
             self.streaming_text.clear();
         }
         self.is_thinking = true;
-        // Auto-expand thinking on first content so the user can see progress
-        if self.thinking_text.is_empty() && !text.is_empty() {
-            self.thinking_expanded = true;
-        }
         self.thinking_text.push_str(text);
         self.needs_redraw = true;
     }

@@ -213,6 +213,7 @@ impl Agent {
     pub async fn clear_state(&mut self) {
         self.messages.clear();
         self.task_nudge_count = 0;
+        self.plan_mode = false;
         if let Some(plan) = &self.plan {
             let mut p = plan.lock().await;
             p.items.clear();

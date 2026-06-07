@@ -849,6 +849,26 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path)
                     }
                     continue;
                 }
+                Some(rusty_tui::app::SlashCommand::Plan) => {
+                    let plan_prompt = "Enter plan mode. Read the relevant files and create a detailed plan. Do not execute any write or execute tools.".to_string();
+                    let text_cb: rusty_agent::r#loop::TextCallback = Box::new(|text| {
+                        print!("{text}");
+                        let _ = io::stdout().flush();
+                    });
+                    let result = agent
+                        .run(
+                            vec![ContentBlock::Text { text: plan_prompt }],
+                            AgentCallbacks {
+                                on_text: Some(&text_cb),
+                                ..Default::default()
+                            },
+                        )
+                        .await?;
+                    if !result.ends_with('\n') {
+                        println!();
+                    }
+                    continue;
+                }
                 None => {
                     println!("Unknown command: {line}. Type /help for available commands.");
                     continue;
@@ -1127,6 +1147,11 @@ async fn run_tui(
                             ));
                         }
                     }
+                    // Emit final plan mode state after the turn completes
+                    let plan_mode = agent.plan_mode;
+                    let _ = event_tx.send(AgentTaskEvent::Event(
+                        rusty_tui::app::AgentEvent::PlanMode(plan_mode),
+                    ));
                 })
             }
 
@@ -1220,6 +1245,9 @@ async fn run_tui(
                                 agent.clear_state().await;
                                 let _ = event_tx.send(AgentTaskEvent::Event(
                                     rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
+                                ));
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::PlanMode(false),
                                 ));
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
@@ -1845,6 +1873,10 @@ async fn tui_main_loop(
                             app.update_available = Some(result.latest_version);
                             app.needs_redraw = true;
                         }
+                        rusty_tui::app::AgentEvent::PlanMode(mode) => {
+                            app.plan_mode = mode;
+                            app.needs_redraw = true;
+                        }
                     },
                     Some(AgentTaskEvent::PermissionRequest(msg)) => {
                         app.permission_prompt = Some(rusty_tui::app::PermissionPromptState {
@@ -1986,6 +2018,7 @@ async fn handle_slash_command(
             app.thinking_expanded = false;
             app.pending_tools.clear();
             app.pinned_todos = None;
+            app.plan_mode = false;
             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Clear);
             app.push_system("Conversation cleared.");
             app.needs_redraw = true;
@@ -2108,6 +2141,19 @@ async fn handle_slash_command(
             }
             app.push_system(&msg);
             app.needs_redraw = true;
+        }
+        rusty_tui::app::SlashCommand::Plan => {
+            app.messages.push(rusty_tui::app::ChatMessage {
+                role: rusty_tui::app::MessageRole::User,
+                content: "/plan (enter explicit plan mode)".to_string(),
+            });
+            app.is_streaming = true;
+            app.streaming_text.clear();
+            app.streaming_text = "...".to_string();
+            app.scroll_offset = 0;
+            app.needs_redraw = true;
+            let plan_prompt = "Enter plan mode. Read the relevant files and create a detailed plan. Do not execute any write or execute tools.".to_string();
+            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: plan_prompt }]));
         }
     }
 }

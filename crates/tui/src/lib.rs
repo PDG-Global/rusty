@@ -156,6 +156,10 @@ async fn run_loop(
                         app.update_available = Some(result.latest_version);
                         app.needs_redraw = true;
                     }
+                    AgentEvent::PlanMode(mode) => {
+                        app.plan_mode = mode;
+                        app.needs_redraw = true;
+                    }
                 },
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => break,
