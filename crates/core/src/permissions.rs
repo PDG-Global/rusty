@@ -38,6 +38,42 @@ pub enum PermissionDecision {
     Deny(String),
 }
 
+/// Files and directories that should never be auto-approved for writes,
+/// even in AcceptEdits or Bypass mode. These always require explicit user confirmation.
+pub const PROTECTED_PATH_PATTERNS: &[&str] = &[
+    ".gitconfig",
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".zshrc",
+    ".zprofile",
+    ".zshenv",
+    ".profile",
+    ".ssh",
+    ".gnupg",
+    ".mcp.json",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    ".docker/config.json",
+    ".aws/credentials",
+    ".aws/config",
+    ".kube/config",
+    ".rusty",
+];
+
+/// Check if a file path matches any protected pattern.
+/// This is a simple substring check on the path components.
+pub fn is_protected_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    PROTECTED_PATH_PATTERNS.iter().any(|pat| lower.contains(pat))
+}
+
 pub fn check_auto_permission(mode: PermissionMode, level: PermissionLevel) -> PermissionDecision {
     match mode {
         PermissionMode::BypassPermissions => PermissionDecision::AllowOnce,
@@ -500,5 +536,31 @@ mod tests {
             check_auto_permission(PermissionMode::AcceptEdits, PermissionLevel::Execute),
             PermissionDecision::Deny(_)
         ));
+    }
+
+    // ── is_protected_path ────────────────────────────────────────────
+
+    #[test]
+    fn test_protected_gitconfig() {
+        assert!(is_protected_path("/home/user/.gitconfig"));
+        assert!(is_protected_path(".gitconfig"));
+    }
+
+    #[test]
+    fn test_protected_ssh() {
+        assert!(is_protected_path("/home/user/.ssh/id_rsa"));
+        assert!(is_protected_path("~/.ssh/known_hosts"));
+    }
+
+    #[test]
+    fn test_protected_rusty_dir() {
+        assert!(is_protected_path("/home/user/.rusty/settings.json"));
+    }
+
+    #[test]
+    fn test_not_protected_normal_file() {
+        assert!(!is_protected_path("src/main.rs"));
+        assert!(!is_protected_path("README.md"));
+        assert!(!is_protected_path("Cargo.toml"));
     }
 }

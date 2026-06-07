@@ -956,6 +956,18 @@ impl Agent {
             return PermissionDecision::AllowOnce;
         }
 
+        // 4.5 Protected files — always require explicit approval for sensitive paths
+        if effective_level == PermissionLevel::Write {
+            if let Some(path) = extract_path_from_tool_args(tool_name, arguments) {
+                if rusty_core::permissions::is_protected_path(&path) {
+                    return PermissionDecision::Deny(format!(
+                        "{} targets a protected file/directory ({}). Explicit approval required.",
+                        tool_name, path
+                    ));
+                }
+            }
+        }
+
         // 5. Check permanent allowlist
         let key = make_allow_key(tool_name, arguments);
         if self.permanent_allowlist.contains(&key) {
@@ -983,6 +995,17 @@ impl Agent {
 
         // No callback — deny by default
         PermissionDecision::Deny("No permission callback configured".into())
+    }
+}
+
+/// Extract the target file path from tool arguments, if applicable.
+fn extract_path_from_tool_args(tool_name: &str, arguments: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    match tool_name {
+        "file_read" | "file_write" | "file_edit" => {
+            v["path"].as_str().or_else(|| v["file_path"].as_str()).map(|s| s.to_string())
+        }
+        _ => None,
     }
 }
 
