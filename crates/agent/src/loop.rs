@@ -20,6 +20,8 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use crate::compact::maybe_compact;
@@ -359,14 +361,17 @@ impl Agent {
             content: MessageContent::Blocks(user_content.to_vec()),
         };
 
+        let thinking_budget = level_to_budget(ThinkingLevel::Extended);
         let request = MessageRequest {
             model: self.config.model.clone(),
             system: Some(planning_prompt),
             messages: vec![plan_msg],
             tools: vec![todo_def],
-            max_tokens: 2048,
+            // max_tokens must exceed thinking_budget so the provider has room
+            // for both reasoning and the final response / tool call.
+            max_tokens: thinking_budget + 4096,
             temperature: Some(0.3),
-            thinking_budget: Some(level_to_budget(ThinkingLevel::Extended)),
+            thinking_budget: Some(thinking_budget),
         };
 
         let mut stream = self.provider.create_message_stream(request).await?;
@@ -374,27 +379,37 @@ impl Agent {
         let mut text = String::new();
         let mut tool_calls: Vec<ToolCallState> = Vec::new();
 
-        while let Some(event) = stream.next().await {
-            match event? {
-                StreamEvent::TextDelta(delta) => text.push_str(&delta),
-                StreamEvent::ToolCallDelta { id, name, arguments_delta, .. } => {
-                    if let Some(name) = name {
-                        tool_calls.push(ToolCallState { id: id.unwrap_or_default(), name, arguments: String::new() });
+        // Cap planning at 60s so a hung provider cannot block the session indefinitely.
+        let plan_timeout = timeout(Duration::from_secs(60), async {
+            while let Some(event) = stream.next().await {
+                match event? {
+                    StreamEvent::TextDelta(delta) => text.push_str(&delta),
+                    StreamEvent::ToolCallDelta { id, name, arguments_delta, .. } => {
+                        if let Some(name) = name {
+                            tool_calls.push(ToolCallState { id: id.unwrap_or_default(), name, arguments: String::new() });
+                        }
+                        if let Some(tc) = tool_calls.last_mut() {
+                            tc.arguments.push_str(&arguments_delta);
+                        }
                     }
-                    if let Some(tc) = tool_calls.last_mut() {
-                        tc.arguments.push_str(&arguments_delta);
+                    StreamEvent::Usage(_) => {}
+                    StreamEvent::ThinkingDelta(delta) => {
+                        if let Some(cb) = on_thinking {
+                            cb(&delta);
+                        }
                     }
+                    StreamEvent::Done { .. } => break,
+                    StreamEvent::Error(e) => return Err(RustyError::Api(e)),
                 }
-                StreamEvent::Usage(_) => {}
-                StreamEvent::ThinkingDelta(delta) => {
-                    if let Some(cb) = on_thinking {
-                        cb(&delta);
-                    }
-                }
-                StreamEvent::Done { .. } => break,
-                StreamEvent::Error(e) => return Err(RustyError::Api(e)),
             }
+            Ok(()) as Result<(), RustyError>
+        }).await;
+
+        if plan_timeout.is_err() {
+            warn!("Auto-plan: planning call timed out after 60s; proceeding without a plan");
+            return Ok(None);
         }
+        plan_timeout.unwrap()?;
 
         // Check if the LLM called todowrite — if not, the task is simple
         let todo_calls: Vec<_> = tool_calls.iter().filter(|tc| tc.name == "todowrite").collect();
