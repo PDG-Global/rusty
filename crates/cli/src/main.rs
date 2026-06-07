@@ -127,6 +127,7 @@ enum ThinkingLevelArg {
     Minimal,
     Normal,
     Deep,
+    Extended,
 }
 
 impl From<ThinkingLevelArg> for rusty_core::ThinkingLevel {
@@ -135,6 +136,7 @@ impl From<ThinkingLevelArg> for rusty_core::ThinkingLevel {
             ThinkingLevelArg::Minimal => rusty_core::ThinkingLevel::Minimal,
             ThinkingLevelArg::Normal => rusty_core::ThinkingLevel::Normal,
             ThinkingLevelArg::Deep => rusty_core::ThinkingLevel::Deep,
+            ThinkingLevelArg::Extended => rusty_core::ThinkingLevel::Extended,
         }
     }
 }

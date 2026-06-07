@@ -223,13 +223,14 @@ pub fn format_entry_line(entry: &ModelEntry, is_active: bool) -> String {
     )
 }
 
-/// Cycle to the next thinking level: off → minimal → normal → deep → off.
+/// Cycle to the next thinking level: off → minimal → normal → deep → extended → off.
 pub fn next_thinking_level(current: Option<ThinkingLevel>) -> Option<ThinkingLevel> {
     match current {
         None => Some(ThinkingLevel::Minimal),
         Some(ThinkingLevel::Minimal) => Some(ThinkingLevel::Normal),
         Some(ThinkingLevel::Normal) => Some(ThinkingLevel::Deep),
-        Some(ThinkingLevel::Deep) => None,
+        Some(ThinkingLevel::Deep) => Some(ThinkingLevel::Extended),
+        Some(ThinkingLevel::Extended) => None,
     }
 }
 
@@ -240,6 +241,7 @@ pub fn thinking_level_label(level: Option<ThinkingLevel>) -> &'static str {
         Some(ThinkingLevel::Minimal) => "minimal",
         Some(ThinkingLevel::Normal) => "normal",
         Some(ThinkingLevel::Deep) => "deep",
+        Some(ThinkingLevel::Extended) => "extended",
     }
 }
 
@@ -274,9 +276,14 @@ mod tests {
             Some(ThinkingLevel::Normal)
         );
         assert_eq!(
-            next_thinking_level(Some(ThinkingLevel::Deep)),
-            None
+            next_thinking_level(Some(ThinkingLevel::Normal)),
+            Some(ThinkingLevel::Deep)
         );
+        assert_eq!(
+            next_thinking_level(Some(ThinkingLevel::Deep)),
+            Some(ThinkingLevel::Extended)
+        );
+        assert_eq!(next_thinking_level(Some(ThinkingLevel::Extended)), None);
     }
 
     #[test]

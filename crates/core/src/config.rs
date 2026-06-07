@@ -66,6 +66,8 @@ pub enum ThinkingLevel {
     Normal,
     /// Deep reasoning (~16 384 tokens).
     Deep,
+    /// Extended reasoning (~32 768 tokens). Maximum depth for complex architectural work.
+    Extended,
 }
 
 impl std::fmt::Display for ThinkingLevel {
@@ -74,6 +76,7 @@ impl std::fmt::Display for ThinkingLevel {
             Self::Minimal => write!(f, "minimal"),
             Self::Normal => write!(f, "normal"),
             Self::Deep => write!(f, "deep"),
+            Self::Extended => write!(f, "extended"),
         }
     }
 }
@@ -85,6 +88,7 @@ impl ThinkingLevel {
             Self::Minimal => "M",
             Self::Normal => "N",
             Self::Deep => "D",
+            Self::Extended => "E",
         }
     }
 }
@@ -95,6 +99,7 @@ pub fn level_to_budget(level: ThinkingLevel) -> u32 {
         ThinkingLevel::Minimal => 1024,
         ThinkingLevel::Normal => 4096,
         ThinkingLevel::Deep => 16384,
+        ThinkingLevel::Extended => 32768,
     }
 }
 
@@ -104,8 +109,10 @@ pub fn budget_to_level(budget: u32) -> ThinkingLevel {
         ThinkingLevel::Minimal
     } else if budget <= 8192 {
         ThinkingLevel::Normal
-    } else {
+    } else if budget <= 24576 {
         ThinkingLevel::Deep
+    } else {
+        ThinkingLevel::Extended
     }
 }
 
@@ -801,6 +808,7 @@ mod tests {
         assert_eq!(level_to_budget(ThinkingLevel::Minimal), 1024);
         assert_eq!(level_to_budget(ThinkingLevel::Normal), 4096);
         assert_eq!(level_to_budget(ThinkingLevel::Deep), 16384);
+        assert_eq!(level_to_budget(ThinkingLevel::Extended), 32768);
     }
 
     #[test]
@@ -810,6 +818,8 @@ mod tests {
         assert_eq!(budget_to_level(4096), ThinkingLevel::Normal);
         assert_eq!(budget_to_level(8192), ThinkingLevel::Normal);
         assert_eq!(budget_to_level(16384), ThinkingLevel::Deep);
+        assert_eq!(budget_to_level(24576), ThinkingLevel::Deep);
+        assert_eq!(budget_to_level(32768), ThinkingLevel::Extended);
     }
 
     #[test]
