@@ -44,6 +44,9 @@ lcov.info
 # Documentation
 /doc/
 
+# Generated site content (agent output)
+site/
+
 # Temporary files
 *.tmp
 *.bak
