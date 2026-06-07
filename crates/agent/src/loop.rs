@@ -101,6 +101,8 @@ pub struct Agent {
     task_nudge_count: u32,
     /// Persistent plan, injected into system prompt each turn.
     plan: Option<Arc<tokio::sync::Mutex<Plan>>>,
+    /// When true, the agent is in explicit plan mode (no Write/Execute tools allowed).
+    pub plan_mode: bool,
 }
 
 #[derive(Default)]
@@ -145,11 +147,20 @@ impl Agent {
             permanent_allowlist: HashSet::new(),
             task_nudge_count: 0,
             plan: None,
+            plan_mode: false,
         }
     }
 
     pub fn set_permission_mode(&mut self, mode: PermissionMode) {
         self.permission_mode = mode;
+    }
+
+    pub fn enter_plan_mode(&mut self) {
+        self.plan_mode = true;
+    }
+
+    pub fn exit_plan_mode(&mut self) {
+        self.plan_mode = false;
     }
 
     pub fn set_permission_callback(&mut self, cb: PermissionCallback) {
@@ -725,6 +736,16 @@ impl Agent {
                             is_error: Some(tool_result.is_error),
                         },
                     ]));
+
+                    // Update plan mode state based on special plan tools
+                    if tc.name == "enter_plan_mode" && !tool_result.is_error {
+                        self.plan_mode = true;
+                        debug!("Entered explicit plan mode");
+                    }
+                    if tc.name == "exit_plan_mode" && !tool_result.is_error {
+                        self.plan_mode = false;
+                        debug!("Exited explicit plan mode");
+                    }
                 }
 
                 // Continue the loop — the model needs to see tool results
@@ -931,7 +952,7 @@ impl Agent {
             return PermissionDecision::AllowOnce;
         }
 
-        // 2. Plan mode — deny write/execute
+        // 2. CLI Plan mode — deny write/execute
         if self.permission_mode == PermissionMode::Plan {
             if effective_level == PermissionLevel::ReadOnly
                 || effective_level == PermissionLevel::None
@@ -939,6 +960,18 @@ impl Agent {
                 return PermissionDecision::AllowOnce;
             }
             return PermissionDecision::Deny("Plan mode is read-only".into());
+        }
+
+        // 2.5 Explicit plan mode — deny write/execute (but allow exit_plan_mode)
+        if self.plan_mode
+            && effective_level == PermissionLevel::Write
+            && tool_name != "exit_plan_mode"
+        {
+            return PermissionDecision::Deny(
+                "You are in plan mode. Write and execute tools are disabled. \
+                 Use exit_plan_mode when you are ready to execute the plan."
+                    .into(),
+            );
         }
 
         // 3. Read-only / None tools — auto-allow

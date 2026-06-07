@@ -10,6 +10,7 @@ pub mod file_write;
 pub mod glob;
 pub mod grep;
 pub mod memory;
+pub mod plan_mode;
 pub mod todowrite;
 pub mod web_fetch;
 
@@ -202,6 +203,8 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
         Box::new(glob::GlobTool),
         Box::new(grep::GrepTool),
         Box::new(web_fetch::WebFetchTool::new()),
+        Box::new(plan_mode::EnterPlanModeTool),
+        Box::new(plan_mode::ExitPlanModeTool),
     ]
 }
 
