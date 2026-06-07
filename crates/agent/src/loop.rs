@@ -365,7 +365,7 @@ impl Agent {
             tools: vec![todo_def],
             max_tokens: 2048,
             temperature: Some(0.3),
-            thinking_budget: Some(level_to_budget(ThinkingLevel::Deep)),
+            thinking_budget: Some(level_to_budget(ThinkingLevel::Extended)),
         };
 
         let mut stream = self.provider.create_message_stream(request).await?;
