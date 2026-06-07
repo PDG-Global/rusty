@@ -10,7 +10,8 @@ use rusty_tools::Tool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, ToolStatus};
+pub use r#loop::{Agent, AgentCallbacks, ApprovalCallback, PermissionCallback, ToolStatus};
+pub use rusty_core::plan::{ApprovalDecision, ApprovalRequest, ApprovalTask};
 // Re-export CancelToken so downstream crates (e.g. rusty CLI) can use `rusty_agent::CancelToken`.
 pub use rusty_core::CancelToken;
 

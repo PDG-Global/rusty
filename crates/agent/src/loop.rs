@@ -7,9 +7,10 @@ use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,
     PermissionLevel, PermissionRequest,
 };
-use rusty_core::plan::Plan;
+use rusty_core::plan::{ApprovalDecision, ApprovalRequest, ApprovalTask, Plan};
 use rusty_core::{
-    CancelToken, Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
+    CancelToken, Config, ContentBlock, Message, MessageContent, PermissionMode, Role, RustyError,
+    ToolDefinition, UsageInfo,
 };
 use rusty_core::{dynamic_thinking_level, level_to_budget, ThinkingLevel};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
@@ -76,6 +77,13 @@ pub type PermissionCallback = Arc<
         + Sync,
 >;
 
+/// Callback for plan approval requests — receives a request, returns a decision future
+pub type ApprovalCallback = Arc<
+    dyn Fn(ApprovalRequest) -> Pin<Box<dyn Future<Output = ApprovalDecision> + Send>>
+        + Send
+        + Sync,
+>;
+
 pub struct Agent {
     provider: Arc<dyn LlmProvider>,
     tools: HashMap<String, Arc<dyn Tool>>,
@@ -99,6 +107,11 @@ pub struct Agent {
     task_nudge_count: u32,
     /// Persistent plan, injected into system prompt each turn.
     plan: Option<Arc<tokio::sync::Mutex<Plan>>>,
+    /// When true, auto-generate a plan for complex tasks and pause for user approval
+    /// before executing.
+    auto_plan: bool,
+    /// Callback for plan approval requests (used by auto-plan flow)
+    approval_callback: Option<ApprovalCallback>,
 }
 
 #[derive(Default)]
@@ -109,6 +122,7 @@ pub struct AgentCallbacks<'a> {
     pub on_usage: Option<&'a UsageCallback>,
     pub on_thinking_level: Option<&'a ThinkingLevelCallback>,
     pub cancel: Option<&'a CancelToken>,
+    pub on_approval: Option<&'a ApprovalCallback>,
 }
 
 impl Agent {
@@ -125,6 +139,7 @@ impl Agent {
             .collect();
 
         let max_turns = config.max_turns;
+        let auto_plan = config.auto_plan;
 
         Self {
             provider,
@@ -143,6 +158,8 @@ impl Agent {
             permanent_allowlist: HashSet::new(),
             task_nudge_count: 0,
             plan: None,
+            auto_plan,
+            approval_callback: None,
         }
     }
 
@@ -161,6 +178,11 @@ impl Agent {
     /// Set the persistent plan for this agent.
     pub fn set_plan(&mut self, plan: Arc<tokio::sync::Mutex<Plan>>) {
         self.plan = Some(plan);
+    }
+
+    /// Set the approval callback for auto-plan flow.
+    pub fn set_approval_callback(&mut self, cb: ApprovalCallback) {
+        self.approval_callback = Some(cb);
     }
 
     /// Refresh the system prompt with current plan context.
@@ -273,6 +295,157 @@ impl Agent {
         }
     }
 
+    /// Make a lightweight LLM call to assess task complexity and generate a plan.
+    /// Returns `None` if the task is simple enough to proceed directly, or
+    /// `Some(ApprovalDecision)` if a plan was generated and the user was asked to approve.
+    async fn run_auto_plan(
+        &self,
+        user_content: &[ContentBlock],
+        on_approval: Option<&ApprovalCallback>,
+    ) -> Result<Option<ApprovalDecision>, RustyError> {
+        // Build a focused planning system prompt
+        let planning_prompt = format!(
+            "{}\n\n\
+            ## Auto-Plan Assessment\n\
+            You are being called in planning-only mode. Your job is to assess the user's task \
+            and decide whether it needs a structured plan.\n\n\
+            ### When to call todowrite (complex tasks)\n\
+            - Multi-file changes (e.g. adding a feature that spans backend + frontend)\n\
+            - Tasks requiring research before implementation\n\
+            - Anything with 3+ distinct implementation steps\n\
+            - Tasks with ambiguity that benefits from an ordered approach\n\n\
+            ### When NOT to call todowrite (simple tasks)\n\
+            - Single file edits, bug fixes, or one-line changes\n\
+            - Questions, explanations, or code review requests\n\
+            - Tasks that are already well-defined and self-contained\n\n\
+            If the task is SIMPLE: respond with a brief explanation of what you'll do, and do NOT \
+            call the todowrite tool.\n\n\
+            If the task is COMPLEX: call the `todowrite` tool with a structured plan. Each task \
+            must be a specific, actionable step (e.g. 'Add X field to Y struct in Z.rs'), not a \
+            vague goal. Order tasks by dependency (do prerequisites first). Keep plans to 3-7 tasks. \
+            Use priorities: high for critical path blockers, medium for supporting work, low for \
+            optional enhancements.",
+            self.base_system_prompt
+        );
+
+        // Restrict to just the todowrite tool for this planning call
+        let todo_def = ToolDefinition {
+            name: "todowrite".to_string(),
+            description: "Create a structured task plan. Call this only for complex tasks.".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": "Array of todo items",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": { "type": "string", "description": "Task description" },
+                                "status": { "type": "string", "enum": ["pending"] },
+                                "priority": { "type": "string", "enum": ["high", "medium", "low"] }
+                            },
+                            "required": ["content"]
+                        }
+                    }
+                },
+                "required": ["todos"]
+            }),
+        };
+
+        let plan_msg = Message {
+            role: Role::User,
+            content: MessageContent::Blocks(user_content.to_vec()),
+        };
+
+        let request = MessageRequest {
+            model: self.config.model.clone(),
+            system: Some(planning_prompt),
+            messages: vec![plan_msg],
+            tools: vec![todo_def],
+            max_tokens: 2048,
+            temperature: Some(0.3),
+            thinking_budget: None,
+        };
+
+        let mut stream = self.provider.create_message_stream(request).await?;
+
+        let mut text = String::new();
+        let mut tool_calls: Vec<ToolCallState> = Vec::new();
+
+        while let Some(event) = stream.next().await {
+            match event? {
+                StreamEvent::TextDelta(delta) => text.push_str(&delta),
+                StreamEvent::ToolCallDelta { id, name, arguments_delta, .. } => {
+                    if let Some(name) = name {
+                        tool_calls.push(ToolCallState { id: id.unwrap_or_default(), name, arguments: String::new() });
+                    }
+                    if let Some(tc) = tool_calls.last_mut() {
+                        tc.arguments.push_str(&arguments_delta);
+                    }
+                }
+                StreamEvent::Usage(_) => {}
+                StreamEvent::ThinkingDelta(_) => {}
+                StreamEvent::Done { .. } => break,
+                StreamEvent::Error(e) => return Err(RustyError::Api(e)),
+            }
+        }
+
+        // Check if the LLM called todowrite — if not, the task is simple
+        let todo_calls: Vec<_> = tool_calls.iter().filter(|tc| tc.name == "todowrite").collect();
+        if todo_calls.is_empty() {
+            debug!("Auto-plan: task assessed as simple, proceeding directly");
+            return Ok(None);
+        }
+
+        // Extract tasks from the todowrite tool call
+        let mut tasks: Vec<ApprovalTask> = Vec::new();
+        for tc in &todo_calls {
+            if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tc.arguments) {
+                if let Some(todos) = args.get("todos").and_then(|t| t.as_array()) {
+                    for todo in todos {
+                        let content = todo.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                        if content.is_empty() { continue; }
+                        let priority = todo.get("priority").and_then(|p| p.as_str()).unwrap_or("medium");
+                        tasks.push(ApprovalTask {
+                            content,
+                            priority: priority.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if tasks.is_empty() {
+            debug!("Auto-plan: todowrite called but no valid tasks extracted, proceeding directly");
+            return Ok(None);
+        }
+
+        // Build plan text for display
+        let mut plan_text = text.trim().to_string();
+        if plan_text.is_empty() {
+            plan_text = "Auto-generated plan:".to_string();
+        }
+        plan_text.push_str("\n\n");
+        for (i, task) in tasks.iter().enumerate() {
+            plan_text.push_str(&format!("{}. [{}] {}\n", i + 1, task.priority, task.content));
+        }
+
+        let request = ApprovalRequest { plan_text, tasks };
+
+        // Invoke the approval callback (prefer callback passed at runtime, fall back to agent field)
+        let callback = on_approval.or(self.approval_callback.as_ref());
+        if let Some(cb) = callback {
+            let decision = cb(request).await;
+            debug!("Auto-plan: user {} the plan", if decision.approved { "approved" } else { "rejected" });
+            Ok(Some(decision))
+        } else {
+            // No callback available — auto-approve (e.g. headless mode default)
+            debug!("Auto-plan: no approval callback, auto-approving plan");
+            Ok(Some(ApprovalDecision { approved: true }))
+        }
+    }
+
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
     /// Pass a `CancelToken` via callbacks to allow mid-turn cancellation (immediate via `tokio::select!`).
     pub async fn run(
@@ -287,11 +460,29 @@ impl Agent {
             on_usage,
             on_thinking_level,
             cancel,
+            on_approval,
         } = callbacks;
         if let Some(c) = cancel {
             c.reset();
         }
         self.messages.push(Message::user_blocks(content));
+
+        // Auto-plan: intercept user message for complexity assessment
+        if self.auto_plan && self.plan.is_none() {
+            let last_user_content = &self.messages.last().unwrap().content;
+            let user_blocks: Vec<ContentBlock> = match last_user_content {
+                MessageContent::Blocks(blocks) => blocks.clone(),
+                MessageContent::Text(text) => vec![ContentBlock::Text { text: text.clone() }],
+            };
+
+            if let Some(decision) = self.run_auto_plan(&user_blocks, on_approval).await? {
+                if !decision.approved {
+                    debug!("Auto-plan: user rejected plan, stopping agent loop");
+                    return Ok("Plan rejected. Provide a different request or try again.".to_string());
+                }
+                debug!("Auto-plan: user approved plan, proceeding with execution");
+            }
+        }
 
         for turn in 0..self.max_turns {
             if let Some(c) = cancel {

@@ -233,6 +233,11 @@ pub struct Config {
     /// When true, instructs the model to actively use `todowrite` for task tracking.
     /// Implies Plan permission mode (read-only + todowrite).
     pub plan_with_tasks: bool,
+    /// When true, the agent automatically runs a planning turn for complex tasks,
+    /// presents the plan for user approval, then executes.
+    /// Implies `plan_with_tasks = true` and Plan permission mode.
+    #[serde(default)]
+    pub auto_plan: bool,
     /// Provider type, set by presets and resolved through model registry.
     /// Used as a fallback when no model entry is active.
     #[serde(default)]
@@ -262,6 +267,7 @@ impl Default for Config {
             thinking_level: None,
             temperature: None,
             plan_with_tasks: false,
+            auto_plan: false,
             provider_type: ProviderType::default(),
             context_window: None,
         }

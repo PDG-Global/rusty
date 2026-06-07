@@ -65,6 +65,10 @@ struct Args {
     #[arg(long)]
     plan_with_tasks: bool,
 
+    /// Auto-generate a plan for complex tasks and pause for user approval before executing
+    #[arg(long)]
+    auto_plan: bool,
+
     /// Resume session by ID
     #[arg(long)]
     resume: Option<String>,
@@ -383,6 +387,9 @@ async fn main() -> Result<()> {
         config.permission_mode = PermissionMode::Plan;
         config.plan_with_tasks = true;
     }
+    if args.auto_plan {
+        config.auto_plan = true;
+    }
 
     // Build provider — resolve API key in priority order:
     //   1. --api-key CLI flag (highest priority)
@@ -655,11 +662,34 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path)
                         print!("{text}");
                         let _ = io::stdout().flush();
                     });
+                    let approval_cb: rusty_agent::ApprovalCallback = Arc::new(|request| {
+                        Box::pin(async move {
+                            use std::io::Write;
+                            println!("\n{}", "=".repeat(60));
+                            println!("PLAN PROPOSAL:");
+                            println!("{}", "=".repeat(60));
+                            println!("{}", request.plan_text);
+                            println!("{}", "=".repeat(60));
+                            print!("Approve this plan? [y/N] ");
+                            let _ = std::io::stdout().flush();
+                            let mut input = String::new();
+                            let approved = std::io::stdin().read_line(&mut input)
+                                .map(|_| input.trim().eq_ignore_ascii_case("y"))
+                                .unwrap_or(false);
+                            if approved {
+                                println!("Plan approved. Executing...");
+                            } else {
+                                println!("Plan rejected.");
+                            }
+                            rusty_core::plan::ApprovalDecision { approved }
+                        })
+                    });
                     let result = agent
                         .run(
                             vec![ContentBlock::Text { text: init_prompt }],
                             AgentCallbacks {
                                 on_text: Some(&text_cb),
+                                on_approval: Some(&approval_cb),
                                 ..Default::default()
                             },
                         )
@@ -806,11 +836,35 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path)
             let _ = io::stdout().flush();
         });
 
+        let approval_cb: rusty_agent::ApprovalCallback = Arc::new(|request| {
+            Box::pin(async move {
+                use std::io::Write;
+                println!("\n{}", "=".repeat(60));
+                println!("PLAN PROPOSAL:");
+                println!("{}", "=".repeat(60));
+                println!("{}", request.plan_text);
+                println!("{}", "=".repeat(60));
+                print!("Approve this plan? [y/N] ");
+                let _ = std::io::stdout().flush();
+                let mut input = String::new();
+                let approved = std::io::stdin().read_line(&mut input)
+                    .map(|_| input.trim().eq_ignore_ascii_case("y"))
+                    .unwrap_or(false);
+                if approved {
+                    println!("Plan approved. Executing...");
+                } else {
+                    println!("Plan rejected.");
+                }
+                rusty_core::plan::ApprovalDecision { approved }
+            })
+        });
+
         let result = agent
             .run(
                 vec![ContentBlock::Text { text: line.to_string() }],
                 AgentCallbacks {
                     on_text: Some(&text_cb),
+                    on_approval: Some(&approval_cb),
                     ..Default::default()
                 },
             )
@@ -847,12 +901,20 @@ struct PermissionPromptMsg {
     respond: oneshot::Sender<PermissionDecision>,
 }
 
+/// A plan approval request bundled with a oneshot sender for the response.
+struct ApprovalPromptMsg {
+    request: rusty_agent::ApprovalRequest,
+    respond: oneshot::Sender<rusty_agent::ApprovalDecision>,
+}
+
 /// Events from the agent task to the TUI.
 enum AgentTaskEvent {
     /// Regular agent event (text, tool, etc.)
     Event(rusty_tui::app::AgentEvent),
     /// Permission request — TUI should show prompt and send response on the oneshot.
     PermissionRequest(PermissionPromptMsg),
+    /// Plan approval request — TUI should show plan and ask for approval.
+    ApprovalRequest(ApprovalPromptMsg),
     /// Agent has finished processing a message and is ready for more input
     ReadyForInput,
 }
@@ -1045,6 +1107,17 @@ async fn run_tui(
                         ));
                     });
 
+                    // Approval callback: sends plan to TUI, waits for approve/reject decision.
+                    let tx_approval = event_tx.clone();
+                    let approval_cb: rusty_agent::ApprovalCallback = Arc::new(move |request| {
+                        let (resp_tx, resp_rx) = oneshot::channel();
+                        let _ = tx_approval.send(AgentTaskEvent::ApprovalRequest(ApprovalPromptMsg {
+                            request,
+                            respond: resp_tx,
+                        }));
+                        Box::pin(async move { resp_rx.await.unwrap_or(rusty_core::plan::ApprovalDecision { approved: false }) })
+                    });
+
                     let cancel_ref = cancel.clone();
                     let result = agent
                         .run(
@@ -1056,6 +1129,7 @@ async fn run_tui(
                                 on_usage: Some(&usage_cb),
                                 on_thinking_level: Some(&thinking_level_cb),
                                 cancel: Some(&cancel_ref),
+                                on_approval: Some(&approval_cb),
                             },
                         )
                         .await;
@@ -1791,6 +1865,14 @@ async fn tui_main_loop(
                         app.permission_prompt = Some(rusty_tui::app::PermissionPromptState {
                             request: msg.request,
                             respond: Some(msg.respond),
+                        });
+                        app.needs_redraw = true;
+                    }
+                    Some(AgentTaskEvent::ApprovalRequest(msg)) => {
+                        app.plan_approval = Some(rusty_tui::app::PlanApprovalState {
+                            plan_text: msg.request.plan_text,
+                            respond: Some(msg.respond),
+                            scroll_offset: 0,
                         });
                         app.needs_redraw = true;
                     }
