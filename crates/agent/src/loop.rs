@@ -19,6 +19,8 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use crate::compact::maybe_compact;
@@ -196,6 +198,17 @@ impl Agent {
         &mut self.messages
     }
 
+    /// Reset conversation and task state (used by /clear).
+    pub async fn clear_state(&mut self) {
+        self.messages.clear();
+        self.task_nudge_count = 0;
+        if let Some(plan) = &self.plan {
+            let mut p = plan.lock().await;
+            p.items.clear();
+            let _ = p.save();
+        }
+    }
+
     /// Force-compact the conversation history, summarizing older messages.
     /// Returns true if compaction actually happened.
     pub async fn compact(&mut self) -> Result<bool, RustyError> {
@@ -345,12 +358,14 @@ impl Agent {
                 cb(Some(effective_level));
             }
 
+            // Ensure max_tokens always exceeds thinking_budget + headroom to prevent API hangs.
+            let max_tokens = self.config.max_tokens.max(thinking_budget.map(|b| b + 4096).unwrap_or(0));
             let request = MessageRequest {
                 model: self.config.model.clone(),
                 system: Some(self.system_prompt.clone()),
                 messages: self.messages.clone(),
                 tools: tool_defs,
-                max_tokens: self.config.max_tokens,
+                max_tokens,
                 temperature: self.config.temperature,
                 thinking_budget,
             };
@@ -367,76 +382,104 @@ impl Agent {
 
             let mut assistant_text = String::new();
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
-            let mut stop_reason = None;
             let mut got_api_usage = false;
 
-            loop {
+            // Enforce a 5-minute ceiling on the entire turn, in addition to the 120s
+            // per-event timeout.  This catches APIs that keep the connection alive with
+            // SSE keepalives but never produce any real content.
+            let turn_start = std::time::Instant::now();
+            let max_turn_duration = Duration::from_secs(300);
+
+            let stop_reason = loop {
+                let elapsed = turn_start.elapsed();
+                let remaining = if elapsed > max_turn_duration {
+                    Duration::from_secs(0)
+                } else {
+                    max_turn_duration - elapsed
+                };
+                let per_event_timeout = Duration::from_secs(120).min(remaining);
+                if per_event_timeout.is_zero() {
+                    warn!("LLM stream exceeded maximum turn duration of 5 minutes; aborting turn");
+                    self.finalize_plan().await;
+                    return Ok("Turn timed out — maximum duration exceeded.".to_string());
+                }
+
                 let next_event = if let Some(c) = cancel {
                     tokio::select! {
-                        event = stream.next() => event,
+                        event = timeout(per_event_timeout, stream.next()) => event,
                         _ = c.cancelled() => {
                             self.finalize_plan().await;
                             return Ok("Turn cancelled by user.".to_string());
                         }
                     }
                 } else {
-                    stream.next().await
+                    timeout(per_event_timeout, stream.next()).await
                 };
-                let Some(event) = next_event else { break };
-                match event? {
-                    StreamEvent::TextDelta(text) => {
-                        assistant_text.push_str(&text);
-                        if let Some(cb) = on_text {
-                            cb(&text);
+
+                match next_event {
+                    Ok(Some(event)) => {
+                        match event? {
+                            StreamEvent::TextDelta(text) => {
+                                assistant_text.push_str(&text);
+                                if let Some(cb) = on_text {
+                                    cb(&text);
+                                }
+                            }
+                            StreamEvent::ThinkingDelta(thinking) => {
+                                if let Some(cb) = on_thinking {
+                                    cb(&thinking);
+                                }
+                            }
+                            StreamEvent::ToolCallDelta {
+                                index,
+                                id,
+                                name,
+                                arguments_delta,
+                            } => {
+                                while tool_calls.len() <= index {
+                                    tool_calls.push(ToolCallState::default());
+                                }
+                                let tc = &mut tool_calls[index];
+                                if let Some(id) = id {
+                                    tc.id = id;
+                                }
+                                if let Some(name) = name {
+                                    tc.name = name;
+                                }
+                                tc.arguments.push_str(&arguments_delta);
+                            }
+                            StreamEvent::Usage(usage) => {
+                                got_api_usage = true;
+                                // Use the API's prompt_tokens as the authoritative context size.
+                                // Don't accumulate input_tokens across turns — each turn's prompt_tokens
+                                // already includes all prior messages, so accumulating would double-count.
+                                self.current_context_tokens = usage.input_tokens;
+                                // For total_usage, track the max context seen (not a sum)
+                                self.total_usage.input_tokens = usage.input_tokens;
+                                self.total_usage.output_tokens += usage.output_tokens;
+                                self.total_usage.cached_tokens += usage.cached_tokens;
+                                if let Some(cb) = on_usage {
+                                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
+                                }
+                            }
+                            StreamEvent::Done { stop_reason } => break stop_reason,
+                            StreamEvent::Error(msg) => {
+                                self.finalize_plan().await;
+                                return Err(RustyError::Api(msg));
+                            }
                         }
                     }
-                    StreamEvent::ThinkingDelta(thinking) => {
-                        if let Some(cb) = on_thinking {
-                            cb(&thinking);
-                        }
+                    Ok(None) => {
+                        // Stream ended naturally (no more events).
+                        break None;
                     }
-                    StreamEvent::ToolCallDelta {
-                        index,
-                        id,
-                        name,
-                        arguments_delta,
-                    } => {
-                        while tool_calls.len() <= index {
-                            tool_calls.push(ToolCallState::default());
-                        }
-                        let tc = &mut tool_calls[index];
-                        if let Some(id) = id {
-                            tc.id = id;
-                        }
-                        if let Some(name) = name {
-                            tc.name = name;
-                        }
-                        tc.arguments.push_str(&arguments_delta);
-                    }
-                    StreamEvent::Usage(usage) => {
-                        got_api_usage = true;
-                        // Use the API's prompt_tokens as the authoritative context size.
-                        // Don't accumulate input_tokens across turns — each turn's prompt_tokens
-                        // already includes all prior messages, so accumulating would double-count.
-                        self.current_context_tokens = usage.input_tokens;
-                        // For total_usage, track the max context seen (not a sum)
-                        self.total_usage.input_tokens = usage.input_tokens;
-                        self.total_usage.output_tokens += usage.output_tokens;
-                        self.total_usage.cached_tokens += usage.cached_tokens;
-                        if let Some(cb) = on_usage {
-                            cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
-                        }
-                    }
-                    StreamEvent::Done { stop_reason: sr } => {
-                        stop_reason = sr;
-                        break;
-                    }
-                    StreamEvent::Error(msg) => {
+                    Err(_) => {
+                        warn!("LLM stream timed out after {}s with no events; aborting turn", per_event_timeout.as_secs());
                         self.finalize_plan().await;
-                        return Err(RustyError::Api(msg));
+                        return Ok("Turn timed out — no response from model.".to_string());
                     }
                 }
-            }
+            };
 
             // Estimate tokens only if the provider didn't report usage
             // (common with OpenAI-compatible providers that don't support stream_options)

@@ -1165,7 +1165,7 @@ async fn run_tui(
                             }
                             Some(rusty_tui::app::TuiCommand::Clear) => {
                                 let mut agent = agent_arc.lock().await;
-                                agent.messages_mut().clear();
+                                agent.clear_state().await;
                                 let _ = event_tx.send(AgentTaskEvent::Event(
                                     rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
                                 ));
