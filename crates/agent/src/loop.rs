@@ -584,12 +584,14 @@ impl Agent {
                 cb(Some(effective_level));
             }
 
+            // Ensure max_tokens always exceeds thinking_budget + headroom to prevent API hangs.
+            let max_tokens = self.config.max_tokens.max(thinking_budget.map(|b| b + 4096).unwrap_or(0));
             let request = MessageRequest {
                 model: self.config.model.clone(),
                 system: Some(self.system_prompt.clone()),
                 messages: self.messages.clone(),
                 tools: tool_defs,
-                max_tokens: self.config.max_tokens,
+                max_tokens,
                 temperature: self.config.temperature,
                 thinking_budget,
             };
@@ -612,16 +614,20 @@ impl Agent {
             loop {
                 let next_event = if let Some(c) = cancel {
                     tokio::select! {
-                        event = stream.next() => event,
+                        event = timeout(Duration::from_secs(120), stream.next()) => event.ok().flatten(),
                         _ = c.cancelled() => {
                             self.finalize_plan().await;
                             return Ok("Turn cancelled by user.".to_string());
                         }
                     }
                 } else {
-                    stream.next().await
+                    timeout(Duration::from_secs(120), stream.next()).await.ok().flatten()
                 };
-                let Some(event) = next_event else { break };
+                let Some(event) = next_event else {
+                    warn!("LLM stream timed out after 120s with no events; aborting turn");
+                    self.finalize_plan().await;
+                    return Ok("Turn timed out — no response from model after 120 seconds.".to_string());
+                };
                 match event? {
                     StreamEvent::TextDelta(text) => {
                         assistant_text.push_str(&text);

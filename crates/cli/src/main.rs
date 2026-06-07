@@ -1419,6 +1419,7 @@ async fn run_tui(
     let mut tui_app = rusty_tui::app::AppState::default();
     tui_app.status.model = model.to_string();
     tui_app.status.context_window = config.effective_context_window();
+    tui_app.status.thinking_level = config.thinking_level;
 
     // Spawn background update check (non-blocking)
     {
