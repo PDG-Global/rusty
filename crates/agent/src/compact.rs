@@ -12,13 +12,46 @@ const COMPACT_THRESHOLD_FRACTION: f64 = 0.75;
 const KEEP_RECENT: usize = 10;
 /// Fallback message count threshold
 const COMPACT_MESSAGE_THRESHOLD: usize = 40;
+/// Tool results longer than this are replaced with a placeholder during micro-compaction
+const MICRO_COMPACT_THRESHOLD_CHARS: usize = 500;
+
+/// Lightweight compaction: replace old tool results with placeholders.
+/// This is much cheaper than an LLM summarization pass.
+/// Returns true if any replacements were made.
+pub fn micro_compact(messages: &mut Vec<Message>) -> bool {
+    let split_point = messages.len().saturating_sub(KEEP_RECENT);
+    let mut modified = false;
+
+    for msg in messages.iter_mut().take(split_point) {
+        if let rusty_core::MessageContent::Blocks(ref mut blocks) = msg.content {
+            for block in blocks.iter_mut() {
+                if let rusty_core::ContentBlock::ToolResult { content, .. } = block {
+                    if content.len() > MICRO_COMPACT_THRESHOLD_CHARS {
+                        let lines = content.lines().count();
+                        *content = format!(
+                            "[Old tool result content cleared ({lines} lines)]"
+                        );
+                        modified = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if modified {
+        debug!("Micro-compacted tool results in {} oldest messages", split_point);
+    }
+    modified
+}
 
 /// Compute the token threshold for compaction based on the model's context window.
 fn compact_token_threshold(context_window: u32) -> usize {
     (context_window as f64 * COMPACT_THRESHOLD_FRACTION) as usize
 }
 
-/// Check if compaction is needed and perform it
+/// Check if compaction is needed and perform it.
+/// Tries micro-compaction first (cheap placeholder replacement), then falls
+/// back to LLM-based full compaction if still over the threshold.
 pub async fn maybe_compact(
     messages: &mut Vec<Message>,
     provider: &dyn LlmProvider,
@@ -40,6 +73,21 @@ pub async fn maybe_compact(
         messages.len(),
         estimated_tokens
     );
+
+    // Phase 1: micro-compaction — replace old tool results with placeholders.
+    // This often drops enough tokens to avoid the expensive LLM summarization.
+    if micro_compact(messages) {
+        let after_micro = estimate_tokens(messages);
+        info!(
+            "After micro-compaction: ~{} tokens (saved ~{})",
+            after_micro,
+            estimated_tokens.saturating_sub(after_micro)
+        );
+        if after_micro < token_threshold && messages.len() < COMPACT_MESSAGE_THRESHOLD {
+            debug!("Micro-compaction sufficient; skipping full compact");
+            return Ok(());
+        }
+    }
 
     let split_point = messages.len().saturating_sub(KEEP_RECENT);
     let old_messages = &messages[..split_point];
@@ -236,5 +284,103 @@ mod tests {
     fn messages_to_text_empty_list() {
         let msgs: Vec<Message> = vec![];
         assert_eq!(messages_to_text(&msgs), "");
+    }
+
+    // ── micro_compact ────────────────────────────────────────────────
+
+    #[test]
+    fn micro_compact_replaces_long_tool_results() {
+        use rusty_core::ContentBlock;
+
+        // Need > KEEP_RECENT messages so the first one is in the old group
+        let mut msgs: Vec<Message> = (0..11)
+            .map(|i| {
+                if i == 0 {
+                    Message::user_blocks(vec![ContentBlock::ToolResult {
+                        tool_use_id: "1".into(),
+                        content: "a".repeat(1000),
+                        is_error: Some(false),
+                    }])
+                } else {
+                    Message::assistant("ok")
+                }
+            })
+            .collect();
+
+        let modified = micro_compact(&mut msgs);
+        assert!(modified);
+        let block_text = match &msgs[0].content {
+            rusty_core::MessageContent::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult { content, .. } => content.clone(),
+                _ => panic!("expected ToolResult"),
+            },
+            _ => panic!("expected Blocks"),
+        };
+        assert!(block_text.contains("Old tool result content cleared"));
+    }
+
+    #[test]
+    fn micro_compact_skips_short_tool_results() {
+        use rusty_core::ContentBlock;
+
+        let mut msgs = vec![
+            Message::user_blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: "1".into(),
+                content: "short".into(),
+                is_error: Some(false),
+            }]),
+            Message::assistant("ok"),
+        ];
+
+        let modified = micro_compact(&mut msgs);
+        assert!(!modified);
+        let block_text = match &msgs[0].content {
+            rusty_core::MessageContent::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult { content, .. } => content.clone(),
+                _ => panic!("expected ToolResult"),
+            },
+            _ => panic!("expected Blocks"),
+        };
+        assert_eq!(block_text, "short");
+    }
+
+    #[test]
+    fn micro_compact_preserves_recent_messages() {
+        use rusty_core::ContentBlock;
+
+        // Create 12 messages so the last 10 are preserved
+        let mut msgs: Vec<Message> = (0..12)
+            .map(|i| {
+                Message::user_blocks(vec![ContentBlock::ToolResult {
+                    tool_use_id: format!("{i}"),
+                    content: "a".repeat(1000),
+                    is_error: Some(false),
+                }])
+            })
+            .collect();
+
+        micro_compact(&mut msgs);
+
+        // First 2 should be compacted
+        let t0 = match &msgs[0].content {
+            rusty_core::MessageContent::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult { content, .. } => content.clone(),
+                _ => panic!("expected ToolResult"),
+            },
+            _ => panic!("expected Blocks"),
+        };
+        assert!(t0.contains("cleared"));
+
+        // Last 10 should remain intact
+        for msg in msgs.iter().skip(2) {
+            let text = match &msg.content {
+                rusty_core::MessageContent::Blocks(blocks) => match &blocks[0] {
+                    ContentBlock::ToolResult { content, .. } => content.clone(),
+                    _ => panic!("expected ToolResult"),
+                },
+                _ => panic!("expected Blocks"),
+            };
+            assert!(!text.contains("cleared"));
+        }
     }
 }
