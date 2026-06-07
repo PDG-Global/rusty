@@ -2041,7 +2041,7 @@ impl AppState {
     pub fn tool_finished(&mut self, name: &str, is_error: bool, output: &str) {
         let label = format_tool_label(name, &self.pending_tools.iter().find(|t| t.name == name).map(|t| t.arguments.clone()).unwrap_or_default());
         let symbol = if is_error { "\u{2717}" } else { "\u{2713}" };
-        let summary = tool_output_summary(name, output);
+        let summary = tool_output_summary(name, output, is_error);
         let done_header = if summary.is_empty() {
             format!("  {symbol} {label}\n")
         } else {
@@ -2335,10 +2335,21 @@ fn extract_tool_detail(name: &str, arguments: &str) -> String {
 }
 
 /// Generate a clean one-line summary for tool output, like Claude Code does.
-fn tool_output_summary(name: &str, output: &str) -> String {
+fn tool_output_summary(name: &str, output: &str, is_error: bool) -> String {
     let trimmed = output.trim();
     if trimmed.is_empty() {
         return String::new();
+    }
+
+    // For errors, show the actual error message (truncated) instead of generic summaries
+    if is_error {
+        let first_line = trimmed.lines().next().unwrap_or("");
+        let clean = first_line.trim();
+        if clean.chars().count() > 80 {
+            return format!("{}...", clean.chars().take(80).collect::<String>());
+        } else if !clean.is_empty() {
+            return clean.to_string();
+        }
     }
 
     let line_count = trimmed.lines().count();

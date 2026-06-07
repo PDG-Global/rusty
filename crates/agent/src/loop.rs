@@ -627,7 +627,10 @@ impl Agent {
                 for ((tc, _decision), result) in permission_results.iter().zip(results) {
                     let tool_result = match result {
                         Some(Ok(r)) => r,
-                        Some(Err(e)) => ToolResult::error(e.to_string()),
+                        Some(Err(e)) => {
+                            debug!("Tool {} failed: {}", tc.name, e);
+                            ToolResult::error(e.to_string())
+                        }
                         None => {
                             // Permission denied — already logged
                             if let Some(cb) = on_tool {
