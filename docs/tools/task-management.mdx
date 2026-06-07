@@ -28,7 +28,41 @@ The tool accepts an array of task items:
 
 ## How It Works
 
-The task list persists across the conversation. Each call to `todowrite` replaces the full list, so the current state must always be passed. Tasks are rendered grouped by priority with status indicators.
+`todowrite` is backed by a per-project **Plan** stored on disk, not a transient in-conversation list. Each call to `todowrite` replaces the full list, so the current state must always be passed. Tasks are rendered grouped by priority with status indicators.
+
+### Per-project persistence
+
+Plans are saved to `~/.rusty/plans/<project-slug>.json` with restrictive permissions. The project is resolved from the working directory's git root (falling back to the working directory itself when no git root is found), so each repository keeps its own task list across sessions. The plan is loaded automatically when Rusty starts and saved on every mutation.
+
+### System prompt injection
+
+Before every LLM turn, the current plan is re-rendered into the system prompt under an `## Active Task Plan` header. The header includes live counts and tasks are grouped by priority (`HIGH`, `MEDIUM`, `LOW`) with status indicators:
+
+| Indicator | Meaning |
+|-----------|---------|
+| `[ ]` | Pending |
+| `[~]` | In progress |
+| `[x]` | Completed |
+| `[-]` | Cancelled |
+
+A refreshed plan looks like this in the system prompt:
+
+```text
+## Active Task Plan (1/3 completed, 2 remaining)
+
+[HIGH]
+  [x] Add error variant for network timeouts
+  [~] Update provider to map timeout errors
+
+[MEDIUM]
+  [ ] Add retry logic with exponential backoff
+```
+
+Because the plan is rebuilt on every turn, the model always sees the latest status without you having to repeat it in the conversation.
+
+### Auto-finalisation on exit
+
+When the agent loop exits — including normal completion, hitting `max_tokens`, an API error, or `Ctrl+C` cancellation — any tasks still marked `in_progress` are automatically transitioned to `completed` and the plan is saved. This prevents the plan from getting stuck mid-task across runs. Use `cancelled` (not `in_progress`) if you want a task to remain unfinished on the next session.
 
 ## Workflow
 

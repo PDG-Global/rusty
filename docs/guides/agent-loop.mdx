@@ -37,6 +37,9 @@ The agent loop can be cancelled at any time via `Ctrl+C` in TUI mode. Cancellati
 - The current LLM stream is terminated
 - Partial text is discarded
 - The session state is preserved (no messages are lost)
+- Any `in_progress` items in the active [task plan](/tools/task-management) are finalised to `completed` and the plan is saved to disk, so the next run does not resume with stale state
+
+Plan finalisation runs on every exit path from the loop — user cancellation, API errors, `max_tokens`, and normal completion — not only on `Ctrl+C`.
 
 ## Turn Limits
 
@@ -57,7 +60,7 @@ The system prompt is assembled from several sources:
 - **Sandbox notice**: Reminder that file operations are restricted to the working directory
 - **Context files**: Contents of AGENTS.md, CLAUDE.md, or RUSTY.md files found in the project
 - **Current date**: For time-sensitive operations
-- **Plan-with-tasks instructions**: Optional instructions for structured task tracking
+- **Active task plan**: The current per-project [plan](/tools/task-management), rendered under an `## Active Task Plan (<completed>/<total> completed, <remaining> remaining)` header grouped by priority. The plan is reloaded from disk and re-injected **before every turn**, so each LLM call sees the live state of the task list without the model having to repeat it in the conversation.
 
 ## Streaming
 
