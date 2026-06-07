@@ -511,7 +511,12 @@ impl Agent {
         self.messages.push(Message::user_blocks(content));
 
         // Auto-plan: intercept user message for complexity assessment
-        if self.auto_plan && self.plan.is_none() {
+        let should_auto_plan = self.auto_plan && if let Some(plan) = &self.plan {
+            plan.lock().await.items.is_empty()
+        } else {
+            true
+        };
+        if should_auto_plan {
             let last_user_content = &self.messages.last().unwrap().content;
             let user_blocks: Vec<ContentBlock> = match last_user_content {
                 MessageContent::Blocks(blocks) => blocks.clone(),
