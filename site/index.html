@@ -63,6 +63,7 @@
                 <a href="#why" class="hover:text-zinc-950 transition-colors">Philosophy</a>
                 <a href="#quickstart" class="hover:text-zinc-950 transition-colors">Quick Start</a>
                 <a href="#specs" class="hover:text-zinc-950 transition-colors">Specifications</a>
+                <a href="#features" class="hover:text-zinc-950 transition-colors">Features</a>
                 <a href="#security" class="hover:text-zinc-950 transition-colors">Security</a>
                 <a href="#reference" class="hover:text-zinc-950 transition-colors">Reference</a>
             </nav>
@@ -100,6 +101,7 @@
             <a href="#why" class="mobile-link py-1">Philosophy</a>
             <a href="#quickstart" class="mobile-link py-1">Quick Start</a>
             <a href="#specs" class="mobile-link py-1">Specifications</a>
+            <a href="#features" class="mobile-link py-1">Features</a>
             <a href="#security" class="mobile-link py-1">Security</a>
             <a href="#reference" class="mobile-link py-1">Reference</a>
             <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener noreferrer" class="mobile-link py-1 flex items-center gap-1.5">
@@ -112,7 +114,7 @@
     <section class="relative py-20 sm:py-28 px-6 bg-white overflow-hidden">
         <div class="max-w-4xl mx-auto text-left relative z-10">
             <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-mono mb-8 bg-zinc-50 text-zinc-600 border-zinc-200/80">
-                <span>v0.1.5</span>
+                <span>v0.1.6</span>
                 <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
                 <span>Portable Static Binary</span>
             </div>
@@ -228,7 +230,7 @@
                 
                 <div class="text-zinc-400 font-light">// Environment audit complete. Launching Setup Wizard...</div>
                 
-                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.5</div>
+                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.6</div>
                 <div class="text-zinc-500">Settings database `~/.rusty/settings.json` not found. Entering safe first-run sequence.</div>
                 
                 <div class="space-y-1">
@@ -283,6 +285,16 @@
                         <span class="text-zinc-400">></span>
                         <span class="text-zinc-700">/compact</span>
                         <span class="text-zinc-400 text-[10px]">// force compaction</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-400">></span>
+                        <span class="text-zinc-700">/version</span>
+                        <span class="text-zinc-400 text-[10px]">// show version and check for updates</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-400">></span>
+                        <span class="text-zinc-700">/cost</span>
+                        <span class="text-zinc-400 text-[10px]">// show token usage and estimated cost</span>
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="text-zinc-400">></span>
@@ -546,6 +558,87 @@
         </div>
     </section>
 
+    <!-- FEATURES SECTION (v0.1.6) -->
+    <section id="features" class="py-20 border-y border-zinc-200 bg-white">
+        <div class="max-w-4xl mx-auto px-6">
+            <div class="text-left mb-12 space-y-3">
+                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Capabilities</span>
+                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Built for complex, multi-step work</h2>
+                <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
+                    Rusty coordinates multiple tools, manages task plans, and adapts its reasoning budget dynamically to context pressure.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <!-- Feature 1: Auto-Plan with Task Tracking -->
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Auto-Plan with Task Tracking</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Launch with <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--plan-with-tasks</code> and the agent creates a structured task list before executing. Tasks move through pending, in-progress, and completed states. Plan mode (<code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--permissions plan</code>) restricts to read-only operations for safe exploration.
+                    </p>
+                </div>
+
+                <!-- Feature 2: Concurrent Tool Execution -->
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Concurrent Tool Execution</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        When the model issues multiple independent tool calls in a single response, Rusty executes them in parallel via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">tokio::JoinSet</code>. Results are collected in call-order once all complete. Reduces wall-clock time for multi-file edits and batch searches.
+                    </p>
+                </div>
+
+                <!-- Feature 3: Multimodal Image Support -->
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Multimodal Image Support</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Paste images directly into the TUI input field. Screenshots and diagrams are sanitised (ANSI, control characters, bidi overrides stripped), encoded as base64, and sent as <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">ContentBlock::Image</code> to vision-capable models. Paste length capped at 100KB.
+                    </p>
+                </div>
+
+                <!-- Feature 4: Model Registry & Picker -->
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Model Registry & Picker</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Define multiple models in <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">settings.json</code> with per-model API keys, endpoints, and context windows. Switch models mid-session via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">/settings</code> in the TUI sidebar or <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--model</code> from the CLI.
+                    </p>
+                </div>
+
+                <!-- Feature 5: Dynamic Thinking Budget -->
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Dynamic Thinking Budget</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Three levels (minimal/normal/deep) control reasoning token allocation. The agent adjusts automatically: multi-step tasks are boosted to normal, and high context usage (>70%) triggers step-downs to preserve output space. Set via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--thinking-budget</code> or <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">/settings</code>.
+                    </p>
+                </div>
+
+                <!-- Feature 6: Per-Project Memory -->
+                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Per-Project Memory</h4>
+                    </div>
+                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
+                        Store project-specific notes, decisions, and preferences in <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">~/.rusty/memory/</code>. Supports save, search, list, and delete actions. Capped at 100 entries per project with FIFO eviction and multi-layer content sanitisation.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- DOCUMENTATION EXPLORER SECTION -->
     <section id="reference" class="py-20 max-w-4xl mx-auto px-6 bg-zinc-50/50 border-b border-zinc-200">
         <div class="text-left mb-16 space-y-3">
@@ -665,7 +758,7 @@
                 <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Sessions</span>
                 <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Persistent conversation history</h2>
                 <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
-                    Every conversation is automatically saved to <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">~/.rusty/sessions/</code> as JSON, including the full message history, model name, and timestamps. Sessions resume from where you left off.
+                    Every conversation is automatically saved to <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">~/.rusty/sessions/&lt;project&gt;/</code> as JSON, including the full message history, model name, and timestamps. Sessions are isolated per-project (derived from your working directory), so different codebases never share conversation history. Sessions resume from where you left off.
                 </p>
             </div>
 
@@ -734,13 +827,28 @@
                         <div class="font-mono text-[11px] p-4 rounded border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm overflow-x-auto">
 <pre>{
   "api_key": "sk-...",
-  "api_base": "https://api.deepseek.com",
-  "default_model": "deepseek-v4-pro",
+  "api_base": "https://api.xiaomimimo.com/v1",
+  "default_model": "mimo-v2.5-pro",
+  "models": [
+    {
+      "group": "Xiaomi",
+      "name": "MiMo Pro",
+      "provider": "OpenAI",
+      "api_base": "https://api.xiaomimimo.com/v1",
+      "model": "mimo-v2.5-pro",
+      "available_models": ["mimo-v2.5-pro", "mimo-v2-flash"],
+      "context_window": 131072,
+      "thinking_budget": 4096
+    }
+  ],
+  "active_model": "mimo-v2.5-pro",
   "allowed_tools": [
     "bash:git status",
     "bash:cargo check"
   ],
-  "credential_store": "keyring"
+  "credential_store": "keyring",
+  "thinking_level": "normal",
+  "permission_mode": "default"
 }</pre>
                         </div>
                         <p>
@@ -926,9 +1034,10 @@
                 { name: "bash", params: "command", perm: "Classified", desc: "Executes shell commands. Read-only commands (ls, git status, cargo check) bypass write permissions automatically." },
                 { name: "grep", params: "pattern, path?, include?", perm: "ReadOnly", desc: "Regex search across files with optional glob filtering. Caps at 200 results. Skips binary files." },
                 { name: "glob", params: "pattern", perm: "ReadOnly", desc: "File pattern matching to discover files by extension, name, or path structure." },
-                { name: "web_fetch", params: "url, max_length?", perm: "ReadOnly", desc: "Fetches URL content via HTTP (30s timeout). Configurable max length, default 10000 chars." },
+                { name: "web_fetch", params: "url, max_length?", perm: "ReadOnly", desc: "Fetches URL content via HTTP (30s timeout). Configurable max length, default 10000 chars. Full SSRF protection: blocks localhost, private IPs, link-local, DNS rebinding, and validates all redirects." },
                 { name: "todowrite", params: "tasks[]", perm: "None", desc: "Structured task list management. Accepts items with content, status, and priority. Persists across conversation." },
-                { name: "agent", params: "task, context?", perm: "None", desc: "Spawns a sub-agent in a separate tokio task with BypassPermissions. Sub-agents get all tools except agent (prevents recursion)." }
+                { name: "agent", params: "task, context?", perm: "None", desc: "Spawns a sub-agent in a separate tokio task with BypassPermissions. Sub-agents get all tools except agent (prevents recursion)." },
+                { name: "memory", params: "action, content?, id?, query?", perm: "None", desc: "Per-project persistent memory. Actions: save, search, list, delete. Stored in ~/.rusty/memory/ with 100-entry cap and FIFO eviction. Content sanitised on input and output." }
             ],
             commands: [
                 { name: "/help", alias: "/h, /?", desc: "Displays the list of available slash commands and their descriptions." },
@@ -939,6 +1048,10 @@
                 { name: "/clear", alias: "None", desc: "Clears the terminal display while preserving the active conversation state." },
                 { name: "/copy", alias: "/c", desc: "Copies the most recent assistant response to the system clipboard." },
                 { name: "/model", alias: "/m", desc: "Displays the currently active model identifier for the session." },
+                { name: "/version", alias: "None", desc: "Displays the current Rusty version and checks for available updates." },
+                { name: "/cost", alias: "None", desc: "Displays cumulative token usage and estimated cost for the current session." },
+                { name: "/permissions", alias: "/perms", desc: "View or revoke always-approved tool permissions granted during the session." },
+                { name: "/settings", alias: "None", desc: "Opens the model registry and general settings overlay. TUI only." },
                 { name: "/rename", alias: "None", desc: "Assigns a human-readable label to the current conversation session." },
                 { name: "/quit", alias: "/q, /exit", desc: "Saves the current session and cleanly exits the agent." }
             ]
