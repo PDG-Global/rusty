@@ -739,11 +739,11 @@ impl Agent {
             // Check stop reason
             match stop_reason.as_deref() {
                 Some("end_turn") | None => {
-                    // If there are incomplete tasks, nudge the model to continue
-                    // instead of letting it stop. Allow more nudges for larger task lists
-                    // since each task needs ~2 turns (do work + update todowrite).
+                    // If there are incomplete tasks, gently remind the model to continue.
+                    // More nudges are allowed for larger task lists since each task needs
+                    // ~2 turns (do work + update todowrite).
                     let incomplete = self.incomplete_task_details();
-                    let nudge_limit = (incomplete.len() as u32 * 2).max(8);
+                    let nudge_limit = (incomplete.len() as u32 * 4).max(12);
                     if !incomplete.is_empty() && self.task_nudge_count < nudge_limit {
                         warn!(
                             "Model tried to stop with {} incomplete tasks (nudge {}/{}); nudging to continue",
@@ -760,11 +760,10 @@ impl Agent {
                             .join("\n");
                         self.messages.push(Message::user(
                             format!(
-                                "STOP. You have {} incomplete tasks remaining:\n{}\n\n\
-                                 Do NOT narrate what you will do. Do NOT re-plan. \
-                                 Execute the first incomplete task RIGHT NOW by calling the appropriate tool. \
-                                 After completing it, call todowrite to mark it completed, then immediately \
-                                 execute the next task. Repeat until every task is `completed` or `cancelled`.",
+                                "You have {} incomplete task(s) remaining:\n{}\n\n\
+                                 Continue working through them. Execute the next pending task by calling \
+                                 the appropriate tool. When you finish a task, update its status via todowrite \
+                                 in your next turn.",
                                 incomplete.len(),
                                 task_list,
                             )
