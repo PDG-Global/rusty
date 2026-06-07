@@ -33,7 +33,8 @@
               "configuration/settings",
               "configuration/credentials",
               "configuration/presets",
-              "configuration/permissions"
+              "configuration/permissions",
+              "configuration/keybindings"
             ]
           },
           {

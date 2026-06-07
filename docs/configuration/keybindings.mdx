@@ -1,0 +1,141 @@
+---
+title: Keybindings
+description: Customize TUI keybindings with a JSON keymap file
+---
+
+Rusty's TUI ships with sensible defaults, but you can remap or extend those bindings by pointing the `--keymap` flag at a JSON file.
+
+```bash
+rusty --keymap ~/.rusty/keybindings.json
+```
+
+If the file is missing or fails to parse, Rusty prints a warning to stderr and continues with the default bindings — it will not abort startup.
+
+## When to use a keymap
+
+Reach for a custom keymap when you want to:
+
+- Bind unused chords (for example `Ctrl-q` to quit) without going through the slash command palette.
+- Layer a prefix-style workflow on top of the TUI, similar to `tmux` or `screen`.
+- Translate vendor-specific escape sequences (for example Kitty's `CSI u` modifier encoding) into the modifier-aware key events Rusty understands.
+
+A keymap is purely additive: any chord the file does not bind is still handled by Rusty's built-in input layer (typing, history navigation, slash commands, and so on).
+
+## File format
+
+The file is a single JSON object with three optional top-level keys.
+
+```json
+{
+  "prefix": { "key": "b", "modifiers": ["ctrl"] },
+  "bindings": [
+    { "key": "q", "action": "quit" },
+    { "key": "c", "after_prefix": true, "action": "copy" }
+  ],
+  "terminal_overrides": {
+    "kitty": [
+      { "raw_escape": "\u001b[1;5A", "maps_to": { "key": "Up", "modifiers": ["ctrl"] } }
+    ]
+  }
+}
+```
+
+### `prefix`
+
+A single key combo that arms a multi-key sequence. After the prefix is pressed, the next keystroke is matched against bindings marked `"after_prefix": true`. The prefix itself never fires an action.
+
+```json
+"prefix": { "key": "b", "modifiers": ["ctrl"] }
+```
+
+Omit `prefix` if you only need single-chord bindings.
+
+### `bindings`
+
+An array of key combos that map to action names. Each entry accepts:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | string | Required. The key name, e.g. `"q"`, `"Tab"`, `"F1"`, `"Up"`. |
+| `modifiers` | string[] | Optional. Any of `"ctrl"`, `"alt"`, `"shift"`, `"super"`. |
+| `after_prefix` | boolean | Optional. When `true`, this binding fires only after the prefix has been pressed. |
+| `action` | string | Required. The action name to dispatch. See [Actions](#actions) below. |
+
+Single-chord and prefixed bindings can be mixed freely:
+
+```json
+"bindings": [
+  { "key": "q", "modifiers": ["ctrl"], "action": "quit" },
+  { "key": "Tab", "action": "next_panel" },
+  { "key": "c", "after_prefix": true, "action": "copy" },
+  { "key": "x", "after_prefix": true, "action": "/compact" }
+]
+```
+
+### `terminal_overrides`
+
+Some terminals emit escape sequences that the default parser does not decode into a modifier-aware key event. Use `terminal_overrides` to translate a raw escape into a logical `KeyEvent` before binding lookup.
+
+```json
+"terminal_overrides": {
+  "kitty": [
+    { "raw_escape": "\u001b[1;5A", "maps_to": { "key": "Up",   "modifiers": ["ctrl"] } },
+    { "raw_escape": "\u001b[1;5B", "maps_to": { "key": "Down", "modifiers": ["ctrl"] } }
+  ]
+}
+```
+
+Keys in the map are terminal identifiers (`kitty`, `wezterm`, etc.). Each entry pairs a `raw_escape` byte string with the `maps_to` key event it should be treated as.
+
+## Actions
+
+The `action` field is matched against the TUI dispatcher. Names not listed here fall through to Rusty's default input handling.
+
+| Action | Effect |
+|--------|--------|
+| `quit`, `exit` | Quit the TUI (equivalent to `/quit`). |
+| `copy` | Copy the last assistant message to the clipboard. |
+| `compact` | Compact the conversation history. |
+| `paste` | Paste from the system clipboard into the input buffer. |
+| `scroll-up` | Scroll the transcript up by 3 lines. |
+| `scroll-down` | Scroll the transcript down by 3 lines. |
+| `page-up` | Scroll up by one viewport. |
+| `page-down` | Scroll down by one viewport. |
+| `top` | Jump to the top of the transcript. |
+| `bottom` | Jump to the bottom of the transcript. |
+| `new-line` | Insert a newline at the cursor without sending. |
+
+Any action string that starts with `/` is parsed as a slash command and dispatched through the normal command pipeline, so you can bind keys directly to commands like `/init`, `/compact`, or `/sessions`.
+
+## Example
+
+A `tmux`-style configuration with `Ctrl-b` as the prefix:
+
+```json
+{
+  "prefix": { "key": "b", "modifiers": ["ctrl"] },
+
+  "bindings": [
+    { "key": "q", "modifiers": ["ctrl"], "action": "quit" },
+    { "key": "c", "modifiers": ["ctrl"], "action": "copy" },
+    { "key": "v", "modifiers": ["ctrl"], "action": "paste" },
+
+    { "key": "k", "after_prefix": true, "action": "scroll-up" },
+    { "key": "j", "after_prefix": true, "action": "scroll-down" },
+    { "key": "g", "after_prefix": true, "action": "top" },
+    { "key": "G", "after_prefix": true, "action": "bottom" },
+    { "key": "x", "after_prefix": true, "action": "compact" }
+  ]
+}
+```
+
+Save the file, then launch Rusty with `--keymap path/to/file.json`. The bindings take effect immediately — there is no need to restart between runs once the file is loaded.
+
+## Failure modes
+
+Keymap loading is best-effort:
+
+- **File missing or unreadable** — Rusty prints `Warning: failed to read keymap <path>: <error>` to stderr and continues with no custom bindings.
+- **Invalid JSON or schema mismatch** — Rusty prints `Warning: failed to parse keymap <path>: <error>` to stderr and continues with no custom bindings.
+
+In both cases the rest of the TUI is unaffected, so a broken keymap will not prevent you from starting a session.
