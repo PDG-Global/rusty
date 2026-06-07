@@ -1240,7 +1240,7 @@ async fn run_tui(
                             }
                             Some(rusty_tui::app::TuiCommand::Clear) => {
                                 let mut agent = agent_arc.lock().await;
-                                agent.messages_mut().clear();
+                                agent.clear_state().await;
                                 let _ = event_tx.send(AgentTaskEvent::Event(
                                     rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
                                 ));
@@ -2013,6 +2013,7 @@ async fn handle_slash_command(
             app.thinking_line_count = 0;
             app.thinking_expanded = false;
             app.pending_tools.clear();
+            app.pinned_todos = None;
             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Clear);
             app.push_system("Conversation cleared.");
             app.needs_redraw = true;

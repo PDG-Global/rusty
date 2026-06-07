@@ -234,6 +234,17 @@ impl Agent {
         &self.total_usage
     }
 
+    /// Reset conversation and task state (used by /clear).
+    pub async fn clear_state(&mut self) {
+        self.messages.clear();
+        self.task_nudge_count = 0;
+        if let Some(plan) = &self.plan {
+            let mut p = plan.lock().await;
+            p.items.clear();
+            let _ = p.save();
+        }
+    }
+
     /// Scan recent messages for the most recent `todowrite` tool call and
     /// check whether any tasks are still pending or in_progress.
     fn has_incomplete_tasks(&self) -> bool {
@@ -610,71 +621,99 @@ impl Agent {
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
             let mut got_api_usage = false;
 
+            // Enforce a 5-minute ceiling on the entire turn, in addition to the 120s
+            // per-event timeout.  This catches APIs that keep the connection alive with
+            // SSE keepalives but never produce any real content.
+            let turn_start = std::time::Instant::now();
+            let max_turn_duration = Duration::from_secs(300);
+
             let stop_reason = loop {
+                let elapsed = turn_start.elapsed();
+                let remaining = if elapsed > max_turn_duration {
+                    Duration::from_secs(0)
+                } else {
+                    max_turn_duration - elapsed
+                };
+                let per_event_timeout = Duration::from_secs(120).min(remaining);
+                if per_event_timeout.is_zero() {
+                    warn!("LLM stream exceeded maximum turn duration of 5 minutes; aborting turn");
+                    self.finalize_plan().await;
+                    return Ok("Turn timed out — maximum duration exceeded.".to_string());
+                }
+
                 let next_event = if let Some(c) = cancel {
                     tokio::select! {
-                        event = timeout(Duration::from_secs(120), stream.next()) => event.ok().flatten(),
+                        event = timeout(per_event_timeout, stream.next()) => event,
                         _ = c.cancelled() => {
                             self.finalize_plan().await;
                             return Ok("Turn cancelled by user.".to_string());
                         }
                     }
                 } else {
-                    timeout(Duration::from_secs(120), stream.next()).await.ok().flatten()
+                    timeout(per_event_timeout, stream.next()).await
                 };
-                let Some(event) = next_event else {
-                    warn!("LLM stream timed out after 120s with no events; aborting turn");
-                    self.finalize_plan().await;
-                    return Ok("Turn timed out — no response from model after 120 seconds.".to_string());
-                };
-                match event? {
-                    StreamEvent::TextDelta(text) => {
-                        assistant_text.push_str(&text);
-                        if let Some(cb) = on_text {
-                            cb(&text);
+
+                match next_event {
+                    Ok(Some(event)) => {
+                        match event? {
+                            StreamEvent::TextDelta(text) => {
+                                assistant_text.push_str(&text);
+                                if let Some(cb) = on_text {
+                                    cb(&text);
+                                }
+                            }
+                            StreamEvent::ThinkingDelta(thinking) => {
+                                if let Some(cb) = on_thinking {
+                                    cb(&thinking);
+                                }
+                            }
+                            StreamEvent::ToolCallDelta {
+                                index,
+                                id,
+                                name,
+                                arguments_delta,
+                            } => {
+                                while tool_calls.len() <= index {
+                                    tool_calls.push(ToolCallState::default());
+                                }
+                                let tc = &mut tool_calls[index];
+                                if let Some(id) = id {
+                                    tc.id = id;
+                                }
+                                if let Some(name) = name {
+                                    tc.name = name;
+                                }
+                                tc.arguments.push_str(&arguments_delta);
+                            }
+                            StreamEvent::Usage(usage) => {
+                                got_api_usage = true;
+                                // Use the API's prompt_tokens as the authoritative context size.
+                                // Don't accumulate input_tokens across turns — each turn's prompt_tokens
+                                // already includes all prior messages, so accumulating would double-count.
+                                self.current_context_tokens = usage.input_tokens;
+                                // For total_usage, track the max context seen (not a sum)
+                                self.total_usage.input_tokens = usage.input_tokens;
+                                self.total_usage.output_tokens += usage.output_tokens;
+                                self.total_usage.cached_tokens += usage.cached_tokens;
+                                if let Some(cb) = on_usage {
+                                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
+                                }
+                            }
+                            StreamEvent::Done { stop_reason } => break stop_reason,
+                            StreamEvent::Error(msg) => {
+                                self.finalize_plan().await;
+                                return Err(RustyError::Api(msg));
+                            }
                         }
                     }
-                    StreamEvent::ThinkingDelta(thinking) => {
-                        if let Some(cb) = on_thinking {
-                            cb(&thinking);
-                        }
+                    Ok(None) => {
+                        // Stream ended naturally (no more events).
+                        break None;
                     }
-                    StreamEvent::ToolCallDelta {
-                        index,
-                        id,
-                        name,
-                        arguments_delta,
-                    } => {
-                        while tool_calls.len() <= index {
-                            tool_calls.push(ToolCallState::default());
-                        }
-                        let tc = &mut tool_calls[index];
-                        if let Some(id) = id {
-                            tc.id = id;
-                        }
-                        if let Some(name) = name {
-                            tc.name = name;
-                        }
-                        tc.arguments.push_str(&arguments_delta);
-                    }
-                    StreamEvent::Usage(usage) => {
-                        got_api_usage = true;
-                        // Use the API's prompt_tokens as the authoritative context size.
-                        // Don't accumulate input_tokens across turns — each turn's prompt_tokens
-                        // already includes all prior messages, so accumulating would double-count.
-                        self.current_context_tokens = usage.input_tokens;
-                        // For total_usage, track the max context seen (not a sum)
-                        self.total_usage.input_tokens = usage.input_tokens;
-                        self.total_usage.output_tokens += usage.output_tokens;
-                        self.total_usage.cached_tokens += usage.cached_tokens;
-                        if let Some(cb) = on_usage {
-                            cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
-                        }
-                    }
-                    StreamEvent::Done { stop_reason } => break stop_reason,
-                    StreamEvent::Error(msg) => {
+                    Err(_) => {
+                        warn!("LLM stream timed out after {}s with no events; aborting turn", per_event_timeout.as_secs());
                         self.finalize_plan().await;
-                        return Err(RustyError::Api(msg));
+                        return Ok("Turn timed out — no response from model.".to_string());
                     }
                 }
             };

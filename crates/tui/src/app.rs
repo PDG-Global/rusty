@@ -914,8 +914,6 @@ pub struct AppState {
     pub is_renaming: bool,
     /// Current session name (if renamed)
     pub session_name: Option<String>,
-    /// Whether thinking text should be shown collapsed (just line count)
-    pub thinking_collapsed: bool,
     /// Saved thinking text after thinking phase ends
     pub saved_thinking: String,
     /// Number of thinking lines (for collapsed display)
@@ -1074,7 +1072,6 @@ impl Default for AppState {
             clear_pending: false,
             is_renaming: false,
             session_name: None,
-            thinking_collapsed: false,
             saved_thinking: String::new(),
             thinking_line_count: 0,
             thinking_expanded: false,
@@ -2009,6 +2006,10 @@ impl AppState {
             self.streaming_text.clear();
         }
         self.is_thinking = true;
+        // Auto-expand thinking on first content so the user can see progress
+        if self.thinking_text.is_empty() && !text.is_empty() {
+            self.thinking_expanded = true;
+        }
         self.thinking_text.push_str(text);
         self.needs_redraw = true;
     }
