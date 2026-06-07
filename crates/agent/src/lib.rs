@@ -10,8 +10,7 @@ use rusty_tools::Tool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use r#loop::{Agent, AgentCallbacks, ApprovalCallback, PermissionCallback, ToolStatus};
-pub use rusty_core::plan::{ApprovalDecision, ApprovalRequest, ApprovalTask};
+pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, ToolStatus};
 // Re-export CancelToken so downstream crates (e.g. rusty CLI) can use `rusty_agent::CancelToken`.
 pub use rusty_core::CancelToken;
 
@@ -106,22 +105,37 @@ pub async fn build_system_prompt(
     // Task tracking: instruct model to actively use todowrite for multi-step work
     parts.push(
         "## Task Tracking\n\n\
-        When a task involves multiple steps, use the `todowrite` tool to plan and track your \
-        work. This helps both you and the user see what remains.\n\n\
-        Guidelines:\n\
+        When a task involves multiple steps, you must actively use the `todowrite` \
+        tool to plan and track your work.\n\n\
+        Rules:\n\
         1. Break the user's request into concrete sub-tasks using `todowrite` with status `pending`.\n\
         2. As you work through each sub-task, update its status to `in_progress` before starting \
         and `completed` when done.\n\
         3. If you discover additional work needed, add new tasks to the list.\n\
-        4. Work through tasks sequentially. Complete one, then move to the next.\n\
+        4. Keep the task list visible and up-to-date throughout the conversation.\n\
         5. If you are uncertain what tasks remain, re-read your most recent `todowrite` call.\n\n\
-        Execution habits:\n\
-        - After calling `todowrite` to create or update a plan, immediately begin executing the \
-        first pending task. Do not stop to describe what you will do.\n\
-        - If a task requires research, that research is part of the task — do it, then move on.\n\
-        - Avoid meta-commentary (\"I will now...\", \"Let me proceed to...\"). Just do the work.\n\
-        - When all tasks are done, briefly verify your work against the original request before \
-        finishing."
+        CRITICAL EXECUTION RULES:\n\
+        - Creating a task list is planning, not work. After calling `todowrite`, you MUST \
+        immediately begin executing the first task. Do not stop to narrate what you will do.\n\
+        - Never say \"I'll now proceed to...\", \"Let me start with...\", or \"Now I will...\" \
+        and then stop. Instead, perform the actual action (call the tool, write the code, \
+        make the edit).\n\
+        - If the first task requires research or investigation, that research IS the first \
+        task. Gather information by reading files, running commands, or searching code, then \
+        proceed to the next task. Do not treat research as a separate meta-phase.\n\
+        - Work through every task sequentially. After completing one, immediately start the \
+        next. The only valid reasons to stop are: all tasks are `completed`/`cancelled`, you \
+        are blocked by missing information from the user, or an error prevents continuation.\n\
+        - After all tasks are `completed` or `cancelled`, REVIEW your work before finishing. \
+        Re-read the original request, then go through each completed task and verify it was \
+        done correctly and completely. Check for: missed requirements, inconsistencies between \
+        tasks, files that should have been updated but weren't, and anything that contradicts \
+        the original request. If you find gaps, add new tasks and execute them.\n\
+        - You must NOT stop or emit `end_turn` until every task in your most recent \
+        `todowrite` call is either `completed` or `cancelled` AND you have reviewed your work. \
+        If you attempt to stop with incomplete tasks, the system will automatically remind \
+        you to continue.\n\
+        - Verify your task list is fully complete before concluding your response."
             .to_string(),
     );
 

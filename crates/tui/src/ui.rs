@@ -106,18 +106,6 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
         draw_settings(app, area, buf);
     }
 
-    // Overlay plan approval if active
-    if app.plan_approval.is_some() {
-        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                buf[(x, y)].set_char(' ').set_style(dim_style);
-            }
-        }
-        let popup_area = centered_rect(75, area.height.saturating_sub(4), area);
-        draw_plan_approval(app, popup_area, buf);
-    }
-
     // Overlay model form if active (separate from settings overlay)
     if app.model_form.is_some() {
         let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
@@ -1430,64 +1418,6 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
         width += w;
     }
     result
-}
-
-fn draw_plan_approval(app: &AppState, area: Rect, buf: &mut Buffer) {
-    let approval = match &app.plan_approval {
-        Some(a) => a,
-        None => return,
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .title(Span::styled(
-            " Plan Approval ",
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        ));
-
-    let inner = block.inner(area);
-    block.render(area, buf);
-
-    let width = inner.width as usize;
-    let mut lines: Vec<Line> = Vec::new();
-
-    // Header
-    lines.push(Line::from(vec![
-        Span::styled(
-            "The LLM proposed a plan. Review and approve to proceed.",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        ),
-    ]));
-    lines.push(Line::from(""));
-
-    // Plan content
-    render_content(&approval.plan_text, "  ", Style::default().fg(Color::White), &mut lines, width);
-
-    // Footer with key hints
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("    ", Style::default()),
-        Span::styled("[y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-        Span::styled(" Approve  ", Style::default().fg(Color::Gray)),
-        Span::styled("[n]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-        Span::styled(" Reject  ", Style::default().fg(Color::Gray)),
-        Span::styled("[j/k]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::styled(" Scroll", Style::default().fg(Color::Gray)),
-    ]));
-
-    // Scroll
-    let visible_height = inner.height as usize;
-    let scroll = if approval.scroll_offset > 0 {
-        lines.len().saturating_sub(visible_height + approval.scroll_offset)
-    } else if lines.len() > visible_height {
-        lines.len() - visible_height
-    } else {
-        0
-    };
-
-    let paragraph = Paragraph::new(lines).scroll((scroll as u16, 0));
-    Widget::render(&paragraph, inner, buf);
 }
 
 fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {

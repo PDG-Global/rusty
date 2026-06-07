@@ -7,10 +7,9 @@ use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,
     PermissionLevel, PermissionRequest,
 };
-use rusty_core::plan::{ApprovalDecision, ApprovalRequest, ApprovalTask, Plan, PlanItem, PlanItemPriority, PlanItemStatus};
+use rusty_core::plan::Plan;
 use rusty_core::{
-    CancelToken, Config, ContentBlock, Message, MessageContent, PermissionMode, Role, RustyError,
-    ToolDefinition, UsageInfo,
+    CancelToken, Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
 };
 use rusty_core::{dynamic_thinking_level, level_to_budget, ThinkingLevel};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
@@ -20,8 +19,6 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use crate::compact::maybe_compact;
@@ -79,13 +76,6 @@ pub type PermissionCallback = Arc<
         + Sync,
 >;
 
-/// Callback for plan approval requests — receives a request, returns a decision future
-pub type ApprovalCallback = Arc<
-    dyn Fn(ApprovalRequest) -> Pin<Box<dyn Future<Output = ApprovalDecision> + Send>>
-        + Send
-        + Sync,
->;
-
 pub struct Agent {
     provider: Arc<dyn LlmProvider>,
     tools: HashMap<String, Arc<dyn Tool>>,
@@ -109,11 +99,6 @@ pub struct Agent {
     task_nudge_count: u32,
     /// Persistent plan, injected into system prompt each turn.
     plan: Option<Arc<tokio::sync::Mutex<Plan>>>,
-    /// When true, auto-generate a plan for complex tasks and pause for user approval
-    /// before executing.
-    auto_plan: bool,
-    /// Callback for plan approval requests (used by auto-plan flow)
-    approval_callback: Option<ApprovalCallback>,
 }
 
 #[derive(Default)]
@@ -124,7 +109,6 @@ pub struct AgentCallbacks<'a> {
     pub on_usage: Option<&'a UsageCallback>,
     pub on_thinking_level: Option<&'a ThinkingLevelCallback>,
     pub cancel: Option<&'a CancelToken>,
-    pub on_approval: Option<&'a ApprovalCallback>,
 }
 
 impl Agent {
@@ -141,7 +125,6 @@ impl Agent {
             .collect();
 
         let max_turns = config.max_turns;
-        let auto_plan = config.auto_plan;
 
         Self {
             provider,
@@ -160,8 +143,6 @@ impl Agent {
             permanent_allowlist: HashSet::new(),
             task_nudge_count: 0,
             plan: None,
-            auto_plan,
-            approval_callback: None,
         }
     }
 
@@ -180,11 +161,6 @@ impl Agent {
     /// Set the persistent plan for this agent.
     pub fn set_plan(&mut self, plan: Arc<tokio::sync::Mutex<Plan>>) {
         self.plan = Some(plan);
-    }
-
-    /// Set the approval callback for auto-plan flow.
-    pub fn set_approval_callback(&mut self, cb: ApprovalCallback) {
-        self.approval_callback = Some(cb);
     }
 
     /// Refresh the system prompt with current plan context.
@@ -234,17 +210,6 @@ impl Agent {
         &self.total_usage
     }
 
-    /// Reset conversation and task state (used by /clear).
-    pub async fn clear_state(&mut self) {
-        self.messages.clear();
-        self.task_nudge_count = 0;
-        if let Some(plan) = &self.plan {
-            let mut p = plan.lock().await;
-            p.items.clear();
-            let _ = p.save();
-        }
-    }
-
     /// Scan recent messages for the most recent `todowrite` tool call and
     /// check whether any tasks are still pending or in_progress.
     fn has_incomplete_tasks(&self) -> bool {
@@ -260,7 +225,7 @@ impl Agent {
     /// Extract details of incomplete tasks from the most recent `todowrite` call.
     /// Returns a vec of (status, content) pairs for tasks that are not completed/cancelled.
     fn incomplete_task_details(&self) -> Vec<(String, String)> {
-        for msg in self.messages.iter().rev().take(20) {
+        for msg in self.messages.iter().rev().take(10) {
             if msg.role != Role::Assistant {
                 continue;
             }
@@ -308,198 +273,6 @@ impl Agent {
         }
     }
 
-    /// Make a lightweight LLM call to assess task complexity and generate a plan.
-    /// Returns `None` if the task is simple enough to proceed directly, or
-    /// `Some(ApprovalDecision)` if a plan was generated and the user was asked to approve.
-    async fn run_auto_plan(
-        &mut self,
-        user_content: &[ContentBlock],
-        on_approval: Option<&ApprovalCallback>,
-        on_thinking: Option<&ThinkingCallback>,
-    ) -> Result<Option<ApprovalDecision>, RustyError> {
-        // Build a focused planning system prompt
-        let planning_prompt = format!(
-            "{}\n\n\
-            ## Auto-Plan Assessment\n\
-            You are being called in planning-only mode. Your job is to assess the user's task \
-            and decide whether it needs a structured plan.\n\n\
-            ### When to call todowrite (complex tasks)\n\
-            - Multi-file changes (e.g. adding a feature that spans backend + frontend)\n\
-            - Tasks requiring research before implementation\n\
-            - Anything with 3+ distinct implementation steps\n\
-            - Tasks with ambiguity that benefits from an ordered approach\n\n\
-            ### When NOT to call todowrite (simple tasks)\n\
-            - Single file edits, bug fixes, or one-line changes\n\
-            - Questions, explanations, or code review requests\n\
-            - Tasks that are already well-defined and self-contained\n\n\
-            If the task is SIMPLE: respond with a brief explanation of what you'll do, and do NOT \
-            call the todowrite tool.\n\n\
-            If the task is COMPLEX: call the `todowrite` tool with a structured plan. Each task \
-            must be a specific, actionable step (e.g. 'Add X field to Y struct in Z.rs'), not a \
-            vague goal. Order tasks by dependency (do prerequisites first). Keep plans to 3-7 tasks. \
-            Use priorities: high for critical path blockers, medium for supporting work, low for \
-            optional enhancements.",
-            self.base_system_prompt
-        );
-
-        // Restrict to just the todowrite tool for this planning call
-        let todo_def = ToolDefinition {
-            name: "todowrite".to_string(),
-            description: "Create a structured task plan. Call this only for complex tasks.".to_string(),
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "todos": {
-                        "type": "array",
-                        "description": "Array of todo items",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "content": { "type": "string", "description": "Task description" },
-                                "status": { "type": "string", "enum": ["pending"] },
-                                "priority": { "type": "string", "enum": ["high", "medium", "low"] }
-                            },
-                            "required": ["content"]
-                        }
-                    }
-                },
-                "required": ["todos"]
-            }),
-        };
-
-        let plan_msg = Message {
-            role: Role::User,
-            content: MessageContent::Blocks(user_content.to_vec()),
-        };
-
-        let thinking_budget = level_to_budget(ThinkingLevel::Extended);
-        let request = MessageRequest {
-            model: self.config.model.clone(),
-            system: Some(planning_prompt),
-            messages: vec![plan_msg],
-            tools: vec![todo_def],
-            // max_tokens must exceed thinking_budget so the provider has room
-            // for both reasoning and the final response / tool call.
-            max_tokens: thinking_budget + 4096,
-            temperature: Some(0.3),
-            thinking_budget: Some(thinking_budget),
-        };
-
-        let mut stream = self.provider.create_message_stream(request).await?;
-
-        let mut text = String::new();
-        let mut tool_calls: Vec<ToolCallState> = Vec::new();
-
-        // Cap planning at 60s so a hung provider cannot block the session indefinitely.
-        let plan_timeout = timeout(Duration::from_secs(60), async {
-            while let Some(event) = stream.next().await {
-                match event? {
-                    StreamEvent::TextDelta(delta) => text.push_str(&delta),
-                    StreamEvent::ToolCallDelta { id, name, arguments_delta, .. } => {
-                        if let Some(name) = name {
-                            tool_calls.push(ToolCallState { id: id.unwrap_or_default(), name, arguments: String::new() });
-                        }
-                        if let Some(tc) = tool_calls.last_mut() {
-                            tc.arguments.push_str(&arguments_delta);
-                        }
-                    }
-                    StreamEvent::Usage(_) => {}
-                    StreamEvent::ThinkingDelta(delta) => {
-                        if let Some(cb) = on_thinking {
-                            cb(&delta);
-                        }
-                    }
-                    StreamEvent::Done { .. } => break,
-                    StreamEvent::Error(e) => return Err(RustyError::Api(e)),
-                }
-            }
-            Ok(()) as Result<(), RustyError>
-        }).await;
-
-        if plan_timeout.is_err() {
-            warn!("Auto-plan: planning call timed out after 60s; proceeding without a plan");
-            return Ok(None);
-        }
-        plan_timeout.unwrap()?;
-
-        // Check if the LLM called todowrite — if not, the task is simple
-        let todo_calls: Vec<_> = tool_calls.iter().filter(|tc| tc.name == "todowrite").collect();
-        if todo_calls.is_empty() {
-            debug!("Auto-plan: task assessed as simple, proceeding directly");
-            return Ok(None);
-        }
-
-        // Extract tasks from the todowrite tool call
-        let mut tasks: Vec<ApprovalTask> = Vec::new();
-        for tc in &todo_calls {
-            if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tc.arguments) {
-                if let Some(todos) = args.get("todos").and_then(|t| t.as_array()) {
-                    for todo in todos {
-                        let content = todo.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                        if content.is_empty() { continue; }
-                        let priority = todo.get("priority").and_then(|p| p.as_str()).unwrap_or("medium");
-                        tasks.push(ApprovalTask {
-                            content,
-                            priority: priority.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        if tasks.is_empty() {
-            debug!("Auto-plan: todowrite called but no valid tasks extracted, proceeding directly");
-            return Ok(None);
-        }
-
-        // Build plan text for display
-        let mut plan_text = text.trim().to_string();
-        if plan_text.is_empty() {
-            plan_text = "Auto-generated plan:".to_string();
-        }
-        plan_text.push_str("\n\n");
-        for (i, task) in tasks.iter().enumerate() {
-            plan_text.push_str(&format!("{}. [{}] {}\n", i + 1, task.priority, task.content));
-        }
-
-        let request = ApprovalRequest { plan_text, tasks: tasks.clone() };
-
-        // Invoke the approval callback (prefer callback passed at runtime, fall back to agent field)
-        let callback = on_approval.or(self.approval_callback.as_ref());
-        let decision = if let Some(cb) = callback {
-            cb(request).await
-        } else {
-            // No callback available — auto-approve (e.g. headless mode default)
-            debug!("Auto-plan: no approval callback, auto-approving plan");
-            ApprovalDecision { approved: true }
-        };
-
-        if decision.approved {
-            // Persist the approved plan so it is injected into the system prompt
-            if let Some(plan) = &self.plan {
-                let mut plan = plan.lock().await;
-                let items: Vec<PlanItem> = tasks
-                    .into_iter()
-                    .map(|t| PlanItem {
-                        content: t.content,
-                        status: PlanItemStatus::Pending,
-                        priority: PlanItemPriority::from_str(&t.priority),
-                    })
-                    .collect();
-                plan.set_items(items);
-                if let Err(e) = plan.save() {
-                    warn!("Auto-plan: failed to save approved plan: {e}");
-                } else {
-                    debug!("Auto-plan: persisted {} approved task(s)", plan.items.len());
-                }
-            }
-            self.refresh_system_prompt().await;
-        }
-
-        debug!("Auto-plan: user {} the plan", if decision.approved { "approved" } else { "rejected" });
-        Ok(Some(decision))
-    }
-
     /// Run the agent loop: send messages, handle streaming, execute tools, repeat.
     /// Pass a `CancelToken` via callbacks to allow mid-turn cancellation (immediate via `tokio::select!`).
     pub async fn run(
@@ -514,34 +287,11 @@ impl Agent {
             on_usage,
             on_thinking_level,
             cancel,
-            on_approval,
         } = callbacks;
         if let Some(c) = cancel {
             c.reset();
         }
         self.messages.push(Message::user_blocks(content));
-
-        // Auto-plan: intercept user message for complexity assessment
-        let should_auto_plan = self.auto_plan && if let Some(plan) = &self.plan {
-            plan.lock().await.items.is_empty()
-        } else {
-            true
-        };
-        if should_auto_plan {
-            let last_user_content = &self.messages.last().unwrap().content;
-            let user_blocks: Vec<ContentBlock> = match last_user_content {
-                MessageContent::Blocks(blocks) => blocks.clone(),
-                MessageContent::Text(text) => vec![ContentBlock::Text { text: text.clone() }],
-            };
-
-            if let Some(decision) = self.run_auto_plan(&user_blocks, on_approval, on_thinking).await? {
-                if !decision.approved {
-                    debug!("Auto-plan: user rejected plan, stopping agent loop");
-                    return Ok("Plan rejected. Provide a different request or try again.".to_string());
-                }
-                debug!("Auto-plan: user approved plan, proceeding with execution");
-            }
-        }
 
         for turn in 0..self.max_turns {
             if let Some(c) = cancel {
@@ -572,13 +322,12 @@ impl Agent {
             let context_pct = estimated_tokens as f64 / context_window as f64;
             let base_level = self.config.resolve_thinking_level();
             let effective_level = dynamic_thinking_level(base_level, context_pct, turn as u32);
-            // When there are active tasks we are in execution mode; cap thinking at Normal
-            // so the model spends its tokens doing work rather than re-reasoning.
+            // If there are incomplete tasks, ensure at least Normal thinking
             let has_active_tasks = self.has_incomplete_tasks();
             let effective_level = if has_active_tasks {
                 match effective_level {
-                    ThinkingLevel::Minimal | ThinkingLevel::Normal => ThinkingLevel::Normal,
-                    ThinkingLevel::Deep | ThinkingLevel::Extended => ThinkingLevel::Normal,
+                    ThinkingLevel::Minimal => ThinkingLevel::Normal,
+                    other => other,
                 }
             } else {
                 effective_level
@@ -596,14 +345,12 @@ impl Agent {
                 cb(Some(effective_level));
             }
 
-            // Ensure max_tokens always exceeds thinking_budget + headroom to prevent API hangs.
-            let max_tokens = self.config.max_tokens.max(thinking_budget.map(|b| b + 4096).unwrap_or(0));
             let request = MessageRequest {
                 model: self.config.model.clone(),
                 system: Some(self.system_prompt.clone()),
                 messages: self.messages.clone(),
                 tools: tool_defs,
-                max_tokens,
+                max_tokens: self.config.max_tokens,
                 temperature: self.config.temperature,
                 thinking_budget,
             };
@@ -620,104 +367,76 @@ impl Agent {
 
             let mut assistant_text = String::new();
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
+            let mut stop_reason = None;
             let mut got_api_usage = false;
 
-            // Enforce a 5-minute ceiling on the entire turn, in addition to the 120s
-            // per-event timeout.  This catches APIs that keep the connection alive with
-            // SSE keepalives but never produce any real content.
-            let turn_start = std::time::Instant::now();
-            let max_turn_duration = Duration::from_secs(300);
-
-            let stop_reason = loop {
-                let elapsed = turn_start.elapsed();
-                let remaining = if elapsed > max_turn_duration {
-                    Duration::from_secs(0)
-                } else {
-                    max_turn_duration - elapsed
-                };
-                let per_event_timeout = Duration::from_secs(120).min(remaining);
-                if per_event_timeout.is_zero() {
-                    warn!("LLM stream exceeded maximum turn duration of 5 minutes; aborting turn");
-                    self.finalize_plan().await;
-                    return Ok("Turn timed out — maximum duration exceeded.".to_string());
-                }
-
+            loop {
                 let next_event = if let Some(c) = cancel {
                     tokio::select! {
-                        event = timeout(per_event_timeout, stream.next()) => event,
+                        event = stream.next() => event,
                         _ = c.cancelled() => {
                             self.finalize_plan().await;
                             return Ok("Turn cancelled by user.".to_string());
                         }
                     }
                 } else {
-                    timeout(per_event_timeout, stream.next()).await
+                    stream.next().await
                 };
-
-                match next_event {
-                    Ok(Some(event)) => {
-                        match event? {
-                            StreamEvent::TextDelta(text) => {
-                                assistant_text.push_str(&text);
-                                if let Some(cb) = on_text {
-                                    cb(&text);
-                                }
-                            }
-                            StreamEvent::ThinkingDelta(thinking) => {
-                                if let Some(cb) = on_thinking {
-                                    cb(&thinking);
-                                }
-                            }
-                            StreamEvent::ToolCallDelta {
-                                index,
-                                id,
-                                name,
-                                arguments_delta,
-                            } => {
-                                while tool_calls.len() <= index {
-                                    tool_calls.push(ToolCallState::default());
-                                }
-                                let tc = &mut tool_calls[index];
-                                if let Some(id) = id {
-                                    tc.id = id;
-                                }
-                                if let Some(name) = name {
-                                    tc.name = name;
-                                }
-                                tc.arguments.push_str(&arguments_delta);
-                            }
-                            StreamEvent::Usage(usage) => {
-                                got_api_usage = true;
-                                // Use the API's prompt_tokens as the authoritative context size.
-                                // Don't accumulate input_tokens across turns — each turn's prompt_tokens
-                                // already includes all prior messages, so accumulating would double-count.
-                                self.current_context_tokens = usage.input_tokens;
-                                // For total_usage, track the max context seen (not a sum)
-                                self.total_usage.input_tokens = usage.input_tokens;
-                                self.total_usage.output_tokens += usage.output_tokens;
-                                self.total_usage.cached_tokens += usage.cached_tokens;
-                                if let Some(cb) = on_usage {
-                                    cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
-                                }
-                            }
-                            StreamEvent::Done { stop_reason } => break stop_reason,
-                            StreamEvent::Error(msg) => {
-                                self.finalize_plan().await;
-                                return Err(RustyError::Api(msg));
-                            }
+                let Some(event) = next_event else { break };
+                match event? {
+                    StreamEvent::TextDelta(text) => {
+                        assistant_text.push_str(&text);
+                        if let Some(cb) = on_text {
+                            cb(&text);
                         }
                     }
-                    Ok(None) => {
-                        // Stream ended naturally (no more events).
-                        break None;
+                    StreamEvent::ThinkingDelta(thinking) => {
+                        if let Some(cb) = on_thinking {
+                            cb(&thinking);
+                        }
                     }
-                    Err(_) => {
-                        warn!("LLM stream timed out after {}s with no events; aborting turn", per_event_timeout.as_secs());
+                    StreamEvent::ToolCallDelta {
+                        index,
+                        id,
+                        name,
+                        arguments_delta,
+                    } => {
+                        while tool_calls.len() <= index {
+                            tool_calls.push(ToolCallState::default());
+                        }
+                        let tc = &mut tool_calls[index];
+                        if let Some(id) = id {
+                            tc.id = id;
+                        }
+                        if let Some(name) = name {
+                            tc.name = name;
+                        }
+                        tc.arguments.push_str(&arguments_delta);
+                    }
+                    StreamEvent::Usage(usage) => {
+                        got_api_usage = true;
+                        // Use the API's prompt_tokens as the authoritative context size.
+                        // Don't accumulate input_tokens across turns — each turn's prompt_tokens
+                        // already includes all prior messages, so accumulating would double-count.
+                        self.current_context_tokens = usage.input_tokens;
+                        // For total_usage, track the max context seen (not a sum)
+                        self.total_usage.input_tokens = usage.input_tokens;
+                        self.total_usage.output_tokens += usage.output_tokens;
+                        self.total_usage.cached_tokens += usage.cached_tokens;
+                        if let Some(cb) = on_usage {
+                            cb(self.total_usage.input_tokens, self.total_usage.output_tokens, self.current_context_tokens, self.total_usage.cached_tokens);
+                        }
+                    }
+                    StreamEvent::Done { stop_reason: sr } => {
+                        stop_reason = sr;
+                        break;
+                    }
+                    StreamEvent::Error(msg) => {
                         self.finalize_plan().await;
-                        return Ok("Turn timed out — no response from model.".to_string());
+                        return Err(RustyError::Api(msg));
                     }
                 }
-            };
+            }
 
             // Estimate tokens only if the provider didn't report usage
             // (common with OpenAI-compatible providers that don't support stream_options)
@@ -915,7 +634,7 @@ impl Agent {
                     // instead of letting it stop. Allow more nudges for larger task lists
                     // since each task needs ~2 turns (do work + update todowrite).
                     let incomplete = self.incomplete_task_details();
-                    let nudge_limit = (incomplete.len() as u32 * 4).max(12);
+                    let nudge_limit = (incomplete.len() as u32 * 2).max(8);
                     if !incomplete.is_empty() && self.task_nudge_count < nudge_limit {
                         warn!(
                             "Model tried to stop with {} incomplete tasks (nudge {}/{}); nudging to continue",
@@ -932,11 +651,11 @@ impl Agent {
                             .join("\n");
                         self.messages.push(Message::user(
                             format!(
-                                "You have {} incomplete task(s) remaining:\n{}\n\n\
-                                 Do NOT describe what you will do. Do NOT plan or re-plan. \
-                                 Call the appropriate tool RIGHT NOW to execute the next pending task. \
-                                 After the tool result comes back, update the task status via todowrite, \
-                                 then immediately call the next tool. Keep going until every task is done.",
+                                "STOP. You have {} incomplete tasks remaining:\n{}\n\n\
+                                 Do NOT narrate what you will do. Do NOT re-plan. \
+                                 Execute the first incomplete task RIGHT NOW by calling the appropriate tool. \
+                                 After completing it, call todowrite to mark it completed, then immediately \
+                                 execute the next task. Repeat until every task is `completed` or `cancelled`.",
                                 incomplete.len(),
                                 task_list,
                             )

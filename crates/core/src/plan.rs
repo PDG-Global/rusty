@@ -256,28 +256,6 @@ pub async fn load_plan_for_prompt(working_dir: &Path) -> anyhow::Result<Option<S
     }
 }
 
-/// A proposed task in an approval request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalTask {
-    pub content: String,
-    pub priority: String,
-}
-
-/// Request sent to the UI when auto-plan generates a plan for approval.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalRequest {
-    /// Pre-rendered plan text for display
-    pub plan_text: String,
-    /// Structured task list
-    pub tasks: Vec<ApprovalTask>,
-}
-
-/// Decision returned by the approval callback.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalDecision {
-    pub approved: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

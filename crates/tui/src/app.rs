@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rusty_core::plan::ApprovalDecision;
 use rusty_core::{ConversationSession, PermissionDecision, PermissionRequest};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -448,16 +447,6 @@ pub struct PermissionPromptState {
     pub respond: Option<oneshot::Sender<PermissionDecision>>,
 }
 
-/// State for the plan approval overlay (auto-plan mode).
-pub struct PlanApprovalState {
-    /// The plan text proposed by the LLM.
-    pub plan_text: String,
-    /// Channel to send the user's approval decision back to the agent.
-    pub respond: Option<oneshot::Sender<ApprovalDecision>>,
-    /// Vertical scroll offset for viewing long plans.
-    pub scroll_offset: usize,
-}
-
 pub struct SessionPickerState {
     pub sessions: Vec<SessionEntry>,
     pub selected: usize,
@@ -901,8 +890,6 @@ pub struct AppState {
     pub needs_redraw: bool,
     pub should_quit: bool,
     pub permission_prompt: Option<PermissionPromptState>,
-    /// Plan approval overlay state (auto-plan mode).
-    pub plan_approval: Option<PlanApprovalState>,
     pub session_picker: Option<SessionPickerState>,
     /// Settings overlay state (for /settings)
     pub settings_overlay: Option<SettingsState>,
@@ -1065,7 +1052,6 @@ impl Default for AppState {
             needs_redraw: true,
             should_quit: false,
             permission_prompt: None,
-            plan_approval: None,
             session_picker: None,
             settings_overlay: None,
             pending_tools: Vec::new(),
@@ -1233,44 +1219,6 @@ impl AppState {
                     self.needs_redraw = true;
                 }
                 _ => {} // Ignore other keys during prompt
-            }
-            return;
-        }
-
-        // If plan approval is pending, handle approve/reject
-        if let Some(ref mut approval) = self.plan_approval {
-            match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    // Approve the plan
-                    if let Some(mut approval) = self.plan_approval.take() {
-                        if let Some(respond) = approval.respond.take() {
-                            let _ = respond.send(ApprovalDecision { approved: true });
-                        }
-                    }
-                    self.needs_redraw = true;
-                    return;
-                }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    // Reject the plan
-                    if let Some(mut approval) = self.plan_approval.take() {
-                        if let Some(respond) = approval.respond.take() {
-                            let _ = respond.send(ApprovalDecision { approved: false });
-                        }
-                    }
-                    self.needs_redraw = true;
-                    return;
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    approval.scroll_offset = approval.scroll_offset.saturating_add(1);
-                    self.needs_redraw = true;
-                    return;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    approval.scroll_offset = approval.scroll_offset.saturating_sub(1);
-                    self.needs_redraw = true;
-                    return;
-                }
-                _ => {} // Ignore other keys during approval
             }
             return;
         }
