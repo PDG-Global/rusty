@@ -20,6 +20,9 @@ Slash commands are special commands typed in the input box, starting with `/`. T
 | `/copy` | `/c` | Copy the last assistant response to clipboard |
 | `/model` | `/m` | Show the current model |
 | `/rename` | | Rename the current session |
+| `/settings` | | Open the settings overlay |
+| `/permissions` | | Manage tool permissions |
+| `/version` | `/ver`, `/v` | Show the running version and check for updates |
 | `/quit` | `/exit`, `/q` | Exit Rusty (saves the session) |
 
 ## Command Details
@@ -60,13 +63,49 @@ Displays the currently active model name and provider. Alias: `/m`.
 
 Renames the current session. Prompts for a new name in TUI mode.
 
+### /settings
+
+Opens the settings overlay in TUI mode, where you can review and adjust configuration interactively. In headless stdin mode, settings are not available — edit `~/.rusty/settings.json` directly.
+
+### /permissions
+
+Opens the tool permissions manager. Use this to review which tools are currently allowed or denied and to change permission rules for the active session.
+
+### /version
+
+Prints the running Rusty version and checks GitHub for a newer release. If an update is available, the output includes the latest version number and a link to the releases page. Aliases: `/ver`, `/v`.
+
+```
+> /version
+rusty v0.1.6
+Update available: v0.1.7
+https://github.com/PDG-Global/rusty/releases
+```
+
+Rusty also runs this check automatically in the background when the TUI starts. If a newer version is found, a yellow update notification appears in the status bar. The startup check is non-blocking and times out after 5 seconds, so a slow or unreachable network will not delay startup.
+
 ### /quit
 
 Exits Rusty. The current session is saved automatically before exiting. Aliases: `/exit`, `/q`.
 
-## Tab Completion
+## Autocomplete
 
-In TUI mode, slash commands support tab completion. Type `/` and press `Tab` to cycle through available commands. Partial commands can also be completed:
+In TUI mode, slash commands are completed through an interactive dropdown. As soon as you type `/`, a popup appears above the input box listing every command whose name starts with what you have typed so far, along with a short description. The list filters live as you keep typing.
 
-- Type `/he` + `Tab` to complete to `/help`
-- Type `/re` + `Tab` to complete to `/resume`
+### Key bindings
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Move the selection up or down within the dropdown |
+| `Tab` | Accept the highlighted command and insert it into the input, without submitting |
+| `Enter` | Accept the highlighted command and submit it immediately |
+| `Esc` | Dismiss the dropdown without changing the input |
+
+Use `Tab` when you want to inspect or extend the command before running it (for example, accept `/rename` and then type the new name). Use `Enter` when the highlighted command is exactly what you want to run.
+
+### Examples
+
+- Type `/` to see all available commands.
+- Type `/re` to narrow the dropdown to `/rename`, `/resume`. Use `↓` to highlight `/resume`, then press `Enter` to run it.
+- Type `/he`, then press `Tab` to fill in `/help` without submitting, in case you want to edit it first.
+- Press `Esc` at any time to close the dropdown and keep typing a regular message.
