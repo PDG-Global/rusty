@@ -116,7 +116,8 @@ pub async fn build_system_prompt(
         4. Work through tasks sequentially. Complete one, then move to the next.\n\
         5. If you are uncertain what tasks remain, re-read your most recent `todowrite` call.\n\n\
         Execution habits:\n\
-        - After calling `todowrite` to create a plan, start executing the first task right away.\n\
+        - After calling `todowrite` to create or update a plan, immediately begin executing the \
+        first pending task. Do not stop to describe what you will do.\n\
         - If a task requires research, that research is part of the task — do it, then move on.\n\
         - Avoid meta-commentary (\"I will now...\", \"Let me proceed to...\"). Just do the work.\n\
         - When all tasks are done, briefly verify your work against the original request before \

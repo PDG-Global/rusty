@@ -572,12 +572,13 @@ impl Agent {
             let context_pct = estimated_tokens as f64 / context_window as f64;
             let base_level = self.config.resolve_thinking_level();
             let effective_level = dynamic_thinking_level(base_level, context_pct, turn as u32);
-            // If there are incomplete tasks, ensure at least Normal thinking
+            // When there are active tasks we are in execution mode; cap thinking at Normal
+            // so the model spends its tokens doing work rather than re-reasoning.
             let has_active_tasks = self.has_incomplete_tasks();
             let effective_level = if has_active_tasks {
                 match effective_level {
-                    ThinkingLevel::Minimal => ThinkingLevel::Normal,
-                    other => other,
+                    ThinkingLevel::Minimal | ThinkingLevel::Normal => ThinkingLevel::Normal,
+                    ThinkingLevel::Deep | ThinkingLevel::Extended => ThinkingLevel::Normal,
                 }
             } else {
                 effective_level
@@ -932,9 +933,10 @@ impl Agent {
                         self.messages.push(Message::user(
                             format!(
                                 "You have {} incomplete task(s) remaining:\n{}\n\n\
-                                 Continue working through them. Execute the next pending task by calling \
-                                 the appropriate tool. When you finish a task, update its status via todowrite \
-                                 in your next turn.",
+                                 Do NOT describe what you will do. Do NOT plan or re-plan. \
+                                 Call the appropriate tool RIGHT NOW to execute the next pending task. \
+                                 After the tool result comes back, update the task status via todowrite, \
+                                 then immediately call the next tool. Keep going until every task is done.",
                                 incomplete.len(),
                                 task_list,
                             )
