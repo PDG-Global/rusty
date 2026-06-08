@@ -464,7 +464,7 @@ impl Agent {
                                     tc.id = id;
                                 }
                                 if let Some(name) = name {
-                                    tc.name = name;
+                                    tc.name = normalize_tool_name(&name);
                                 }
                                 tc.arguments.push_str(&arguments_delta);
                             }
@@ -928,7 +928,8 @@ impl Agent {
         tc: &ToolCallState,
         _ctx: &ToolContext,
     ) -> PermissionDecision {
-        let effective_level = if tc.name == "bash" {
+        let normalized = normalize_tool_name(&tc.name);
+        let effective_level = if normalized == "bash" {
             let input: serde_json::Value = serde_json::from_str(&tc.arguments)
                 .unwrap_or(serde_json::Value::Null);
             let cmd = input["command"].as_str().unwrap_or("");
@@ -939,7 +940,7 @@ impl Agent {
             }
         } else {
             self.tools
-                .get(&tc.name)
+                .get(&normalized)
                 .map(|t| t.permission_level())
                 .unwrap_or(PermissionLevel::Execute)
         };
@@ -1045,6 +1046,18 @@ fn extract_path_from_tool_args(tool_name: &str, arguments: &str) -> Option<Strin
             v["path"].as_str().or_else(|| v["file_path"].as_str()).map(|s| s.to_string())
         }
         _ => None,
+    }
+}
+
+/// Normalize a tool name from the model to match our registered tools.
+/// Handles case differences and common aliases (e.g. Claude-style `read` → `file_read`).
+fn normalize_tool_name(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    match lower.as_str() {
+        "read" => "file_read".to_string(),
+        "write" => "file_write".to_string(),
+        "edit" => "file_edit".to_string(),
+        _ => lower,
     }
 }
 
