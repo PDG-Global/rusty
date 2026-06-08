@@ -957,6 +957,9 @@ pub struct AppState {
     pub update_available: Option<String>,
     /// Autocomplete popup state for slash commands.
     pub autocomplete: Option<AutocompleteState>,
+    /// When true, the user pressed Ctrl+C once and we are waiting for a second
+    /// press to confirm exit. Resets on any other key press.
+    pub confirming_exit: bool,
 }
 
 pub struct PendingTool {
@@ -1094,6 +1097,7 @@ impl Default for AppState {
             slash_command: None,
             update_available: None,
             autocomplete: None,
+            confirming_exit: false,
         }
     }
 }
@@ -1600,15 +1604,23 @@ impl AppState {
 
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.should_quit = true;
+                if self.confirming_exit {
+                    self.should_quit = true;
+                } else {
+                    self.confirming_exit = true;
+                    self.push_system("Press Ctrl+C again to exit.");
+                    self.needs_redraw = true;
+                }
             }
             KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Paste from clipboard (allowed even while streaming)
+                self.confirming_exit = false;
                 self.paste_from_clipboard();
             }
             KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL)
                 // Toggle thinking expand/collapse
                 && (self.thinking_line_count > 0 || self.is_thinking) => {
+                    self.confirming_exit = false;
                     self.thinking_expanded = !self.thinking_expanded;
                     self.needs_redraw = true;
                 }
@@ -1618,16 +1630,20 @@ impl AppState {
                 }
             KeyCode::Esc if self.is_streaming => {
                 // Request cancellation — the TUI main loop will send TuiCommand::Cancel
+                self.confirming_exit = false;
                 self.cancel_requested = true;
                 self.needs_redraw = true;
             }
             KeyCode::PageUp => {
+                self.confirming_exit = false;
                 self.scroll_up(15);
             }
             KeyCode::PageDown => {
+                self.confirming_exit = false;
                 self.scroll_down(15);
             }
             KeyCode::Char('@') if !self.is_streaming => {
+                self.confirming_exit = false;
                 // Insert the @ character
                 self.input.insert(self.cursor_pos, '@');
                 self.cursor_pos += 1;
@@ -1645,12 +1661,14 @@ impl AppState {
                 self.needs_redraw = true;
             }
             KeyCode::Char(c) => {
+                self.confirming_exit = false;
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
                 self.autocomplete = AutocompleteState::compute(&self.input);
                 self.needs_redraw = true;
             }
             KeyCode::Backspace if self.cursor_pos > 0 => {
+                self.confirming_exit = false;
                 let prev = self.input[..self.cursor_pos]
                     .char_indices()
                     .last()
@@ -1662,6 +1680,7 @@ impl AppState {
                 self.needs_redraw = true;
             }
             KeyCode::Delete if self.cursor_pos < self.input.len() => {
+                self.confirming_exit = false;
                 let next = self.input[self.cursor_pos..]
                     .char_indices()
                     .nth(1)
@@ -1672,6 +1691,7 @@ impl AppState {
                 self.needs_redraw = true;
             }
             KeyCode::Left if self.cursor_pos > 0 => {
+                self.confirming_exit = false;
                 self.cursor_pos = self.input[..self.cursor_pos]
                     .char_indices()
                     .last()
@@ -1680,6 +1700,7 @@ impl AppState {
                 self.needs_redraw = true;
             }
             KeyCode::Right if self.cursor_pos < self.input.len() => {
+                self.confirming_exit = false;
                 self.cursor_pos = self.input[self.cursor_pos..]
                     .char_indices()
                     .nth(1)
@@ -1688,15 +1709,18 @@ impl AppState {
                 self.needs_redraw = true;
             }
             KeyCode::Home => {
+                self.confirming_exit = false;
                 self.cursor_pos = 0;
                 self.needs_redraw = true;
             }
             KeyCode::End => {
+                self.confirming_exit = false;
                 self.cursor_pos = self.input.len();
                 self.needs_redraw = true;
             }
             KeyCode::Up if !self.is_streaming
                 && !self.history.is_empty() => {
+                    self.confirming_exit = false;
                     let idx = match self.history_idx {
                         Some(i) => i.saturating_add(1),
                         None => 0,
@@ -1710,6 +1734,7 @@ impl AppState {
                     }
                 }
             KeyCode::Down if !self.is_streaming => {
+                self.confirming_exit = false;
                 match self.history_idx {
                     Some(0) => {
                         self.history_idx = None;
@@ -1732,6 +1757,7 @@ impl AppState {
                 // Tab-complete slash commands only when input is a bare command prefix (no spaces)
                 && self.input.starts_with('/')
                 && !self.input.contains(' ') => {
+                    self.confirming_exit = false;
                     if self.autocomplete.is_none() {
                         self.autocomplete = AutocompleteState::compute(&self.input);
                     }
@@ -1747,6 +1773,7 @@ impl AppState {
                 }
             KeyCode::Enter if self.paste_mode => {
                 // In paste mode, insert newline instead of submitting
+                self.confirming_exit = false;
                 self.input.insert(self.cursor_pos, '\n');
                 self.cursor_pos += 1;
                 self.paste_mode = false;
