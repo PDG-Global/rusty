@@ -71,6 +71,5 @@ rusty --completions zsh > ~/.zfunc/_rusty
 rusty --completions fish > ~/.config/fish/completions/rusty.fish
 ```
 
-<Note>
-If shell completions are not yet wired up, you can request them as a feature on GitHub.
-</Note>
+!!! note
+    If shell completions are not yet wired up, you can request them as a feature on GitHub.

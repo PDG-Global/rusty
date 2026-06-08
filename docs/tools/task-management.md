@@ -34,20 +34,13 @@ The task list persists across the conversation. Each call to `todowrite` replace
 
 The recommended workflow for multi-step tasks:
 
-<Steps>
-  <Step title="Plan">
-    Create a task list with concrete, actionable items. Each task should be specific (e.g. "Add X field to Y struct in Z.rs"), not vague (e.g. "Improve error handling").
-  </Step>
-  <Step title="Execute">
-    Work through tasks sequentially. Mark each task `in_progress` before starting and `completed` when done.
-  </Step>
-  <Step title="Track">
-    If new work is discovered during execution, add it to the list. If a task is blocked, mark it `cancelled` with a reason.
-  </Step>
-  <Step title="Verify">
-    After all tasks are done, review the work against the original request.
-  </Step>
-</Steps>
+1.  **Plan** -- Create a task list with concrete, actionable items. Each task should be specific (e.g. "Add X field to Y struct in Z.rs"), not vague (e.g. "Improve error handling").
+
+2.  **Execute** -- Work through tasks sequentially. Mark each task `in_progress` before starting and `completed` when done.
+
+3.  **Track** -- If new work is discovered during execution, add it to the list. If a task is blocked, mark it `cancelled` with a reason.
+
+4.  **Verify** -- After all tasks are done, review the work against the original request.
 
 ## Example
 

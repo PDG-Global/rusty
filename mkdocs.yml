@@ -1,0 +1,92 @@
+site_name: Rusty Docs
+site_url: https://docs.rustycli.com
+site_description: Documentation for Rusty, a lightweight terminal AI coding agent
+site_author: Rusty Contributors
+
+repo_name: pdg-global/rusty
+repo_url: https://github.com/pdg-global/rusty
+
+docs_dir: docs
+site_dir: site-docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - content.action.edit
+    - toc.follow
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pdg-global/rusty
+
+nav:
+  - Getting Started:
+      - index.md
+      - Installation: installation.md
+      - Quickstart: quickstart.md
+  - Configuration:
+      - Settings: configuration/settings.md
+      - Credentials: configuration/credentials.md
+      - Presets: configuration/presets.md
+      - Permissions: configuration/permissions.md
+  - Tools:
+      - Overview: tools/overview.md
+      - File Operations: tools/file-operations.md
+      - Bash: tools/bash.md
+      - Search: tools/search.md
+      - Web Fetch: tools/web-fetch.md
+      - Sub-Agents: tools/sub-agents.md
+      - Task Management: tools/task-management.md
+  - Guides:
+      - Agent Loop: guides/agent-loop.md
+      - Running Modes: guides/running-modes.md
+      - Sessions: guides/sessions.md
+      - Slash Commands: guides/slash-commands.md

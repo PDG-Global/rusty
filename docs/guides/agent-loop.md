@@ -9,26 +9,17 @@ The agent loop is the core orchestrator in Rusty. It manages the conversation be
 
 ## Loop Flow
 
-<Steps>
-  <Step title="User message">
-    The user's input is added to the message history.
-  </Step>
-  <Step title="Auto-compaction check">
-    If the conversation exceeds approximately 80,000 tokens or 40 messages, older messages are summarized (keeping the last 10 messages) via an LLM call to reduce context window usage.
-  </Step>
-  <Step title="Send to LLM">
-    The full message history, system prompt, and tool definitions are sent to the LLM provider via SSE streaming.
-  </Step>
-  <Step title="Stream response">
-    The response is streamed back event by event: text deltas, thinking deltas, and tool call deltas are accumulated as they arrive.
-  </Step>
-  <Step title="Process tool calls">
-    If the response contains tool calls, each tool is executed in order. Results are appended to the message history as tool result messages.
-  </Step>
-  <Step title="Loop or complete">
-    If tool calls were present, the loop returns to step 2 with the new messages. If no tool calls were present, the response text is returned as the final answer.
-  </Step>
-</Steps>
+1.  **User message** -- The user's input is added to the message history.
+
+2.  **Auto-compaction check** -- If the conversation exceeds approximately 80,000 tokens or 40 messages, older messages are summarized (keeping the last 10 messages) via an LLM call to reduce context window usage.
+
+3.  **Send to LLM** -- The full message history, system prompt, and tool definitions are sent to the LLM provider via SSE streaming.
+
+4.  **Stream response** -- The response is streamed back event by event: text deltas, thinking deltas, and tool call deltas are accumulated as they arrive.
+
+5.  **Process tool calls** -- If the response contains tool calls, each tool is executed in order. Results are appended to the message history as tool result messages.
+
+6.  **Loop or complete** -- If tool calls were present, the loop returns to step 2 with the new messages. If no tool calls were present, the response text is returned as the final answer.
 
 ## Cancellation
 

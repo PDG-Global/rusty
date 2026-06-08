@@ -43,6 +43,7 @@ lcov.info
 
 # Documentation
 /doc/
+site-docs/
 
 # Temporary files
 *.tmp

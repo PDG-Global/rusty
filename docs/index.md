@@ -3,37 +3,39 @@ title: Rusty
 description: A lightweight, statically compiled terminal AI coding agent
 ---
 
-<img
-  className="block dark:hidden"
-  src="/images/rusty-light.png"
-  alt="Rusty Light"
-/>
-<img
-  className="hidden dark:block"
-  src="/images/rusty-dark.png"
-  alt="Rusty Dark"
-/>
-
 # Rusty
 
 **A lightweight, statically compiled terminal AI coding agent.** Connects to OpenAI-compatible LLM APIs via SSE streaming, executes tools (file I/O, bash, search, patches, web fetch, sub-agents), and enforces a tiered permission system.
 
 ## Features
 
-<CardGroup cols={2}>
-  <Card title="Terminal UI" icon="terminal">
+<div class="grid cards" markdown>
+
+- :material-console:{ .lg .middle } **Terminal UI**
+
+    ---
+
     Full ratatui-based terminal interface with streaming, markdown rendering, and interactive permission prompts.
-  </Card>
-  <Card title="Multi-Provider" icon="plug">
+
+- :material-connection:{ .lg .middle } **Multi-Provider**
+
+    ---
+
     Works with Xiaomi MiMo, Kimi, OpenAI, DeepSeek, Ollama, and any OpenAI-compatible API.
-  </Card>
-  <Card title="Tool Execution" icon="wrench">
+
+- :material-wrench:{ .lg .middle } **Tool Execution**
+
+    ---
+
     File read/write/edit, bash commands, regex search, glob, web fetch, unified diff patches, and sub-agent spawning.
-  </Card>
-  <Card title="Permission System" icon="shield">
+
+- :material-shield:{ .lg .middle } **Permission System**
+
+    ---
+
     Tiered permission model: Bypass, AcceptEdits, Default, and Plan modes with per-tool classification.
-  </Card>
-</CardGroup>
+
+</div>
 
 ## Quick Start
 
@@ -51,26 +53,29 @@ cargo build --release
 
 ## Run Modes
 
-<Tabs>
-  <Tab title="TUI Mode">
+=== "TUI Mode"
+
     Full terminal UI with streaming, permission prompts, and slash commands (default).
+
     ```bash
     rusty
     ```
-  </Tab>
-  <Tab title="Headless Mode">
+
+=== "Headless Mode"
+
     Single prompt, print response, save session.
+
     ```bash
     rusty --prompt "Explain this codebase"
     ```
-  </Tab>
-  <Tab title="Stdin REPL">
+
+=== "Stdin REPL"
+
     Interactive line-by-line REPL without TUI.
+
     ```bash
     rusty --headless
     ```
-  </Tab>
-</Tabs>
 
 ## Architecture
 

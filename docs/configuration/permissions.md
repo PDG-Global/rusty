@@ -74,29 +74,19 @@ The format is `tool_name:exact_invocation_prefix`. The allowlist matches the beg
 
 When a tool is invoked, Rusty checks permissions in this order:
 
-<Steps>
-  <Step title="Bypass mode">
-    If permission mode is `bypass`, allow immediately.
-  </Step>
-  <Step title="Plan mode">
-    If permission mode is `plan`, deny all write/execute operations.
-  </Step>
-  <Step title="Read-only or None level">
-    Tools with `ReadOnly` or `None` permission levels are always allowed.
-  </Step>
-  <Step title="AcceptEdits + Write">
-    If mode is `accept-edits` and tool level is `Write`, allow without prompting.
-  </Step>
-  <Step title="Permanent allowlist">
-    Check if the tool invocation matches an entry in `allowed_tools`.
-  </Step>
-  <Step title="Session allowlist">
-    Check if the user previously allowed this tool in the current session.
-  </Step>
-  <Step title="Interactive prompt">
-    In TUI mode, prompt the user to allow or deny. In headless mode, deny.
-  </Step>
-</Steps>
+1.  **Bypass mode** -- If permission mode is `bypass`, allow immediately.
+
+2.  **Plan mode** -- If permission mode is `plan`, deny all write/execute operations.
+
+3.  **Read-only or None level** -- Tools with `ReadOnly` or `None` permission levels are always allowed.
+
+4.  **AcceptEdits + Write** -- If mode is `accept-edits` and tool level is `Write`, allow without prompting.
+
+5.  **Permanent allowlist** -- Check if the tool invocation matches an entry in `allowed_tools`.
+
+6.  **Session allowlist** -- Check if the user previously allowed this tool in the current session.
+
+7.  **Interactive prompt** -- In TUI mode, prompt the user to allow or deny. In headless mode, deny.
 
 ## Plan Mode
 

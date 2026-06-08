@@ -9,20 +9,21 @@ Rusty resolves API keys through a tiered chain, checking each source in order. T
 
 ### Resolution Order
 
-<Steps>
-  <Step title="Environment Variables">
+1.  **Environment Variables**
+
     `RUSTY_API_KEY` is checked first, then `OPENAI_API_KEY`. Empty strings are treated as absent.
-  </Step>
-  <Step title="OS Keyring">
+
+2.  **OS Keyring**
+
     If `credential_store` is set to `"keyring"` in settings, Rusty reads from the system keyring:
+
     - **macOS**: Keychain Access
     - **Windows**: Credential Manager
     - **Linux**: Secret Service (GNOME Keyring, KWallet)
-  </Step>
-  <Step title="Settings File">
+
+3.  **Settings File**
+
     The `api_key` field in `~/.rusty/settings.json` is used as a final fallback.
-  </Step>
-</Steps>
 
 ## Credential Store Options
 
@@ -54,9 +55,8 @@ Stores the API key in plaintext in `~/.rusty/settings.json`. Use this if your pl
 }
 ```
 
-<Warning>
-When using `settings_file` mode, the API key is stored in plaintext. Ensure appropriate file permissions on `~/.rusty/settings.json`.
-</Warning>
+!!! warning
+    When using `settings_file` mode, the API key is stored in plaintext. Ensure appropriate file permissions on `~/.rusty/settings.json`.
 
 ## Multi-Provider Setup
 

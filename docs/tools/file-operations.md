@@ -51,9 +51,8 @@ Create or overwrite a file. Automatically creates parent directories if they do 
 }
 ```
 
-<Warning>
-`file_write` overwrites the entire file. For targeted edits, use `file_edit` or `apply_patch` instead.
-</Warning>
+!!! warning
+    `file_write` overwrites the entire file. For targeted edits, use `file_edit` or `apply_patch` instead.
 
 ---
 
@@ -121,7 +120,7 @@ When applying updates, the patch tool uses fuzzy matching for context lines. If 
 *** Begin Patch
 *** Update File: src/lib.rs
  use std::io;
- 
+
 -pub fn read_input() -> String {
 +pub fn read_input() -> Result<String, io::Error> {
      let mut input = String::new();
