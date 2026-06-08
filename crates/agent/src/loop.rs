@@ -106,6 +106,10 @@ pub struct Agent {
     /// When true, the model called exit_plan_mode this turn, so we should not
     /// nudge it to continue working — it has explicitly handed control back.
     exited_plan_mode_this_turn: bool,
+    /// How many consecutive turns the model has stopped without making any
+    /// write/execute changes. Used to escalate nudges when the model is stuck
+    /// in a research loop.
+    consecutive_read_turns: u32,
 }
 
 #[derive(Default)]
@@ -152,6 +156,7 @@ impl Agent {
             plan: None,
             plan_mode: false,
             exited_plan_mode_this_turn: false,
+            consecutive_read_turns: 0,
         }
     }
 
@@ -335,6 +340,7 @@ impl Agent {
             c.reset();
         }
         self.exited_plan_mode_this_turn = false;
+        self.consecutive_read_turns = 0;
         self.messages.push(Message::user_blocks(content));
 
         for turn in 0..self.max_turns {
@@ -400,6 +406,10 @@ impl Agent {
             let mut assistant_text = String::new();
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
             let mut got_api_usage = false;
+            // Track whether this turn had any write/execute tool calls.
+            // Used to detect research loops where the model keeps reading
+            // without making changes.
+            let mut had_write_or_execute_this_turn = false;
 
             // Enforce a 5-minute ceiling on the entire turn, in addition to the 120s
             // per-event timeout.  This catches APIs that keep the connection alive with
@@ -658,6 +668,14 @@ impl Agent {
                         continue;
                     }
 
+                    // Track write/execute usage for research-loop detection
+                    if let Some(tool) = self.tools.get(&tc.name) {
+                        let level = tool.permission_level();
+                        if level == PermissionLevel::Write || level == PermissionLevel::Execute {
+                            had_write_or_execute_this_turn = true;
+                        }
+                    }
+
                     if let Some(cb) = on_tool {
                         cb(&tc.name, ToolStatus::Running {
                             arguments: tc.arguments.clone(),
@@ -773,11 +791,15 @@ impl Agent {
             // Check stop reason
             match stop_reason.as_deref() {
                 Some("end_turn") | None => {
-                    // If there are incomplete tasks, gently remind the model to continue.
-                    // More nudges are allowed for larger task lists since each task needs
-                    // ~2 turns (do work + update todowrite).
                     let incomplete = self.incomplete_task_details();
                     let nudge_limit = (incomplete.len() as u32 * 4).max(12);
+
+                    if had_write_or_execute_this_turn {
+                        self.consecutive_read_turns = 0;
+                    } else {
+                        self.consecutive_read_turns += 1;
+                    }
+
                     if !incomplete.is_empty()
                         && self.task_nudge_count < nudge_limit
                         && !self.exited_plan_mode_this_turn
@@ -795,7 +817,19 @@ impl Agent {
                             .map(|(i, (status, content))| format!("  {}. [{}] {}", i + 1, status, content))
                             .collect::<Vec<_>>()
                             .join("\n");
-                        self.messages.push(Message::user(
+
+                        let nudge_msg = if self.consecutive_read_turns >= 3 {
+                            format!(
+                                "You have {} incomplete task(s) remaining:\n{}\n\n\
+                                 You have spent {} turns researching without making any changes. \
+                                 STOP reading files and START implementing. Pick the FIRST pending task \
+                                 and call the appropriate tool to make the change NOW. Do NOT do any \
+                                 more research — execute immediately.",
+                                incomplete.len(),
+                                task_list,
+                                self.consecutive_read_turns,
+                            )
+                        } else {
                             format!(
                                 "You have {} incomplete task(s) remaining:\n{}\n\n\
                                  Continue working through them. Execute the next pending task by calling \
@@ -804,7 +838,8 @@ impl Agent {
                                 incomplete.len(),
                                 task_list,
                             )
-                        ));
+                        };
+                        self.messages.push(Message::user(nudge_msg));
                         continue;
                     }
                     self.finalize_plan().await;
@@ -981,7 +1016,8 @@ impl Agent {
 
         // 2.5 Explicit plan mode — deny write/execute (but allow exit_plan_mode)
         if self.plan_mode
-            && effective_level == PermissionLevel::Write
+            && effective_level != PermissionLevel::ReadOnly
+            && effective_level != PermissionLevel::None
             && tool_name != "exit_plan_mode"
         {
             return PermissionDecision::Deny(
