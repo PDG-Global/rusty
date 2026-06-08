@@ -102,24 +102,23 @@ pub async fn build_system_prompt(
             .to_string(),
     );
 
-    // Task tracking: instruct model to actively use todowrite for multi-step work
+    // Task tracking: keep it light — todowrite is optional, execution is mandatory
     parts.push(
         "## Task Tracking\n\n\
-        When a task involves multiple steps, use the `todowrite` tool to plan and track your \
-        work. This helps both you and the user see what remains.\n\n\
-        Guidelines:\n\
-        1. Break the user's request into concrete sub-tasks using `todowrite` with status `pending`.\n\
-        2. As you work through each sub-task, update its status to `in_progress` before starting \
-        and `completed` when done.\n\
-        3. If you discover additional work needed, add new tasks to the list.\n\
-        4. Work through tasks sequentially. Complete one, then move to the next.\n\
-        5. If you are uncertain what tasks remain, re-read your most recent `todowrite` call.\n\n\
+        For multi-step work you MAY use `todowrite` to track progress, but do NOT let planning \
+        replace doing. Your primary job is to edit code and run commands, not to maintain a todo list.\n\n\
+        Rules:\n\
+        1. Do NOT create a plan before starting work. Begin executing immediately.\n\
+        2. Only use `todowrite` if the task has 4+ distinct steps AND the user asked for a plan.\n\
+        3. Research is not a separate step — read what you need, then edit immediately.\n\
+        4. Do NOT re-read files you have already read in this conversation. The context is in your history.\n\
+        5. If you find yourself updating `todowrite` without calling `file_edit` or `file_write`, \
+        you are procrastinating. Stop planning and start editing.\n\n\
         Execution habits:\n\
-        - After calling `todowrite` to create a plan, start executing the first task right away.\n\
-        - If a task requires research, that research is part of the task — do it, then move on.\n\
+        - Start with the FIRST file change, not with reading every file in the project.\n\
+        - Batch your work: make multiple edits in one turn when possible.\n\
         - Avoid meta-commentary (\"I will now...\", \"Let me proceed to...\"). Just do the work.\n\
-        - When all tasks are done, briefly verify your work against the original request before \
-        finishing."
+        - If cargo check or tests fail, fix the errors immediately rather than adding them to a todo list."
             .to_string(),
     );
 

@@ -110,6 +110,9 @@ pub struct Agent {
     /// write/execute changes. Used to escalate nudges when the model is stuck
     /// in a research loop.
     consecutive_read_turns: u32,
+    /// Total file_read tool calls executed this run. Used to prevent context
+    /// bloat from endless research loops where the model reads every file.
+    file_reads_this_run: u32,
 }
 
 #[derive(Default)]
@@ -157,6 +160,7 @@ impl Agent {
             plan_mode: false,
             exited_plan_mode_this_turn: false,
             consecutive_read_turns: 0,
+            file_reads_this_run: 0,
         }
     }
 
@@ -223,6 +227,7 @@ impl Agent {
         self.messages.clear();
         self.task_nudge_count = 0;
         self.plan_mode = false;
+        self.file_reads_this_run = 0;
         if let Some(plan) = &self.plan {
             let mut p = plan.lock().await;
             p.items.clear();
@@ -777,6 +782,11 @@ impl Agent {
                         self.exited_plan_mode_this_turn = true;
                         debug!("Exited explicit plan mode");
                     }
+
+                    // Count successful file reads for context protection
+                    if tc.name == "file_read" && !tool_result.is_error {
+                        self.file_reads_this_run += 1;
+                    }
                 }
 
                 // Continue the loop — the model needs to see tool results
@@ -822,9 +832,9 @@ impl Agent {
                             format!(
                                 "You have {} incomplete task(s) remaining:\n{}\n\n\
                                  You have spent {} turns researching without making any changes. \
-                                 STOP reading files and START implementing. Pick the FIRST pending task \
-                                 and call the appropriate tool to make the change NOW. Do NOT do any \
-                                 more research — execute immediately.",
+                                 You are NOT allowed to call file_read or bash again. \
+                                 Pick the FIRST pending task and call file_edit or file_write NOW. \
+                                 Do NOT explain your plan — just edit the code.",
                                 incomplete.len(),
                                 task_list,
                                 self.consecutive_read_turns,
@@ -1027,10 +1037,17 @@ impl Agent {
             );
         }
 
-        // 3. Read-only / None tools — auto-allow
+        // 3. Read-only / None tools — auto-allow, but block excessive file reads
         if effective_level == PermissionLevel::ReadOnly
             || effective_level == PermissionLevel::None
         {
+            if tool_name == "file_read" && self.file_reads_this_run >= 20 {
+                return PermissionDecision::Deny(
+                    "Context protection: you have already read 20 files this run. \
+                     Stop reading and start editing. Use the context you already have."
+                        .into(),
+                );
+            }
             return PermissionDecision::AllowOnce;
         }
 
