@@ -103,6 +103,9 @@ pub struct Agent {
     plan: Option<Arc<tokio::sync::Mutex<Plan>>>,
     /// When true, the agent is in explicit plan mode (no Write/Execute tools allowed).
     pub plan_mode: bool,
+    /// When true, the model called exit_plan_mode this turn, so we should not
+    /// nudge it to continue working — it has explicitly handed control back.
+    exited_plan_mode_this_turn: bool,
 }
 
 #[derive(Default)]
@@ -148,6 +151,7 @@ impl Agent {
             task_nudge_count: 0,
             plan: None,
             plan_mode: false,
+            exited_plan_mode_this_turn: false,
         }
     }
 
@@ -330,6 +334,7 @@ impl Agent {
         if let Some(c) = cancel {
             c.reset();
         }
+        self.exited_plan_mode_this_turn = false;
         self.messages.push(Message::user_blocks(content));
 
         for turn in 0..self.max_turns {
@@ -751,6 +756,7 @@ impl Agent {
                     }
                     if tc.name == "exit_plan_mode" && !tool_result.is_error {
                         self.plan_mode = false;
+                        self.exited_plan_mode_this_turn = true;
                         debug!("Exited explicit plan mode");
                     }
                 }
@@ -772,7 +778,10 @@ impl Agent {
                     // ~2 turns (do work + update todowrite).
                     let incomplete = self.incomplete_task_details();
                     let nudge_limit = (incomplete.len() as u32 * 4).max(12);
-                    if !incomplete.is_empty() && self.task_nudge_count < nudge_limit {
+                    if !incomplete.is_empty()
+                        && self.task_nudge_count < nudge_limit
+                        && !self.exited_plan_mode_this_turn
+                    {
                         warn!(
                             "Model tried to stop with {} incomplete tasks (nudge {}/{}); nudging to continue",
                             incomplete.len(),
