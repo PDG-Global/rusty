@@ -347,6 +347,10 @@ impl Agent {
         self.consecutive_read_turns = 0;
         self.messages.push(Message::user_blocks(content));
 
+        // Track whether any turn in this run had write/execute tools.
+        // Persisted across turns so the stop-reason check can see it.
+        let mut had_write_or_execute_this_run = false;
+
         for turn in 0..self.max_turns {
             // Reset per-turn deduplication tracking.
             self.dedup_keys_this_turn.clear();
@@ -412,10 +416,6 @@ impl Agent {
             let mut assistant_text = String::new();
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
             let mut got_api_usage = false;
-            // Track whether this turn had any write/execute tool calls.
-            // Used to detect research loops where the model keeps reading
-            // without making changes.
-            let mut had_write_or_execute_this_turn = false;
 
             // Enforce a 5-minute ceiling on the entire turn, in addition to the 120s
             // per-event timeout.  This catches APIs that keep the connection alive with
@@ -690,7 +690,7 @@ impl Agent {
                     if let Some(tool) = self.tools.get(&tc.name) {
                         let level = tool.permission_level();
                         if level == PermissionLevel::Write || level == PermissionLevel::Execute {
-                            had_write_or_execute_this_turn = true;
+                            had_write_or_execute_this_run = true;
                         }
                     }
 
@@ -838,8 +838,9 @@ impl Agent {
                 Some("end_turn") | None => {
                     let incomplete = self.incomplete_task_details();
 
-                    if had_write_or_execute_this_turn {
+                    if had_write_or_execute_this_run {
                         self.consecutive_read_turns = 0;
+                        had_write_or_execute_this_run = false;
                     } else {
                         self.consecutive_read_turns += 1;
                     }
