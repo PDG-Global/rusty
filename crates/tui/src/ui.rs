@@ -1153,17 +1153,17 @@ fn draw_todos(app: &AppState, area: Rect, buf: &mut Buffer) {
     if let Some(ref todos) = app.pinned_todos {
         let mut lines: Vec<Line> = Vec::new();
         for todo_line in todos.lines() {
-            let styled = if todo_line.contains("[x]") || todo_line.contains("[X]") {
+            let styled = if todo_line.contains("[completed]") {
                 Line::from(Span::styled(
                     format!("  {todo_line}"),
                     Style::default().fg(Color::Green),
                 ))
-            } else if todo_line.contains("[~]") {
+            } else if todo_line.contains("[in_progress]") {
                 Line::from(Span::styled(
                     format!("  {todo_line}"),
                     Style::default().fg(Color::Yellow),
                 ))
-            } else if todo_line.contains("[ ]") {
+            } else if todo_line.contains("[pending]") {
                 Line::from(Span::styled(
                     format!("  {todo_line}"),
                     Style::default().fg(Color::White),

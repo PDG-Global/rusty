@@ -2120,7 +2120,7 @@ impl AppState {
 
         // For todowrite, update the pinned panel only (don't duplicate inline)
         if name == "todowrite" && !output.trim().is_empty() {
-            let has_active = output.contains("[ ]") || output.contains("[~]");
+            let has_active = output.contains("[pending]") || output.contains("[in_progress]");
             if has_active {
                 self.pinned_todos = Some(output.trim().to_string());
             } else {
