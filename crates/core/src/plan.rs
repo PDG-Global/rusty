@@ -229,6 +229,24 @@ impl Plan {
 
         out
     }
+
+    /// Format the plan as a clean numbered list for tool output.
+    /// This is what the todowrite tool returns so the model can see
+    /// the current list in the conversation history.
+    pub fn render_for_tool_output(&self) -> String {
+        if self.items.is_empty() {
+            return "Todo list is empty.".to_string();
+        }
+        let lines: Vec<String> = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                format!("{}. [{}] {}", i + 1, item.status.as_str(), item.content)
+            })
+            .collect();
+        lines.join("\n")
+    }
 }
 
 /// Resolve the project ID for a working directory.

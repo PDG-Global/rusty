@@ -110,19 +110,15 @@ impl Tool for TodoWriteTool {
             }
         }
 
-        // Return a brief acknowledgment instead of the full list.
-        // The full list is persisted to disk and injected into the system prompt
-        // each turn via refresh_system_prompt, so repeating it here bloats context.
+        // Return the full formatted list so the model can see the current state
+        // in the conversation history.
         let plan = self.plan.lock().await;
-        let total = plan.items.len();
-        let completed = plan.items.iter().filter(|i| i.status == PlanItemStatus::Completed).count();
-        let pending = plan.items.iter().filter(|i| i.status == PlanItemStatus::Pending).count();
-        let in_progress = plan.items.iter().filter(|i| i.status == PlanItemStatus::InProgress).count();
-
+        let rendered = plan.render_for_tool_output();
         let output = format!(
-            "Task list updated ({} total, {} completed, {} in_progress, {} pending). \
-             The current list is visible in your system prompt.",
-            total, completed, in_progress, pending,
+            "Todo list updated.\n{}\n\n\
+             Continue using the todo list to track progress. Mark tasks done immediately \
+             after finishing them, and keep exactly one task in_progress when work is underway.",
+            rendered,
         );
 
         Ok(ToolResult::success(output))
@@ -162,11 +158,11 @@ mod tests {
 
         let result = tool.execute(args, &ctx).await.unwrap();
         let text = result.content.as_str();
-        assert!(text.contains("Task list updated"));
-        assert!(text.contains("3 total"));
-        assert!(text.contains("1 completed"));
-        assert!(text.contains("1 in_progress"));
-        assert!(text.contains("1 pending"));
+        assert!(text.contains("Todo list updated"));
+        assert!(text.contains("1. [pending] Task A"));
+        assert!(text.contains("2. [in_progress] Task B"));
+        assert!(text.contains("3. [completed] Task C"));
+        assert!(text.contains("Continue using the todo list"));
     }
 
     #[tokio::test]

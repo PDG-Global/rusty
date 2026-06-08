@@ -52,12 +52,17 @@ fn compact_token_threshold(context_window: u32) -> usize {
 /// Check if compaction is needed and perform it.
 /// Tries micro-compaction first (cheap placeholder replacement), then falls
 /// back to LLM-based full compaction if still over the threshold.
+/// If `plan_text` is provided, it is appended to the summary so the todo list
+/// is not lost during compaction.
+/// Returns `true` if full compaction was performed, `false` if no compaction
+/// or only micro-compaction was needed.
 pub async fn maybe_compact(
     messages: &mut Vec<Message>,
     provider: &dyn LlmProvider,
     system_prompt: &str,
     context_window: u32,
-) -> Result<(), RustyError> {
+    plan_text: Option<&str>,
+) -> Result<bool, RustyError> {
     let estimated_tokens = estimate_tokens(messages);
     let token_threshold = compact_token_threshold(context_window);
 
@@ -65,7 +70,7 @@ pub async fn maybe_compact(
         || estimated_tokens >= token_threshold;
 
     if !needs_compact {
-        return Ok(());
+        return Ok(false);
     }
 
     info!(
@@ -85,7 +90,7 @@ pub async fn maybe_compact(
         );
         if after_micro < token_threshold && messages.len() < COMPACT_MESSAGE_THRESHOLD {
             debug!("Micro-compaction sufficient; skipping full compact");
-            return Ok(());
+            return Ok(false);
         }
     }
 
@@ -125,9 +130,14 @@ pub async fn maybe_compact(
     debug!("Compacted {} messages into summary", split_point);
 
     // Replace old messages with summary + recent
+    let summary_with_plan = if let Some(plan) = plan_text {
+        format!("{summary}\n\n{plan}")
+    } else {
+        summary
+    };
     let mut new_messages = Vec::new();
     new_messages.push(Message::user(format!(
-        "[Previous conversation summary]\n{summary}"
+        "[Previous conversation summary]\n{summary_with_plan}"
     )));
     new_messages.push(Message::assistant(
         "Understood. I have the context from our previous conversation.",
@@ -143,14 +153,16 @@ pub async fn maybe_compact(
         new_tokens
     );
 
-    Ok(())
+    Ok(true)
 }
 
-/// Force compaction regardless of thresholds — used for /compact command
+/// Force compaction regardless of thresholds — used for /compact command.
+/// If `plan_text` is provided, it is appended to the summary.
 pub async fn force_compact(
     messages: &mut Vec<Message>,
     provider: &dyn LlmProvider,
     system_prompt: &str,
+    plan_text: Option<&str>,
 ) -> Result<bool, RustyError> {
     if messages.len() < 4 {
         return Ok(false);
@@ -191,9 +203,14 @@ pub async fn force_compact(
 
     debug!("Force compacted {} messages into summary", split_point);
 
+    let summary_with_plan = if let Some(plan) = plan_text {
+        format!("{summary}\n\n{plan}")
+    } else {
+        summary
+    };
     let mut new_messages = Vec::new();
     new_messages.push(Message::user(format!(
-        "[Previous conversation summary]\n{summary}"
+        "[Previous conversation summary]\n{summary_with_plan}"
     )));
     new_messages.push(Message::assistant(
         "Understood. I have the context from our previous conversation.",
@@ -204,13 +221,43 @@ pub async fn force_compact(
     Ok(true)
 }
 
-/// Estimate token count for messages (rough: ~4 chars per token)
+/// Estimate token count for messages.
+/// Counts ALL content blocks (text, tool results, tool use, thinking) rather
+/// than just text, so compaction triggers when context is actually full.
 fn estimate_tokens(messages: &[Message]) -> usize {
-    let total_chars: usize = messages
-        .iter()
-        .map(|m| m.get_all_text().len())
-        .sum();
-    total_chars / 4
+    let mut total_chars: usize = 0;
+    for msg in messages {
+        total_chars += 16; // per-message overhead (~4 tokens)
+        match &msg.content {
+            rusty_core::MessageContent::Text(text) => {
+                total_chars += text.len();
+            }
+            rusty_core::MessageContent::Blocks(blocks) => {
+                for block in blocks {
+                    match block {
+                        rusty_core::ContentBlock::Text { text } => {
+                            total_chars += text.len();
+                        }
+                        rusty_core::ContentBlock::Thinking { thinking } => {
+                            total_chars += thinking.len();
+                        }
+                        rusty_core::ContentBlock::ToolUse { id, name, input } => {
+                            total_chars += id.len() + name.len();
+                            total_chars += input.to_string().len();
+                            total_chars += 32;
+                        }
+                        rusty_core::ContentBlock::ToolResult { content, tool_use_id, .. } => {
+                            total_chars += content.len() + tool_use_id.len() + 32;
+                        }
+                        rusty_core::ContentBlock::Image { .. } => {
+                            total_chars += 256;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ((total_chars as f64 * 1.2 / 4.0).ceil() as usize).max(1)
 }
 
 fn messages_to_text(messages: &[Message]) -> String {
@@ -237,14 +284,14 @@ mod tests {
     #[test]
     fn estimate_empty_messages() {
         let msgs: Vec<Message> = vec![];
-        assert_eq!(estimate_tokens(&msgs), 0); // 0 chars / 4
+        assert_eq!(estimate_tokens(&msgs), 1); // max(1) floor
     }
 
     #[test]
     fn estimate_single_message() {
-        let msgs = vec![Message::user("hello")]; // 5 chars
+        let msgs = vec![Message::user("hello")]; // 5 chars + 16 overhead = 21
         let tokens = estimate_tokens(&msgs);
-        assert_eq!(tokens, 1); // 5 / 4 = 1
+        assert_eq!(tokens, 7); // ceil(21 * 1.2 / 4) = 7
     }
 
     #[test]
@@ -255,9 +302,9 @@ mod tests {
     }
 
     #[test]
-    fn estimate_400_chars_is_100_tokens() {
-        let msgs = vec![Message::user("a".repeat(400))];
-        assert_eq!(estimate_tokens(&msgs), 100);
+    fn estimate_400_chars_is_125_tokens() {
+        let msgs = vec![Message::user("a".repeat(400))]; // 400 + 16 = 416
+        assert_eq!(estimate_tokens(&msgs), 125); // ceil(416 * 1.2 / 4) = 125
     }
 
     // ── messages_to_text ─────────────────────────────────────────────

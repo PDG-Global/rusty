@@ -1771,6 +1771,13 @@ impl AppState {
                         }
                     }
                 }
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) && !self.is_streaming => {
+                // Ctrl+Enter inserts a newline instead of submitting
+                self.confirming_exit = false;
+                self.input.insert(self.cursor_pos, '\n');
+                self.cursor_pos += 1;
+                self.needs_redraw = true;
+            }
             KeyCode::Enter if self.paste_mode => {
                 // In paste mode, insert newline instead of submitting
                 self.confirming_exit = false;

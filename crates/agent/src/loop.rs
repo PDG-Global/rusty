@@ -113,6 +113,9 @@ pub struct Agent {
     /// Tool calls already executed in the current turn. Prevents duplicate
     /// tool calls within a single LLM step (e.g. reading the same file twice).
     dedup_keys_this_turn: HashSet<String>,
+    /// Turns since the last todowrite tool call. Used to inject a gentle
+    /// reminder when the model has not updated its task list recently.
+    turns_since_todowrite: u32,
 }
 
 #[derive(Default)]
@@ -161,6 +164,7 @@ impl Agent {
             consecutive_read_turns: 0,
             file_reads_this_run: 0,
             dedup_keys_this_turn: HashSet::new(),
+            turns_since_todowrite: 0,
         }
     }
 
@@ -189,17 +193,18 @@ impl Agent {
         self.plan = Some(plan);
     }
 
-    /// Refresh the system prompt with current plan context.
-    /// Called before each LLM call so the model always sees the latest plan state.
+    /// Refresh the system prompt. The plan is no longer injected here —
+    /// it is returned by the todowrite tool so the model sees it in
+    /// conversation history instead of bloating the system prompt every turn.
     async fn refresh_system_prompt(&mut self) {
         let mut prompt = self.base_system_prompt.clone();
-        if let Some(plan) = &self.plan {
-            let plan = plan.lock().await;
-            let ctx = plan.format_for_system_prompt();
-            if !ctx.is_empty() {
-                prompt.push_str("\n\n");
-                prompt.push_str(&ctx);
-            }
+        // Inject permission-mode guidance so the model knows whether it should
+        // be autonomous or wait for approvals.
+        if let Some(mode_text) =
+            rusty_core::permissions::permission_mode_prompt(self.permission_mode)
+        {
+            prompt.push_str("\n\n");
+            prompt.push_str(mode_text);
         }
         self.system_prompt = prompt;
     }
@@ -239,13 +244,93 @@ impl Agent {
     pub async fn compact(&mut self) -> Result<bool, RustyError> {
         // Take messages out to avoid borrow conflicts with provider
         let mut msgs = std::mem::take(&mut self.messages);
-        let result = crate::compact::force_compact(&mut msgs, &*self.provider, &self.system_prompt).await;
+        let plan_text = if let Some(plan) = &self.plan {
+            let plan = plan.lock().await;
+            let text = plan.render_for_tool_output();
+            if text.is_empty() || text == "Todo list is empty." {
+                None
+            } else {
+                Some(text)
+            }
+        } else {
+            None
+        };
+        let result = crate::compact::force_compact(
+            &mut msgs,
+            &*self.provider,
+            &self.system_prompt,
+            plan_text.as_deref(),
+        )
+        .await;
         self.messages = msgs;
         result
     }
 
     pub fn total_usage(&self) -> &UsageInfo {
         &self.total_usage
+    }
+
+    /// Rough token estimation for the current prompt.
+    /// Counts all message content (including tool results and tool use blocks),
+    /// the system prompt, and tool definitions with overhead.
+    fn estimate_input_tokens(&self) -> u32 {
+        let mut chars = 0usize;
+
+        // System prompt
+        chars += self.system_prompt.len();
+
+        // Messages: count ALL content blocks, not just text
+        for msg in &self.messages {
+            // Role overhead (~4 tokens per message)
+            chars += 16;
+            match &msg.content {
+                rusty_core::MessageContent::Text(text) => {
+                    chars += text.len();
+                }
+                rusty_core::MessageContent::Blocks(blocks) => {
+                    for block in blocks {
+                        match block {
+                            rusty_core::ContentBlock::Text { text } => {
+                                chars += text.len();
+                            }
+                            rusty_core::ContentBlock::Thinking { thinking } => {
+                                chars += thinking.len();
+                            }
+                            rusty_core::ContentBlock::ToolUse { id, name, input } => {
+                                // Tool call overhead
+                                chars += id.len() + name.len();
+                                chars += input.to_string().len();
+                                chars += 32; // wrapper overhead
+                            }
+                            rusty_core::ContentBlock::ToolResult {
+                                content,
+                                tool_use_id,
+                                ..
+                            } => {
+                                chars += content.len();
+                                chars += tool_use_id.len();
+                                chars += 32; // wrapper overhead
+                            }
+                            rusty_core::ContentBlock::Image { .. } => {
+                                chars += 256; // rough estimate for image data
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tool definitions: name + description + JSON schema + overhead
+        for tool in self.tools.values() {
+            chars += tool.name().len();
+            chars += tool.description().len();
+            chars += tool.input_schema().to_string().len();
+            chars += 64; // wrapper overhead per tool
+        }
+
+        // Simple heuristic: ~4 chars per token, with a 1.2x multiplier for
+        // JSON serialization and API overhead.
+        ((chars as f64 * 1.2 / 4.0).ceil() as u32).max(1)
     }
 
     /// Send a minimal non-streaming request to verify the provider connection.
@@ -362,8 +447,34 @@ impl Agent {
             }
             debug!("Agent turn {}/{}", turn + 1, self.max_turns);
 
-            // Refresh system prompt with current plan context
+            // Refresh system prompt
             self.refresh_system_prompt().await;
+
+            // Increment turns since last todowrite
+            self.turns_since_todowrite += 1;
+
+            // Gentle reminder: if the model hasn't updated its task list in a while,
+            // nudge it to consider using todowrite. This mirrors kimi-code's
+            // TodoListReminderInjector behaviour.
+            if self.turns_since_todowrite >= 10 {
+                if let Some(plan) = &self.plan {
+                    let plan = plan.lock().await;
+                    let incomplete = plan.incomplete_count();
+                    if incomplete > 0 {
+                        let reminder = format!(
+                            "\n\nThe todo list has not been updated recently. \
+                             If you are working on tasks that benefit from progress tracking, \
+                             consider using todowrite to update task status. \
+                             Also consider clearing or rewriting the todo list if it has become stale \
+                             and no longer matches the current work. \
+                             This is a gentle reminder; ignore it if not applicable. \
+                             Make sure that you NEVER mention this reminder to the user.\n\n{}",
+                            plan.render_for_tool_output()
+                        );
+                        self.system_prompt.push_str(&reminder);
+                    }
+                }
+            }
 
             // Warn when approaching max turns
             if turn == self.max_turns.saturating_sub(3) && self.max_turns > 5 {
@@ -372,7 +483,24 @@ impl Agent {
 
             // Maybe compact before sending
             let context_window = self.config.effective_context_window();
-            maybe_compact(&mut self.messages, &*self.provider, &self.system_prompt, context_window).await?;
+            let plan_text = if let Some(plan) = &self.plan {
+                let plan = plan.lock().await;
+                let text = plan.render_for_tool_output();
+                if text.is_empty() || text == "Todo list is empty." {
+                    None
+                } else {
+                    Some(text)
+                }
+            } else {
+                None
+            };
+            let did_compact = maybe_compact(&mut self.messages, &*self.provider, &self.system_prompt, context_window, plan_text.as_deref()).await?;
+            if did_compact {
+                self.messages.push(Message::user(
+                    "[System: Conversation history was automatically compacted to save context space. \
+                     Key decisions and code changes are preserved in the summary above.]"
+                ));
+            }
 
             let tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();
 
@@ -537,18 +665,20 @@ impl Agent {
             );
 
             // Estimate tokens only if the provider didn't report usage
-            // (common with OpenAI-compatible providers that don't support stream_options)
-            if !got_api_usage {
-                let messages_chars: usize = self.messages.iter().map(|m| m.get_all_text().len()).sum();
-                let system_chars = self.system_prompt.len();
-                let tool_chars: usize = self.tools.values().map(|t| {
-                    t.name().len() + t.description().len() + t.input_schema().to_string().len()
-                }).sum();
-                let estimated_input = ((messages_chars + system_chars + tool_chars) / 4) as u32;
-                let estimated_output = (assistant_text.len() / 4) as u32;
-                self.current_context_tokens = estimated_input;
-                if estimated_input > self.total_usage.input_tokens {
-                    self.total_usage.input_tokens = estimated_input;
+            // (common with OpenAI-compatible providers that don't support stream_options).
+            // Also fall back to estimation if the reported usage seems implausibly low
+            // (some APIs send usage: {"input_tokens": 0} which would show 0% context).
+            let estimated_input = self.estimate_input_tokens();
+            let estimated_output = (assistant_text.len() / 4) as u32;
+            let effective_input = if !got_api_usage || self.current_context_tokens < estimated_input / 2 {
+                estimated_input
+            } else {
+                self.current_context_tokens
+            };
+            if !got_api_usage || effective_input != self.current_context_tokens {
+                self.current_context_tokens = effective_input;
+                if effective_input > self.total_usage.input_tokens {
+                    self.total_usage.input_tokens = effective_input;
                 }
                 if estimated_output > self.total_usage.output_tokens {
                     self.total_usage.output_tokens = estimated_output;
@@ -821,6 +951,11 @@ impl Agent {
                     // Count successful file reads for context protection
                     if tc.name == "file_read" && !tool_result.is_error {
                         self.file_reads_this_run += 1;
+                    }
+
+                    // Reset todo reminder counter when the model updates its task list
+                    if tc.name == "todowrite" && !tool_result.is_error {
+                        self.turns_since_todowrite = 0;
                     }
                 }
 

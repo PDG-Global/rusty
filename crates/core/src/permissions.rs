@@ -12,6 +12,36 @@ pub enum PermissionMode {
     Plan,
 }
 
+/// Returns a short behavioral guidance string for the given permission mode.
+/// This is injected into the system prompt to tell the model how to behave
+/// regarding approvals and autonomy.
+pub fn permission_mode_prompt(mode: PermissionMode) -> Option<&'static str> {
+    match mode {
+        PermissionMode::Default => Some(
+            "## Permission Mode\n\n\
+            You are in default permission mode. Write and execute tools require user approval. \
+            Proceed with read-only work while waiting for approval.",
+        ),
+        PermissionMode::AcceptEdits => Some(
+            "## Permission Mode\n\n\
+            You are in accept-edits mode. File writes and edits are auto-approved. \
+            Execute commands still require user approval. Proceed with file changes directly.",
+        ),
+        PermissionMode::BypassPermissions => Some(
+            "## Permission Mode\n\n\
+            You are in bypass-permissions mode. All tools are auto-approved. \
+            Work autonomously — do not pause for approvals or ask clarifying questions. \
+            Make reasonable decisions and continue working.",
+        ),
+        PermissionMode::Plan => Some(
+            "## Permission Mode\n\n\
+            You are in plan mode. Write and execute tools are disabled. \
+            Focus on research and planning using read-only tools. \
+            Use exit_plan_mode when you are ready to execute.",
+        ),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionLevel {
     None,

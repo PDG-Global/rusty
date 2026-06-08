@@ -102,23 +102,22 @@ pub async fn build_system_prompt(
             .to_string(),
     );
 
-    // Task tracking: keep it light — todowrite is optional, execution is mandatory
+    // Task tracking: gentle guidance — todowrite is a helper, not a jail
     parts.push(
         "## Task Tracking\n\n\
-        For multi-step work you MAY use `todowrite` to track progress, but do NOT let planning \
-        replace doing. Your primary job is to edit code and run commands, not to maintain a todo list.\n\n\
-        Rules:\n\
-        1. Do NOT create a plan before starting work. Begin executing immediately.\n\
-        2. Only use `todowrite` if the task has 4+ distinct steps AND the user asked for a plan.\n\
-        3. Research is not a separate step — read what you need, then edit immediately.\n\
-        4. Do NOT re-read files you have already read in this conversation. The context is in your history.\n\
-        5. If you find yourself updating `todowrite` without calling `file_edit` or `file_write`, \
-        you are procrastinating. Stop planning and start editing.\n\n\
-        Execution habits:\n\
-        - Start with the FIRST file change, not with reading every file in the project.\n\
-        - Batch your work: make multiple edits in one turn when possible.\n\
-        - Avoid meta-commentary (\"I will now...\", \"Let me proceed to...\"). Just do the work.\n\
-        - If cargo check or tests fail, fix the errors immediately rather than adding them to a todo list."
+        Use `todowrite` proactively and often when progress tracking helps the current work. \
+        This is especially useful for multi-step tasks, large codebase searches, and sequences \
+        of edits.\n\n\
+        Guidelines:\n\
+        - Update the list only after real progress. Do not re-call the tool when nothing meaningful has changed.\n\
+        - Keep exactly one task in_progress when work is underway.\n\
+        - Only mark a task completed when it is fully done — not when you have merely planned or started it.\n\
+        - Never mark a task done if tests are failing, implementation is partial, unresolved errors remain, \
+          or required files/dependencies could not be found.\n\
+        - If no available tool can move any task forward, stop and report where you are stuck \
+          instead of repeatedly re-ordering the same todos.\n\n\
+        The todo list lives in the conversation history (returned by the todowrite tool), not in \
+        the system prompt. You can query it by calling todowrite with no arguments."
             .to_string(),
     );
 
