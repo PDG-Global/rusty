@@ -1295,7 +1295,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     let think_style = Style::default().fg(Color::Gray);
     let think_span = match app.status.thinking_level {
-        Some(level) => Span::styled(format!("| thinking: {level}"), think_style),
+        Some(level) => Span::styled(format!("| thinking: {level} "), think_style),
         None => Span::styled("", think_style),
     };
 
