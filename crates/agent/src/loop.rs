@@ -235,6 +235,32 @@ impl Agent {
         &self.total_usage
     }
 
+    /// Send a minimal non-streaming request to verify the provider connection.
+    /// Returns the model's response text on success, or an error describing
+    /// what went wrong (auth, endpoint, model ID, etc.).
+    pub async fn test_connection(&self) -> Result<String, RustyError> {
+        let request = MessageRequest {
+            model: self.config.model.clone(),
+            system: None,
+            messages: vec![Message::user("Respond with exactly the word pong.")],
+            tools: vec![],
+            max_tokens: 16,
+            temperature: Some(0.0),
+            thinking_budget: None,
+        };
+        let response = self.provider.create_message(request).await?;
+        let text = response
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        Ok(text)
+    }
+
     /// Extract details of incomplete tasks from the most recent `todowrite` call.
     /// Returns a vec of (status, content) pairs for tasks that are not completed/cancelled.
     fn incomplete_task_details(&self) -> Vec<(String, String)> {

@@ -869,6 +869,13 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path)
                     }
                     continue;
                 }
+                Some(rusty_tui::app::SlashCommand::Test) => {
+                    match agent.test_connection().await {
+                        Ok(text) => println!("Connection OK. Model responded with: {}", text.trim()),
+                        Err(e) => println!("Connection test failed: {e}"),
+                    }
+                    continue;
+                }
                 None => {
                     println!("Unknown command: {line}. Type /help for available commands.");
                     continue;
@@ -1401,6 +1408,26 @@ async fn run_tui(
                                 let _ = event_tx.send(AgentTaskEvent::Event(
                                     rusty_tui::app::AgentEvent::ResponseComplete(format!("API key set for '{}'.", name)),
                                 ));
+                                let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
+                            }
+                            Some(rusty_tui::app::TuiCommand::TestConnection) => {
+                                let agent = agent_arc.lock().await;
+                                match agent.test_connection().await {
+                                    Ok(text) => {
+                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                            rusty_tui::app::AgentEvent::ResponseComplete(format!(
+                                                "Connection OK. Model responded with: {}", text.trim()
+                                            )),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        let _ = event_tx.send(AgentTaskEvent::Event(
+                                            rusty_tui::app::AgentEvent::Error(format!(
+                                                "Connection test failed: {}", e
+                                            )),
+                                        ));
+                                    }
+                                }
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
                             Some(rusty_tui::app::TuiCommand::Cancel) => {}
@@ -2154,6 +2181,11 @@ async fn handle_slash_command(
             app.needs_redraw = true;
             let plan_prompt = "Enter plan mode. Read the relevant files and create a detailed plan. Do not execute any write or execute tools.".to_string();
             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: plan_prompt }]));
+        }
+        rusty_tui::app::SlashCommand::Test => {
+            app.push_system("Testing connection to current model...");
+            app.needs_redraw = true;
+            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::TestConnection);
         }
     }
 }

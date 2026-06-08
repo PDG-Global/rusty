@@ -198,6 +198,8 @@ pub enum TuiCommand {
     DeleteModel(String),
     /// Set API key for a model (name, key)
     SetModelApiKey(String, String),
+    /// Test connection to the current model
+    TestConnection,
 }
 
 /// Mode for the model form popup.
@@ -393,6 +395,8 @@ pub enum SlashCommand {
     Version,
     /// /plan — enter explicit plan mode (read-only planning)
     Plan,
+    /// /test — test connection to current model
+    Test,
 }
 
 impl SlashCommand {
@@ -415,6 +419,7 @@ impl SlashCommand {
             "/settings" => Some(SlashCommand::Settings),
             "/version" | "/v" => Some(SlashCommand::Version),
             "/plan" => Some(SlashCommand::Plan),
+            "/test" => Some(SlashCommand::Test),
             _ => None,
         }
     }
@@ -434,6 +439,7 @@ impl SlashCommand {
             ("/settings", "Open settings and model registry"),
             ("/version", "Show current version and update status"),
             ("/plan", "Enter explicit plan mode for planning only"),
+            ("/test", "Test connection to current model"),
             ("/quit", "Exit rusty"),
         ]
     }
@@ -977,6 +983,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/settings", "Open settings overlay"),
     ("/version", "Show version and check for updates"),
     ("/plan", "Enter explicit plan mode for planning only"),
+    ("/test", "Test connection to current model"),
     ("/quit", "Exit"),
 ];
 
@@ -1901,6 +1908,7 @@ impl AppState {
             SlashCommand::Settings => "settings",
             SlashCommand::Version => "version",
             SlashCommand::Plan => "plan",
+            SlashCommand::Test => "test",
         };
         self.slash_command = Some(name.to_string());
         self.input.clear();
