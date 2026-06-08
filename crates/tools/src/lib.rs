@@ -208,6 +208,17 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     ]
 }
 
+/// Returns read-only tools suitable for explore subagents.
+/// These tools cannot modify the filesystem or execute commands.
+pub fn explore_tools() -> Vec<Box<dyn Tool>> {
+    vec![
+        Box::new(file_read::FileReadTool),
+        Box::new(glob::GlobTool),
+        Box::new(grep::GrepTool),
+        Box::new(web_fetch::WebFetchTool::new()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

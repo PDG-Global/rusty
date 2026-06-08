@@ -14,6 +14,8 @@ pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, ToolStatus};
 // Re-export CancelToken so downstream crates (e.g. rusty CLI) can use `rusty_agent::CancelToken`.
 pub use rusty_core::CancelToken;
 
+const DEFAULT_SUBAGENT_TIMEOUT_MS: u64 = 30 * 60 * 1000;
+
 /// Spawn a sub-agent as a same-process tokio task.
 /// Returns the sub-agent's final text response.
 /// Sub-agents inherit the parent's permission mode. In Bypass mode they run
@@ -27,6 +29,7 @@ pub async fn spawn_subagent(
     working_dir: PathBuf,
     system_prompt: String,
     task: String,
+    subagent_type: String,
     parent_permission_mode: PermissionMode,
     cancel: Option<CancelToken>,
 ) -> Result<String, RustyError> {
@@ -37,6 +40,14 @@ pub async fn spawn_subagent(
         PermissionMode::Default => PermissionMode::AcceptEdits,
         other => other,
     };
+
+    // Filter tools based on subagent type
+    let tools = if subagent_type == "explore" {
+        rusty_tools::explore_tools()
+    } else {
+        tools
+    };
+
     let handle = tokio::spawn(async move {
         let mut agent = Agent::new(provider, tools, config, working_dir, system_prompt);
         agent.set_permission_mode(effective_mode);
@@ -47,9 +58,25 @@ pub async fn spawn_subagent(
         agent.run(vec![ContentBlock::Text { text: task }], callbacks).await
     });
 
-    handle
-        .await
-        .map_err(|e| RustyError::Other(format!("Sub-agent panicked: {e}")))?
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_millis(DEFAULT_SUBAGENT_TIMEOUT_MS),
+        handle,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            return Err(RustyError::Other(
+                format!(
+                    "Subagent timed out after {} minutes.",
+                    DEFAULT_SUBAGENT_TIMEOUT_MS / 60 / 1000
+                )
+                .into(),
+            ))
+        }
+    };
+
+    result.map_err(|e| RustyError::Other(format!("Sub-agent panicked: {e}")))?
 }
 
 /// Create an AgentTool wired to spawn sub-agents with the given provider and config.
@@ -60,14 +87,14 @@ pub fn make_agent_tool(
     config: Config,
 ) -> rusty_tools::agent::AgentTool {
     let parent_mode = config.permission_mode;
-    let spawn_fn = Arc::new(move |task: String, working_dir: PathBuf, cancel: Option<CancelToken>| {
+    let spawn_fn = Arc::new(move |task: String, subagent_type: String, working_dir: PathBuf, cancel: Option<CancelToken>| {
         let provider = provider.clone();
         let system_prompt = system_prompt.clone();
         let config = config.clone();
         Box::pin(async move {
             // Sub-agents get all tools except the agent tool (to prevent recursive spawning)
             let tools: Vec<Box<dyn rusty_tools::Tool>> = rusty_tools::all_tools();
-            spawn_subagent(provider, tools, config, working_dir, system_prompt, task, parent_mode, cancel).await
+            spawn_subagent(provider, tools, config, working_dir, system_prompt, task, subagent_type, parent_mode, cancel).await
         }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RustyError>> + Send>>
     });
 
