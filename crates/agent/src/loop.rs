@@ -96,9 +96,6 @@ pub struct Agent {
     permission_callback: Option<PermissionCallback>,
     session_allowlist: HashSet<String>,
     permanent_allowlist: HashSet<String>,
-    /// How many times we've nudged the model to finish incomplete tasks.
-    /// Prevents infinite loops when the model is stuck.
-    task_nudge_count: u32,
     /// Persistent plan, injected into system prompt each turn.
     plan: Option<Arc<tokio::sync::Mutex<Plan>>>,
     /// When true, the agent is in explicit plan mode (no Write/Execute tools allowed).
@@ -113,6 +110,9 @@ pub struct Agent {
     /// Total file_read tool calls executed this run. Used to prevent context
     /// bloat from endless research loops where the model reads every file.
     file_reads_this_run: u32,
+    /// Tool calls already executed in the current turn. Prevents duplicate
+    /// tool calls within a single LLM step (e.g. reading the same file twice).
+    dedup_keys_this_turn: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -155,12 +155,12 @@ impl Agent {
             permission_callback: None,
             session_allowlist: HashSet::new(),
             permanent_allowlist: HashSet::new(),
-            task_nudge_count: 0,
             plan: None,
             plan_mode: false,
             exited_plan_mode_this_turn: false,
             consecutive_read_turns: 0,
             file_reads_this_run: 0,
+            dedup_keys_this_turn: HashSet::new(),
         }
     }
 
@@ -225,7 +225,6 @@ impl Agent {
     /// Reset conversation and task state (used by /clear).
     pub async fn clear_state(&mut self) {
         self.messages.clear();
-        self.task_nudge_count = 0;
         self.plan_mode = false;
         self.file_reads_this_run = 0;
         if let Some(plan) = &self.plan {
@@ -349,6 +348,8 @@ impl Agent {
         self.messages.push(Message::user_blocks(content));
 
         for turn in 0..self.max_turns {
+            // Reset per-turn deduplication tracking.
+            self.dedup_keys_this_turn.clear();
             if let Some(c) = cancel {
                 if c.is_cancelled() {
                     self.finalize_plan().await;
@@ -666,12 +667,24 @@ impl Agent {
 
                 // Phase 2: Fire "Running" callbacks and spawn approved tools concurrently
                 let mut spawn_handles: Vec<Option<_>> = Vec::new();
+                let mut is_duplicate: Vec<bool> = Vec::new();
                 for (tc, decision) in &permission_results {
                     if let PermissionDecision::Deny(reason) = decision {
                         warn!("Tool {} denied: {}", tc.name, reason);
                         spawn_handles.push(None);
+                        is_duplicate.push(false);
                         continue;
                     }
+
+                    // Deduplicate: skip exact duplicate tool calls within the same turn.
+                    let dedup_key = format!("{}:{}", tc.name, tc.arguments);
+                    if self.dedup_keys_this_turn.contains(&dedup_key) {
+                        warn!("Skipping duplicate tool call: {}", tc.name);
+                        spawn_handles.push(None);
+                        is_duplicate.push(true);
+                        continue;
+                    }
+                    self.dedup_keys_this_turn.insert(dedup_key);
 
                     // Track write/execute usage for research-loop detection
                     if let Some(tool) = self.tools.get(&tc.name) {
@@ -704,6 +717,7 @@ impl Agent {
                         tool.execute(input, &tool_ctx).await
                     });
                     spawn_handles.push(Some(handle));
+                    is_duplicate.push(false);
                 }
 
                 // Phase 3: Collect results and fire callbacks
@@ -719,7 +733,28 @@ impl Agent {
                     })
                 ).await;
 
-                for ((tc, _decision), result) in permission_results.iter().zip(results) {
+                for (((tc, _decision), result), dup) in permission_results.iter().zip(results).zip(is_duplicate) {
+                    // Duplicate calls get a synthetic result instead of re-executing.
+                    if dup {
+                        let dup_result = ToolResult::success(format!(
+                            "Duplicate tool call skipped — you already called {} with these arguments in this turn. \
+                             Re-use the result from your previous call.",
+                            tc.name
+                        ));
+                        if let Some(cb) = on_tool {
+                            cb(&tc.name, ToolStatus::Done {
+                                output: dup_result.content.clone(),
+                            });
+                        }
+                        self.messages.push(Message::user_blocks(vec![
+                            ContentBlock::ToolResult {
+                                tool_use_id: tc.id.clone(),
+                                content: dup_result.content,
+                                is_error: Some(false),
+                            },
+                        ]));
+                        continue;
+                    }
                     let tool_result = match result {
                         Some(Ok(r)) => r,
                         Some(Err(e)) => {
@@ -802,7 +837,6 @@ impl Agent {
             match stop_reason.as_deref() {
                 Some("end_turn") | None => {
                     let incomplete = self.incomplete_task_details();
-                    let nudge_limit = (incomplete.len() as u32 * 4).max(12);
 
                     if had_write_or_execute_this_turn {
                         self.consecutive_read_turns = 0;
@@ -810,46 +844,30 @@ impl Agent {
                         self.consecutive_read_turns += 1;
                     }
 
-                    if !incomplete.is_empty()
-                        && self.task_nudge_count < nudge_limit
-                        && !self.exited_plan_mode_this_turn
-                    {
+                    // Gentle continuation: if there are incomplete tasks and the model
+                    // didn't explicitly hand control back via exit_plan_mode, give it
+                    // another turn to keep working. No scolding — just encourage progress.
+                    if !incomplete.is_empty() && !self.exited_plan_mode_this_turn {
                         warn!(
-                            "Model tried to stop with {} incomplete tasks (nudge {}/{}); nudging to continue",
+                            "Model stopped with {} incomplete tasks; continuing",
                             incomplete.len(),
-                            self.task_nudge_count + 1,
-                            nudge_limit
                         );
-                        self.task_nudge_count += 1;
-                        let task_list: String = incomplete
-                            .iter()
-                            .enumerate()
-                            .map(|(i, (status, content))| format!("  {}. [{}] {}", i + 1, status, content))
-                            .collect::<Vec<_>>()
-                            .join("\n");
 
-                        let nudge_msg = if self.consecutive_read_turns >= 3 {
+                        let continue_msg = if self.consecutive_read_turns >= 3 {
                             format!(
-                                "You have {} incomplete task(s) remaining:\n{}\n\n\
-                                 You have spent {} turns researching without making any changes. \
-                                 You are NOT allowed to call file_read or bash again. \
-                                 Pick the FIRST pending task and call file_edit or file_write NOW. \
-                                 Do NOT explain your plan — just edit the code.",
+                                "Continue working toward the task. You have {} incomplete step(s) remaining. \
+                                 Use the context you already have from previous turns — do not re-read files. \
+                                 Make progress on the next pending step now.",
                                 incomplete.len(),
-                                task_list,
-                                self.consecutive_read_turns,
                             )
                         } else {
                             format!(
-                                "You have {} incomplete task(s) remaining:\n{}\n\n\
-                                 Continue working through them. Execute the next pending task by calling \
-                                 the appropriate tool. When you finish a task, update its status via todowrite \
-                                 in your next turn.",
+                                "Continue working toward the task. You have {} incomplete step(s) remaining. \
+                                 Make progress on the next pending step.",
                                 incomplete.len(),
-                                task_list,
                             )
                         };
-                        self.messages.push(Message::user(nudge_msg));
+                        self.messages.push(Message::user(continue_msg));
                         continue;
                     }
                     self.finalize_plan().await;

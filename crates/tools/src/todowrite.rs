@@ -28,11 +28,11 @@ impl Tool for TodoWriteTool {
 
     fn description(&self) -> &str {
         "Manage a structured task list for tracking progress through multi-step work. \
-         Use this tool to create and update a TODO list that helps track what needs to be done, \
-         what's currently in progress, and what's been completed. \
-         The list persists across the conversation and will be injected into your context each turn, \
-         so you cannot forget your commitments. \
-         Always pass the full current state when updating."
+         Use this tool to create and update a TODO list. The list is persisted to disk \
+         and injected into your system prompt each turn, so you do not need to remember it. \
+         Always pass the full current state when updating. Keep titles short and actionable. \
+         When work is underway, keep exactly one task in_progress. Only mark a task completed \
+         when it is fully done — not when you have merely planned or started it."
     }
 
     fn input_schema(&self) -> Value {
@@ -110,45 +110,22 @@ impl Tool for TodoWriteTool {
             }
         }
 
-        // Build output grouped by priority with status indicators.
+        // Return a brief acknowledgment instead of the full list.
+        // The full list is persisted to disk and injected into the system prompt
+        // each turn via refresh_system_prompt, so repeating it here bloats context.
         let plan = self.plan.lock().await;
-        let high: Vec<_> = plan
-            .items
-            .iter()
-            .filter(|i| i.priority == PlanItemPriority::High)
-            .collect();
-        let medium: Vec<_> = plan
-            .items
-            .iter()
-            .filter(|i| i.priority == PlanItemPriority::Medium)
-            .collect();
-        let low: Vec<_> = plan
-            .items
-            .iter()
-            .filter(|i| i.priority == PlanItemPriority::Low)
-            .collect();
+        let total = plan.items.len();
+        let completed = plan.items.iter().filter(|i| i.status == PlanItemStatus::Completed).count();
+        let pending = plan.items.iter().filter(|i| i.status == PlanItemStatus::Pending).count();
+        let in_progress = plan.items.iter().filter(|i| i.status == PlanItemStatus::InProgress).count();
 
-        let mut output = String::new();
+        let output = format!(
+            "Task list updated ({} total, {} completed, {} in_progress, {} pending). \
+             The current list is visible in your system prompt.",
+            total, completed, in_progress, pending,
+        );
 
-        let format_items = |items: &[&PlanItem]| -> String {
-            items
-                .iter()
-                .map(|i| format!("  {} {}", i.status.indicator(), i.content))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        if !high.is_empty() {
-            output.push_str(&format!("[HIGH]\n{}\n", format_items(&high)));
-        }
-        if !medium.is_empty() {
-            output.push_str(&format!("[MEDIUM]\n{}\n", format_items(&medium)));
-        }
-        if !low.is_empty() {
-            output.push_str(&format!("[LOW]\n{}\n", format_items(&low)));
-        }
-
-        Ok(ToolResult::success(output.trim().to_string()))
+        Ok(ToolResult::success(output))
     }
 }
 
@@ -185,10 +162,11 @@ mod tests {
 
         let result = tool.execute(args, &ctx).await.unwrap();
         let text = result.content.as_str();
-        assert!(text.contains("[HIGH]"));
-        assert!(text.contains("[ ] Task A"));
-        assert!(text.contains("[~] Task B"));
-        assert!(text.contains("[x] Task C"));
+        assert!(text.contains("Task list updated"));
+        assert!(text.contains("3 total"));
+        assert!(text.contains("1 completed"));
+        assert!(text.contains("1 in_progress"));
+        assert!(text.contains("1 pending"));
     }
 
     #[tokio::test]
