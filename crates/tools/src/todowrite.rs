@@ -114,12 +114,7 @@ impl Tool for TodoWriteTool {
         // in the conversation history.
         let plan = self.plan.lock().await;
         let rendered = plan.render_for_tool_output();
-        let output = format!(
-            "Todo list updated.\n{}\n\n\
-             Continue using the todo list to track progress. Mark tasks done immediately \
-             after finishing them, and keep exactly one task in_progress when work is underway.",
-            rendered,
-        );
+        let output = format!("Todo list updated.\n{}", rendered);
 
         Ok(ToolResult::success(output))
     }
@@ -162,7 +157,6 @@ mod tests {
         assert!(text.contains("1. [pending] Task A"));
         assert!(text.contains("2. [in_progress] Task B"));
         assert!(text.contains("3. [completed] Task C"));
-        assert!(text.contains("Continue using the todo list"));
     }
 
     #[tokio::test]

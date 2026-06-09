@@ -17,7 +17,7 @@ use rusty_core::permissions::{PermissionDecision, PermissionRequest};
 use rusty_core::ContentBlock;
 use rusty_core::{Config, ConversationSession, CredentialManager, PermissionMode, Settings};
 use rusty_core::setup_wizard::{run_setup_wizard, is_first_run};
-use rusty_core::config::{ensure_restricted_dir, set_restrictive_file_permissions};
+use rusty_core::config::ensure_restricted_dir;
 use rusty_provider::ProviderConfig;
 use rusty_tools::{all_tools, Tool};
 use rusty_keymap as keymap_lib;
@@ -196,17 +196,28 @@ async fn main() -> Result<()> {
     let _ = ensure_restricted_dir(std::path::Path::new(&log_dir));
     let log_path = std::path::Path::new(&log_dir).join("debug.log");
 
-    // Open log file in append mode; fall back to stderr if file can't be opened
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .ok();
-
-    // Set restrictive permissions on the log file
-    if log_file.is_some() {
-        set_restrictive_file_permissions(&log_path);
-    }
+    // Open log file — create atomically with restrictive permissions if new,
+    // or open in append mode if it already exists.
+    let log_file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Try atomic creation with restricted permissions
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&log_path)
+        {
+            Ok(f) => Some(f),
+            Err(_) if log_path.exists() => {
+                // File already exists, open in append mode
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&log_path)
+                    .ok()
+            }
+            Err(_) => None,
+        }
+    };
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
@@ -217,7 +228,6 @@ async fn main() -> Result<()> {
             tracing_subscriber::fmt()
                 .with_writer(move || {
                     std::fs::OpenOptions::new()
-                        .create(true)
                         .append(true)
                         .open(&log_path_clone)
                         .unwrap()
@@ -532,7 +542,7 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    // Build tools (including agent tool, memory tool, and plan tool)
+    // Build tools (including agent tool, memory tool, plan tool, and background task tools)
     let mut tools: Vec<Box<dyn Tool>> = all_tools();
     let memory_tool = rusty_tools::memory::MemoryTool::new(project_memory);
     tools.push(Box::new(memory_tool));
@@ -540,14 +550,26 @@ async fn main() -> Result<()> {
     let plan_tool = rusty_tools::todowrite::TodoWriteTool::new(plan.clone());
     tools.push(Box::new(plan_tool));
 
+    // Background manager for tracking fire-and-forget subagents
+    let background_manager = Arc::new(rusty_tools::background::BackgroundManager::new());
+
     // Add agent tool with spawn function — uses the full system prompt so
     // sub-agents inherit the same context (AGENTS.md, CLAUDE.md, git info, etc.)
     let agent_tool = rusty_agent::make_agent_tool(
         provider.clone(),
         system_prompt.clone(),
         config.clone(),
+        Some(background_manager.clone()),
     );
     tools.push(Box::new(agent_tool));
+
+    // Add background task query and control tools
+    tools.push(Box::new(rusty_tools::task_output::TaskOutputTool {
+        manager: background_manager.clone(),
+    }));
+    tools.push(Box::new(rusty_tools::task_stop::TaskStopTool {
+        manager: background_manager.clone(),
+    }));
 
     info!("Model: {}", config.model);
     info!("Working directory: {}", working_dir.display());

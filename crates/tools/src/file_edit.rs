@@ -79,6 +79,10 @@ impl Tool for FileEditTool {
 
         let new_content = content.replacen(old_string, new_string, 1);
 
+        // Pre-write TOCTOU check: ensure the file hasn't been swapped for an escaping
+        // symlink between the read and the write.
+        crate::verify_not_escaping_symlink(&path, &ctx.working_dir)?;
+
         tokio::fs::write(&path, &new_content)
             .await
             .map_err(|e| RustyError::Tool(format!("Failed to write {}: {e}", path.display())))?;

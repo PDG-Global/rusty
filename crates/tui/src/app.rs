@@ -49,23 +49,31 @@ pub fn sanitize_paste_text(text: &str) -> String {
                     }
                     chars_skipped += 1;
                 }
-                // Also strip ESC followed by other chars (OSC, etc.)
-                else if let Some(&c) = chars.peek() {
-                    if c == ']' || c == '(' || c == ')' || c == '#' || c == 'P' {
-                        // OSC/SCS/DCS sequences - skip until ST (ESC \) or BEL
-                        let prefix = c;
+                // OSC (ESC ]): consume until BEL or ST (ESC \)
+                else if chars.peek() == Some(&']') {
+                    chars.next(); // consume ']'
+                    while let Some(&c2) = chars.peek() {
                         chars.next();
-                        if prefix == ']' {
-                            // OSC: terminated by BEL (0x07) or ST (ESC \)
-                            while let Some(&c2) = chars.peek() {
-                                chars.next();
-                                if c2 == '\x07' {
-                                    break;
-                                }
-                                if c2 == '\x1b' && chars.peek() == Some(&'\\') {
-                                    chars.next();
-                                    break;
-                                }
+                        if c2 == '\x07' {
+                            break; // BEL terminator
+                        }
+                        if c2 == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next(); // consume backslash (ST)
+                            break;
+                        }
+                    }
+                    chars_skipped += 1;
+                }
+                // DCS (ESC P), APC (ESC _), PM (ESC ^), SOS (ESC X):
+                // consume until ST (ESC \)
+                else if let Some(&c) = chars.peek() {
+                    if c == 'P' || c == '_' || c == '^' || c == 'X' {
+                        chars.next(); // consume the prefix character
+                        while let Some(&c2) = chars.peek() {
+                            chars.next();
+                            if c2 == '\x1b' && chars.peek() == Some(&'\\') {
+                                chars.next(); // consume backslash (ST)
+                                break;
                             }
                         }
                     }
@@ -109,7 +117,8 @@ pub fn sanitize_paste_text(text: &str) -> String {
             result.len(),
             MAX_PASTE_LENGTH
         );
-        result.truncate(MAX_PASTE_LENGTH);
+        let boundary = result.floor_char_boundary(MAX_PASTE_LENGTH);
+        result.truncate(boundary);
     }
 
     result

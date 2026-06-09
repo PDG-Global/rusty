@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ensure_restricted_dir, set_restrictive_file_permissions};
+use crate::config::atomic_write;
 use crate::memory::{slugify_path, find_git_root};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -114,12 +114,8 @@ impl Plan {
     pub fn save(&self) -> anyhow::Result<()> {
         let project_id = slugify_path(Path::new(&self.project_path));
         let path = plan_file_path(&project_id);
-        if let Some(parent) = path.parent() {
-            ensure_restricted_dir(parent)?;
-        }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
-        set_restrictive_file_permissions(&path);
+        atomic_write(&path, content.as_bytes())?;
         Ok(())
     }
 

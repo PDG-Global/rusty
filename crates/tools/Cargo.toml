@@ -19,6 +19,7 @@ glob.workspace = true
 regex.workspace = true
 similar.workspace = true
 reqwest.workspace = true
+futures.workspace = true
 parking_lot.workspace = true
 uuid.workspace = true
 

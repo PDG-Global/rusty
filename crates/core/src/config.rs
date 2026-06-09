@@ -30,7 +30,79 @@ pub fn set_restrictive_file_permissions(path: &Path) {
 #[cfg(not(unix))]
 pub fn set_restrictive_file_permissions(_path: &Path) {}
 
-/// Ensure a directory exists and set restrictive permissions on it.
+/// Write content to a file atomically with restrictive permissions at creation time.
+/// On Unix, uses `OpenOptions::mode(0o600)` to avoid TOCTOU between file creation
+/// and permission setting. Creates parent directories via `ensure_restricted_dir`.
+pub fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        ensure_restricted_dir(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(content)
+            })
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(content)
+            })
+    }
+}
+
+/// Async version of `atomic_write` using `tokio::fs`.
+pub async fn atomic_write_async(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        let parent = parent.to_path_buf();
+        tokio::task::spawn_blocking(move || ensure_restricted_dir(&parent)).await??;
+    }
+    let path = path.to_path_buf();
+    let content = content.to_vec();
+    tokio::task::spawn_blocking(move || {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&path)
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    f.write_all(&content)
+                })
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    f.write_all(&content)
+                })
+        }
+    })
+    .await?
+}
 /// Creates the directory and all missing parents, then sets 0o700 on each
 /// newly-created directory in the chain.
 pub fn ensure_restricted_dir(path: &Path) -> std::io::Result<()> {
@@ -486,12 +558,8 @@ impl Settings {
 
     pub async fn save(&self) -> anyhow::Result<()> {
         let path = Config::settings_path();
-        if let Some(parent) = path.parent() {
-            ensure_restricted_dir(parent)?;
-        }
         let content = serde_json::to_string_pretty(self)?;
-        tokio::fs::write(&path, content).await?;
-        set_restrictive_file_permissions(&path);
+        atomic_write_async(&path, content.as_bytes()).await?;
         Ok(())
     }
 

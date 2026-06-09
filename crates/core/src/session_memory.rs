@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use crate::config::{ensure_restricted_dir, set_restrictive_file_permissions};
+use crate::config::atomic_write;
 use crate::memory::{find_git_root, slugify_path};
 
 /// A single extracted memory from a session.
@@ -96,13 +96,6 @@ impl SessionMemoryStore {
     /// Persist the store to disk.
     pub async fn save(&self) -> anyhow::Result<()> {
         let path = store_path(&self.project_id);
-        if let Some(parent) = path.parent() {
-            tokio::task::spawn_blocking({
-                let parent = parent.to_path_buf();
-                move || ensure_restricted_dir(&parent)
-            })
-            .await??;
-        }
 
         let mut lines = Vec::new();
         for mem in &self.memories {
@@ -115,12 +108,8 @@ impl SessionMemoryStore {
         }
 
         let content = lines.join("\n");
-        tokio::fs::write(&path, content).await?;
-        tokio::task::spawn_blocking({
-            let path = path.clone();
-            move || set_restrictive_file_permissions(&path)
-        })
-        .await?;
+        let bytes = content.into_bytes();
+        tokio::task::spawn_blocking(move || atomic_write(&path, &bytes)).await??;
 
         info!(
             "Saved {} session memory/ies for project {}",

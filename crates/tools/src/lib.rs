@@ -3,6 +3,7 @@
 
 pub mod apply_patch;
 pub mod agent;
+pub mod background;
 pub mod bash;
 pub mod file_edit;
 pub mod file_read;
@@ -11,6 +12,8 @@ pub mod glob;
 pub mod grep;
 pub mod memory;
 pub mod plan_mode;
+pub mod task_output;
+pub mod task_stop;
 pub mod todowrite;
 pub mod web_fetch;
 

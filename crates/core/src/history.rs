@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ensure_restricted_dir, set_restrictive_file_permissions};
+use crate::config::atomic_write_async;
 
 use crate::Message;
 
@@ -48,17 +48,9 @@ impl ConversationSession {
     }
 
     pub async fn save(&self, sessions_dir: &Path) -> anyhow::Result<()> {
-        {
-            let dir = sessions_dir.to_path_buf();
-            tokio::task::spawn_blocking(move || ensure_restricted_dir(&dir)).await??;
-        }
         let path = Self::session_path(sessions_dir, &self.id);
-        let content = serde_json::to_string_pretty(self)?;
-        tokio::fs::write(&path, content).await?;
-        {
-            let path = path.clone();
-            tokio::task::spawn_blocking(move || set_restrictive_file_permissions(&path)).await?;
-        }
+        let content = serde_json::to_vec_pretty(self)?;
+        atomic_write_async(&path, &content).await?;
         // Evict old / excess sessions to keep storage bounded.
         Self::cleanup(sessions_dir).await;
         Ok(())

@@ -33,6 +33,9 @@ pub struct SubagentState {
     pub working_dir: PathBuf,
     /// Subagent type (explore or coder).
     pub subagent_type: String,
+    /// Effective permission mode after promotion (e.g. Default->AcceptEdits).
+    /// Used on resume so the sub-agent doesn't block waiting for interactive input.
+    pub effective_permission_mode: PermissionMode,
 }
 
 /// Spawn a sub-agent as a same-process tokio task.
@@ -74,6 +77,7 @@ pub async fn spawn_subagent(
     let handle = tokio::spawn(async move {
         let mut agent = Agent::new(provider, tools, config, working_dir, system_prompt);
         agent.set_permission_mode(effective_mode);
+        agent.set_max_turns(50);
         let callbacks = AgentCallbacks {
             cancel: cancel.as_ref(),
             ..AgentCallbacks::default()
@@ -109,6 +113,7 @@ pub async fn spawn_subagent(
         config: config_for_return,
         working_dir: working_dir_for_return,
         subagent_type,
+        effective_permission_mode: effective_mode,
     })
 }
 
@@ -139,6 +144,11 @@ pub async fn resume_subagent(
         state.working_dir,
         state.system_prompt,
     );
+    // Inherit the effective permission mode from the original sub-agent.
+    // Without this, the resumed agent defaults to Default mode which can
+    // block waiting for interactive input.
+    agent.set_permission_mode(state.effective_permission_mode.clone());
+    agent.set_max_turns(50);
     // Seed with previous conversation history
     for msg in state.messages {
         agent.messages_mut().push(msg);
@@ -164,6 +174,7 @@ pub async fn resume_subagent(
         system_prompt,
         working_dir,
         subagent_type,
+        effective_permission_mode: state.effective_permission_mode,
     })
 }
 
@@ -173,6 +184,7 @@ pub fn make_agent_tool(
     provider: Arc<dyn LlmProvider>,
     system_prompt: String,
     config: Config,
+    background_manager: Option<Arc<rusty_tools::background::BackgroundManager>>,
 ) -> rusty_tools::agent::AgentTool {
     let parent_mode = config.permission_mode;
     let registry: Arc<Mutex<HashMap<String, SubagentState>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -230,7 +242,10 @@ pub fn make_agent_tool(
         },
     );
 
-    rusty_tools::agent::AgentTool { spawn_fn }
+    rusty_tools::agent::AgentTool {
+        spawn_fn,
+        background_manager,
+    }
 }
 
 /// Build the system prompt from config and context.

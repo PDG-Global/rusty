@@ -1,6 +1,7 @@
 // Copyright (C) 2026 PDG Global Limited
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -98,10 +99,36 @@ pub const PROTECTED_PATH_PATTERNS: &[&str] = &[
 ];
 
 /// Check if a file path matches any protected pattern.
-/// This is a simple substring check on the path components.
+/// Uses path-component matching to avoid false positives from substring matching
+/// (e.g. "my_ssh_config" should not match ".ssh").
 pub fn is_protected_path(path: &str) -> bool {
     let lower = path.to_lowercase();
-    PROTECTED_PATH_PATTERNS.iter().any(|pat| lower.contains(pat))
+    let components: Vec<&str> = lower.split('/').collect();
+
+    PROTECTED_PATH_PATTERNS.iter().any(|pat| {
+        // Single-segment pattern: match against individual path components
+        if !pat.contains('/') {
+            if components.iter().any(|c| *c == *pat) {
+                return true;
+            }
+            // Also match without leading dot (e.g. "id_rsa" in a path)
+            let trimmed = pat.trim_start_matches('.');
+            if trimmed != *pat && components.iter().any(|c| c.trim_start_matches('.') == trimmed) {
+                return true;
+            }
+            return false;
+        }
+        // Multi-segment pattern: match against joined consecutive components
+        let seg_count = pat.matches('/').count() + 1;
+        if components.len() >= seg_count {
+            for window in components.windows(seg_count) {
+                if window.join("/") == *pat {
+                    return true;
+                }
+            }
+        }
+        false
+    })
 }
 
 pub fn check_auto_permission(mode: PermissionMode, level: PermissionLevel) -> PermissionDecision {
@@ -150,6 +177,29 @@ fn contains_command_substitution(cmd: &str) -> bool {
     cmd.contains('`') || cmd.contains("$(") || cmd.contains("<(") || cmd.contains(">(")
 }
 
+/// Returns true if the command contains a heredoc (<< or <<-) redirect.
+/// Heredocs allow writing arbitrary content and should be classified as write.
+fn contains_heredoc(cmd: &str) -> bool {
+    let bytes = cmd.as_bytes();
+    let len = bytes.len();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    for i in 0..len {
+        match bytes[i] {
+            b'\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            b'"' if !in_single_quote => in_double_quote = !in_double_quote,
+            b'<' if !in_single_quote && !in_double_quote => {
+                if i + 1 < len && bytes[i + 1] == b'<' {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Classify whether a bash command is read-only or write/execute.
 pub fn classify_bash_command(command: &str) -> BashClassification {
     let trimmed = command.trim();
@@ -158,6 +208,11 @@ pub fn classify_bash_command(command: &str) -> BashClassification {
     // Use a simple state machine to detect redirects while avoiding false
     // positives from `>` inside strings or arguments like `->`.
     if contains_redirect(trimmed) {
+        return BashClassification::Write;
+    }
+
+    // Heredocs (<<, <<-) allow writing arbitrary content
+    if contains_heredoc(trimmed) {
         return BashClassification::Write;
     }
 
@@ -236,7 +291,7 @@ fn split_shell_operators(cmd: &str) -> Vec<String> {
                 continue;
             }
         }
-        if chars[i] == '|' || chars[i] == ';' || chars[i] == '\n' {
+        if chars[i] == '|' || chars[i] == ';' || chars[i] == '\n' || chars[i] == '&' {
             parts.push(current.clone());
             current.clear();
             i += 1;
@@ -262,28 +317,40 @@ fn classify_single_command(cmd: &str) -> BashClassification {
 
     // Commands that are always safe (read-only)
     match bin {
-        "ls" | "cat" | "find" | "grep" | "rg" | "wc" | "head" | "tail" | "echo"
+        "ls" | "cat" | "grep" | "rg" | "wc" | "head" | "tail" | "echo"
         | "pwd" | "which" | "whoami" | "date" | "uname"
         | "file" | "stat" | "du" | "df" | "tree" | "less" | "more" | "type"
-        | "command" | "help" | "man" | "info" | "true" | "false" | "test" | "["
-        | "diff" | "comm" | "sort" | "uniq" | "cut" | "tr"
+        | "help" | "man" | "info" | "true" | "false" | "test" | "["
+        | "diff" | "comm" | "uniq" | "cut" | "tr"
         | "basename" | "dirname" | "realpath" | "readlink"
         | "hostname" | "id" | "groups" | "tty" | "stty" | "clear" | "history"
         | "strings" | "hexdump" | "od" | "xxd" | "md5sum" | "sha256sum" => {
             return BashClassification::ReadOnly;
         }
-        // sed: read-only unless -i (in-place edit)
+        // sed: read-only unless -i (in-place edit) or w (write to file)
         "sed" => {
             if parts.iter().any(|a| *a == "-i" || a.starts_with("-i")) {
                 return BashClassification::Write;
             }
+            let full = parts[1..].join(" ");
+            // sed 'w filename' writes pattern space to a file
+            if Regex::new(r"(?:^|[;\s|])w\s+\S")
+                .unwrap()
+                .is_match(&full)
+            {
+                return BashClassification::Write;
+            }
             return BashClassification::ReadOnly;
         }
-        // awk: read-only in typical usage; hard to detect all write patterns
-        // but safe for the common case (no redirection in the program text)
+        // awk: read-only in typical usage; detect write patterns
         "awk" | "gawk" | "mawk" => {
             let full = parts[1..].join(" ");
-            if full.contains('>') || full.contains("`") || full.contains("$(") {
+            if full.contains('>')
+                || full.contains("`")
+                || full.contains("$(")
+                || full.contains("system(")
+                || full.contains("getline")
+            {
                 return BashClassification::Write;
             }
             return BashClassification::ReadOnly;
@@ -300,6 +367,29 @@ fn classify_single_command(cmd: &str) -> BashClassification {
         // env/printenv: always execute — they expose all environment variables including secrets
         "eval" | "source" | "." | "env" | "printenv" => {
             return BashClassification::Execute;
+        }
+        // find: read-only unless -exec, -execdir, -ok, -okdir (execute arbitrary commands)
+        "find" => {
+            let full = parts[1..].join(" ");
+            if full.contains("-exec") || full.contains("-ok") {
+                return BashClassification::Execute;
+            }
+            return BashClassification::ReadOnly;
+        }
+        // command: read-only only for -v/-V (query), otherwise executes
+        "command" => {
+            if parts.len() >= 2 && (parts[1] == "-v" || parts[1] == "-V") {
+                return BashClassification::ReadOnly;
+            }
+            return BashClassification::Execute;
+        }
+        // sort: read-only unless -o (output to file)
+        "sort" => {
+            let full = parts[1..].join(" ");
+            if full.contains("-o") {
+                return BashClassification::Write;
+            }
+            return BashClassification::ReadOnly;
         }
         _ => {}
     }
@@ -482,16 +572,26 @@ pub fn build_tool_description(tool_name: &str, arguments: &str) -> String {
 }
 
 /// Create an allow key for the allowlist. For bash, includes the first command word.
+/// Dangerous commands always include the full command for safety.
 pub fn make_allow_key(tool_name: &str, arguments: &str) -> String {
+    // Commands that should never be broadly allowed — require full command match
+    const DANGEROUS_COMMANDS: &[&str] = &[
+        "rm", "chmod", "chown", "kill", "dd", "mkfs", "fdisk", "mount", "umount",
+        "reboot", "shutdown", "init", "systemctl", "service",
+        "mv", "cp", "sudo", "ssh", "curl", "wget", "tar", "apt", "make",
+    ];
+
     if tool_name == "bash" {
         let input: serde_json::Value =
             serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
         let cmd = input["command"].as_str().unwrap_or("");
         let first_word = cmd.split_whitespace().next().unwrap_or("");
-        // For git/cargo/npm, include the subcommand
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         if parts.len() >= 2 && matches!(parts[0], "git" | "cargo" | "npm" | "docker" | "pip") {
             format!("bash:{} {}", parts[0], parts[1])
+        } else if DANGEROUS_COMMANDS.contains(&first_word) {
+            // Include full command for dangerous commands
+            format!("bash:{}", parts.join(" "))
         } else {
             format!("bash:{first_word}")
         }

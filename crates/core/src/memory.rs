@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use once_cell::sync::Lazy;
 
-use crate::config::{ensure_restricted_dir, set_restrictive_file_permissions};
+use crate::config::atomic_write;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,40 @@ const MAX_MEMORIES: usize = 100;
 
 /// Maximum character length for a single memory entry.
 const MAX_MEMORY_LENGTH: usize = 2000;
+
+/// Map common Unicode confusables (Cyrillic, Greek) to their ASCII equivalents.
+/// Used before regex pattern matching to defeat homoglyph-based bypass.
+fn normalise_confusables(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| match c {
+            // Cyrillic lowercase
+            '\u{0430}' => 'a', // Cyrillic а
+            '\u{0435}' => 'e', // Cyrillic е
+            '\u{0456}' => 'i', // Cyrillic і
+            '\u{043E}' => 'o', // Cyrillic о
+            '\u{0440}' => 'p', // Cyrillic р
+            '\u{0441}' => 'c', // Cyrillic с
+            '\u{0443}' => 'y', // Cyrillic у
+            '\u{0445}' => 'x', // Cyrillic х
+            // Cyrillic uppercase
+            '\u{0410}' => 'A',
+            '\u{0415}' => 'E',
+            '\u{0406}' => 'I',
+            '\u{041E}' => 'O',
+            '\u{0420}' => 'P',
+            '\u{0421}' => 'C',
+            '\u{0423}' => 'Y',
+            '\u{0425}' => 'X',
+            // Greek lowercase
+            '\u{03B1}' => 'a', // Greek α
+            '\u{03BF}' => 'o', // Greek ο
+            '\u{03C1}' => 'p', // Greek ρ
+            '\u{03B5}' => 'e', // Greek ε
+            _ => c,
+        })
+        .collect()
+}
 
 /// Regex patterns that indicate prompt injection attempts.
 /// Matches lines starting with role impersonation or instruction override keywords.
@@ -31,6 +65,14 @@ static INJECTION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         Regex::new(r"(?mi)</?(system|instructions?|prompt|context|override|admin|root|sudo)\b[^>]*>").unwrap(),
         // Markdown section headers that could impersonate system sections
         Regex::new(r"(?m)^#{1,3}\s+(System|Instructions?|Override|Admin|Important|Critical|Security)\b").unwrap(),
+        // "new instructions:" pattern
+        Regex::new(r"(?mi)new\s+instructions?\s*:").unwrap(),
+        // "from now on" pattern
+        Regex::new(r"(?mi)from\s+now\s+on[,.]?\s+you\s+(must|should|will|are)").unwrap(),
+        // "your new role" pattern
+        Regex::new(r"(?mi)your\s+new\s+role\s+is").unwrap(),
+        // Code-fenced role injection
+        Regex::new(r"(?m)^```\s*\n\s*(system|assistant|human)\s*\n").unwrap(),
     ]
 });
 
@@ -41,13 +83,15 @@ static INJECTION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
 /// 2. Truncates to `MAX_MEMORY_LENGTH`
 /// 3. Neutralises known injection patterns by wrapping matching lines in backtick quotes
 /// 4. Strips XML/HTML tags that could be interpreted as system instructions
+/// 5. Escapes angle brackets to prevent XML-like tag injection
+/// 6. Normalises Unicode confusables before regex matching to defeat homoglyph bypass
 ///
 /// Returns `None` if the content is empty after sanitisation.
 pub fn sanitize_content(content: &str) -> Option<String> {
-    // Layer 1: Strip control characters (keep newline \n, tab \t, carriage return \r)
+    // Layer 1: Strip control characters (keep newline \n, tab \t)
     let mut cleaned: String = content
         .chars()
-        .filter(|c| *c == '\n' || *c == '\t' || *c == '\r' || !c.is_control())
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
         .collect();
 
     // Layer 2: Truncate to max length
@@ -67,10 +111,13 @@ pub fn sanitize_content(content: &str) -> Option<String> {
     let cleaned = TAG_RE.replace_all(&cleaned, "[tag removed]").to_string();
 
     // Layer 4: Neutralise injection patterns by wrapping matching lines
+    // Use Unicode normalisation to defeat homoglyph bypass, but apply
+    // replacements to the original string so fullwidth chars aren't mangled.
     let lines: Vec<String> = cleaned
         .lines()
         .map(|line| {
-            let is_injection = INJECTION_PATTERNS.iter().any(|re| re.is_match(line));
+            let normalised = normalise_confusables(line);
+            let is_injection = INJECTION_PATTERNS.iter().any(|re| re.is_match(&normalised));
             if is_injection {
                 // Wrap the entire line in backtick quotes to neutralise it
                 format!("`[sanitised]` {}", line.trim())
@@ -81,6 +128,13 @@ pub fn sanitize_content(content: &str) -> Option<String> {
         .collect();
 
     let result = lines.join("\n");
+    let result = result.trim().to_string();
+
+    // Layer 5: Escape angle brackets to prevent XML-like tag injection
+    let result = result
+        .replace('<', "\u{FF1C}")
+        .replace('>', "\u{FF1E}");
+
     let result = result.trim().to_string();
 
     if result.is_empty() {
@@ -139,12 +193,8 @@ impl ProjectMemory {
     pub fn save(&self) -> anyhow::Result<()> {
         let project_id = slugify_path(Path::new(&self.project_path));
         let path = memory_file_path(&project_id);
-        if let Some(parent) = path.parent() {
-            ensure_restricted_dir(parent)?;
-        }
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
-        set_restrictive_file_permissions(&path);
+        let content = serde_json::to_vec_pretty(self)?;
+        atomic_write(&path, &content)?;
         Ok(())
     }
 

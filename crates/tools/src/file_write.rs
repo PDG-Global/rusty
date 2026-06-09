@@ -58,6 +58,13 @@ impl Tool for FileWriteTool {
                 .map_err(|e| RustyError::Tool(format!("Failed to create directory: {e}")))?;
         }
 
+        // TOCTOU pre-write check: verify path is not an escaping symlink before writing.
+        crate::verify_not_escaping_symlink(&path, &ctx.working_dir)?;
+
+        // NOTE: tokio::fs::write does not use O_NOFOLLOW, so a symlink at `path` could be
+        // followed during the write itself. The pre-write and post-write symlink checks above
+        // and below mitigate this: the pre-check catches existing symlinks, and the post-check
+        // catches any symlink created between the pre-check and the write (TOCTOU window).
         tokio::fs::write(&path, content)
             .await
             .map_err(|e| RustyError::Tool(format!("Failed to write {}: {e}", path.display())))?;

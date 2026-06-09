@@ -172,6 +172,10 @@ impl Agent {
         self.permission_mode = mode;
     }
 
+    pub fn set_max_turns(&mut self, max_turns: u32) {
+        self.max_turns = max_turns;
+    }
+
     pub fn enter_plan_mode(&mut self) {
         self.plan_mode = true;
     }
@@ -1163,22 +1167,9 @@ impl Agent {
         arguments: &str,
         effective_level: PermissionLevel,
     ) -> PermissionDecision {
-        // 1. Bypass mode — allow everything
-        if self.permission_mode == PermissionMode::BypassPermissions {
-            return PermissionDecision::AllowOnce;
-        }
-
-        // 2. CLI Plan mode — deny write/execute
-        if self.permission_mode == PermissionMode::Plan {
-            if effective_level == PermissionLevel::ReadOnly
-                || effective_level == PermissionLevel::None
-            {
-                return PermissionDecision::AllowOnce;
-            }
-            return PermissionDecision::Deny("Plan mode is read-only".into());
-        }
-
-        // 2.5 Explicit plan mode — deny write/execute (but allow exit_plan_mode)
+        // 1. Explicit plan mode — deny write/execute (but allow exit_plan_mode).
+        //    This must come before BypassPermissions: even bypass mode respects plan restrictions,
+        //    otherwise the model can write files while the user expects a read-only planning phase.
         if self.plan_mode
             && effective_level != PermissionLevel::ReadOnly
             && effective_level != PermissionLevel::None
@@ -1189,6 +1180,21 @@ impl Agent {
                  Use exit_plan_mode when you are ready to execute the plan."
                     .into(),
             );
+        }
+
+        // 2. Bypass mode — allow everything (except plan mode restrictions above)
+        if self.permission_mode == PermissionMode::BypassPermissions {
+            return PermissionDecision::AllowOnce;
+        }
+
+        // 3. CLI Plan mode — deny write/execute
+        if self.permission_mode == PermissionMode::Plan {
+            if effective_level == PermissionLevel::ReadOnly
+                || effective_level == PermissionLevel::None
+            {
+                return PermissionDecision::AllowOnce;
+            }
+            return PermissionDecision::Deny("Plan mode is read-only".into());
         }
 
         // 3. Read-only / None tools — auto-allow, but block excessive file reads
