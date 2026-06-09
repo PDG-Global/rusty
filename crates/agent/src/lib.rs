@@ -7,8 +7,10 @@ pub mod r#loop;
 use rusty_core::{Config, ContentBlock, PermissionMode, RustyError};
 use rusty_provider::LlmProvider;
 use rusty_tools::Tool;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, ToolStatus};
 // Re-export CancelToken so downstream crates (e.g. rusty CLI) can use `rusty_agent::CancelToken`.
@@ -16,8 +18,25 @@ pub use rusty_core::CancelToken;
 
 const DEFAULT_SUBAGENT_TIMEOUT_MS: u64 = 30 * 60 * 1000;
 
+/// Captured state of a completed subagent, used for resume.
+#[derive(Debug, Clone)]
+pub struct SubagentState {
+    /// Final text result from the subagent.
+    pub result: String,
+    /// Conversation history (includes system prompt as first message if any).
+    pub messages: Vec<rusty_core::Message>,
+    /// System prompt used by the subagent.
+    pub system_prompt: String,
+    /// Config used by the subagent.
+    pub config: Config,
+    /// Working directory.
+    pub working_dir: PathBuf,
+    /// Subagent type (explore or coder).
+    pub subagent_type: String,
+}
+
 /// Spawn a sub-agent as a same-process tokio task.
-/// Returns the sub-agent's final text response.
+/// Returns the sub-agent's final state (result + conversation history).
 /// Sub-agents inherit the parent's permission mode. In Bypass mode they run
 /// without prompts; in other modes they enforce the same permission checks as
 /// the parent. Interactive (Default) mode is promoted to AcceptEdits so
@@ -32,7 +51,7 @@ pub async fn spawn_subagent(
     subagent_type: String,
     parent_permission_mode: PermissionMode,
     cancel: Option<CancelToken>,
-) -> Result<String, RustyError> {
+) -> Result<SubagentState, RustyError> {
     // Sub-agents cannot prompt the user interactively, so Default mode
     // must be promoted to AcceptEdits (auto-allow writes, deny execute
     // unless explicitly allowed).
@@ -48,6 +67,10 @@ pub async fn spawn_subagent(
         tools
     };
 
+    let system_prompt_for_return = system_prompt.clone();
+    let config_for_return = config.clone();
+    let working_dir_for_return = working_dir.clone();
+
     let handle = tokio::spawn(async move {
         let mut agent = Agent::new(provider, tools, config, working_dir, system_prompt);
         agent.set_permission_mode(effective_mode);
@@ -55,16 +78,17 @@ pub async fn spawn_subagent(
             cancel: cancel.as_ref(),
             ..AgentCallbacks::default()
         };
-        agent.run(vec![ContentBlock::Text { text: task }], callbacks).await
+        let result = agent.run(vec![ContentBlock::Text { text: task }], callbacks).await;
+        (result, agent.messages().to_vec())
     });
 
-    let result = match tokio::time::timeout(
+    let (result, messages) = match tokio::time::timeout(
         std::time::Duration::from_millis(DEFAULT_SUBAGENT_TIMEOUT_MS),
         handle,
     )
     .await
     {
-        Ok(r) => r,
+        Ok(r) => r.map_err(|e| RustyError::Other(format!("Sub-agent panicked: {e}")))?,
         Err(_) => {
             return Err(RustyError::Other(
                 format!(
@@ -76,7 +100,71 @@ pub async fn spawn_subagent(
         }
     };
 
-    result.map_err(|e| RustyError::Other(format!("Sub-agent panicked: {e}")))?
+    let result = result?;
+
+    Ok(SubagentState {
+        result,
+        messages,
+        system_prompt: system_prompt_for_return,
+        config: config_for_return,
+        working_dir: working_dir_for_return,
+        subagent_type,
+    })
+}
+
+/// Resume a sub-agent from a previously captured state.
+/// Creates a new agent instance seeded with the stored conversation history,
+/// then appends the new task as a user message.
+pub async fn resume_subagent(
+    provider: Arc<dyn LlmProvider>,
+    state: SubagentState,
+    new_task: String,
+    cancel: Option<CancelToken>,
+) -> Result<SubagentState, RustyError> {
+    let tools = if state.subagent_type == "explore" {
+        rusty_tools::explore_tools()
+    } else {
+        rusty_tools::all_tools()
+    };
+
+    let config = state.config.clone();
+    let system_prompt = state.system_prompt.clone();
+    let working_dir = state.working_dir.clone();
+    let subagent_type = state.subagent_type.clone();
+
+    let mut agent = Agent::new(
+        provider,
+        tools,
+        state.config,
+        state.working_dir,
+        state.system_prompt,
+    );
+    // Seed with previous conversation history
+    for msg in state.messages {
+        agent.messages_mut().push(msg);
+    }
+    // Append the new task
+    agent.messages_mut().push(rusty_core::Message::user_blocks(vec![ContentBlock::Text {
+        text: new_task,
+    }]));
+
+    let callbacks = AgentCallbacks {
+        cancel: cancel.as_ref(),
+        ..AgentCallbacks::default()
+    };
+    let result = agent.run(vec![], callbacks).await;
+
+    let result = result?;
+    let messages = agent.messages().to_vec();
+
+    Ok(SubagentState {
+        result,
+        messages,
+        config,
+        system_prompt,
+        working_dir,
+        subagent_type,
+    })
 }
 
 /// Create an AgentTool wired to spawn sub-agents with the given provider and config.
@@ -87,16 +175,60 @@ pub fn make_agent_tool(
     config: Config,
 ) -> rusty_tools::agent::AgentTool {
     let parent_mode = config.permission_mode;
-    let spawn_fn = Arc::new(move |task: String, subagent_type: String, working_dir: PathBuf, cancel: Option<CancelToken>| {
-        let provider = provider.clone();
-        let system_prompt = system_prompt.clone();
-        let config = config.clone();
-        Box::pin(async move {
-            // Sub-agents get all tools except the agent tool (to prevent recursive spawning)
-            let tools: Vec<Box<dyn rusty_tools::Tool>> = rusty_tools::all_tools();
-            spawn_subagent(provider, tools, config, working_dir, system_prompt, task, subagent_type, parent_mode, cancel).await
-        }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RustyError>> + Send>>
-    });
+    let registry: Arc<Mutex<HashMap<String, SubagentState>>> = Arc::new(Mutex::new(HashMap::new()));
+    let spawn_fn = Arc::new(
+        move |task: String,
+              subagent_type: String,
+              resume: String,
+              working_dir: PathBuf,
+              cancel: Option<CancelToken>|
+              -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<rusty_tools::agent::SubagentResult, RustyError>> + Send>,
+        > {
+            let provider = provider.clone();
+            let system_prompt = system_prompt.clone();
+            let config = config.clone();
+            let registry = registry.clone();
+            Box::pin(async move {
+                let resumed = !resume.is_empty();
+                let state = if resumed {
+                    let reg = registry.lock().await;
+                    let state = reg
+                        .get(&resume)
+                        .cloned()
+                        .ok_or_else(|| RustyError::Tool(format!("Subagent '{}' not found. It may have expired (max 10 kept).", resume)))?;
+                    drop(reg);
+                    resume_subagent(provider, state, task, cancel).await?
+                } else {
+                    // Sub-agents get all tools except the agent tool (to prevent recursive spawning)
+                    let tools: Vec<Box<dyn rusty_tools::Tool>> = rusty_tools::all_tools();
+                    spawn_subagent(provider, tools, config, working_dir, system_prompt, task, subagent_type.clone(), parent_mode, cancel).await?
+                };
+                let agent_id = if resumed {
+                    resume
+                } else {
+                    format!("subagent-{}", uuid::Uuid::new_v4())
+                };
+                {
+                    let mut reg = registry.lock().await;
+                    // LRU: keep at most 10 subagents
+                    if reg.len() >= 10 && !reg.contains_key(&agent_id) {
+                        let oldest = reg.keys().next().cloned();
+                        if let Some(key) = oldest {
+                            reg.remove(&key);
+                        }
+                    }
+                    reg.insert(agent_id.clone(), state.clone());
+                }
+                Ok(rusty_tools::agent::SubagentResult {
+                    agent_id,
+                    subagent_type: state.subagent_type,
+                    result: state.result,
+                    resumed,
+                })
+            })
+        },
+    );
 
     rusty_tools::agent::AgentTool { spawn_fn }
 }

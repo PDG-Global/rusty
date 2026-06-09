@@ -9,10 +9,30 @@ use std::sync::Arc;
 
 use crate::{Tool, ToolContext, ToolResult};
 
-/// Function type for spawning sub-agents
+/// Result from spawning or resuming a sub-agent.
+pub struct SubagentResult {
+    /// Unique identifier for this sub-agent instance.
+    pub agent_id: String,
+    /// The sub-agent type that was actually used (explore, coder, etc.).
+    pub subagent_type: String,
+    /// Final text result from the sub-agent.
+    pub result: String,
+    /// Whether this was a resumed instance.
+    pub resumed: bool,
+}
+
+/// Function type for spawning or resuming sub-agents.
+/// Parameters: task, subagent_type, resume_agent_id, working_dir, cancel_token
 pub type SubAgentFn = Arc<
-    dyn Fn(String, String, PathBuf, Option<CancelToken>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RustyError>> + Send>>
-        + Send
+    dyn Fn(
+            String,
+            String,
+            String,
+            PathBuf,
+            Option<CancelToken>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<SubagentResult, RustyError>> + Send>,
+        > + Send
         + Sync,
 >;
 
@@ -36,7 +56,7 @@ impl Tool for AgentTool {
          - Prefer 'explore' for research and investigation tasks.\n\
          - Prefer 'coder' for tasks that require file modifications.\n\
          - Provide a concise description (3-5 words) for UI display.\n\
-         - Resume is not yet supported; always start a new subagent."
+         - To resume a previous subagent, pass its agent_id via the resume parameter."
     }
 
     fn input_schema(&self) -> Value {
@@ -63,7 +83,7 @@ impl Tool for AgentTool {
                 },
                 "resume": {
                     "type": "string",
-                    "description": "Optional agent ID to resume instead of creating a new instance. Not yet supported."
+                    "description": "Optional agent ID to resume instead of creating a new instance"
                 }
             },
             "required": ["task"]
@@ -90,44 +110,36 @@ impl Tool for AgentTool {
             _ => "explore",
         };
 
-        // Resume is not yet supported
-        if !resume.is_empty() {
-            return Ok(ToolResult::error(
-                "Resume is not yet supported. Start a new subagent instead.".to_string(),
-            ));
-        }
-
         let full_task = if context.is_empty() {
             task.to_string()
         } else {
             format!("{task}\n\nAdditional context: {context}")
         };
 
-        let agent_id = format!("subagent-{}", uuid::Uuid::new_v4());
-
         match (self.spawn_fn)(
             full_task,
             subagent_type.to_string(),
+            resume.to_string(),
             ctx.working_dir.clone(),
             ctx.cancel.clone(),
         )
         .await
         {
             Ok(result) => {
+                let status = if result.resumed { "resumed" } else { "completed" };
                 let output = format!(
-                    "agent_id: {agent_id}\n\
-                     actual_subagent_type: {subagent_type}\n\
-                     status: completed\n\n\
+                    "agent_id: {}\n\
+                     actual_subagent_type: {}\n\
+                     status: {}\n\n\
                      [summary]\n\
-                     {result}"
+                     {}",
+                    result.agent_id, result.subagent_type, status, result.result
                 );
                 Ok(ToolResult::success(output))
             }
             Err(e) => {
                 let output = format!(
-                    "agent_id: {agent_id}\n\
-                     actual_subagent_type: {subagent_type}\n\
-                     status: failed\n\n\
+                    "status: failed\n\n\
                      subagent error: {e}"
                 );
                 Ok(ToolResult::error(output))
