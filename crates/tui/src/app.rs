@@ -1642,6 +1642,22 @@ impl AppState {
                 self.confirming_exit = false;
                 self.scroll_down(15);
             }
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.confirming_exit = false;
+                self.scroll_up(1);
+            }
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.confirming_exit = false;
+                self.scroll_down(1);
+            }
+            KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.confirming_exit = false;
+                self.scroll_top();
+            }
+            KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.confirming_exit = false;
+                self.scroll_to_bottom();
+            }
             KeyCode::Char('@') if !self.is_streaming => {
                 self.confirming_exit = false;
                 // Insert the @ character

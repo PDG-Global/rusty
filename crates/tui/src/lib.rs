@@ -7,7 +7,7 @@ pub mod ui;
 
 use app::{AgentEvent, AppState, MessageRole};
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, MouseEventKind},
     execute,
     terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -36,7 +36,8 @@ pub async fn run(
     execute!(
         stdout,
         EnterAlternateScreen,
-        crossterm::event::EnableBracketedPaste
+        crossterm::event::EnableBracketedPaste,
+        crossterm::event::EnableMouseCapture
     )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -57,7 +58,8 @@ pub async fn run(
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        crossterm::event::DisableBracketedPaste
+        crossterm::event::DisableBracketedPaste,
+        crossterm::event::DisableMouseCapture
     )?;
     terminal.show_cursor()?;
 
@@ -113,6 +115,17 @@ async fn run_loop(
                     if !app.is_streaming => {
                         app.handle_bracketed_paste(text);
                     }
+                Event::Mouse(mouse_event) => {
+                    match mouse_event.kind {
+                        MouseEventKind::ScrollUp => {
+                            app.scroll_up(3);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            app.scroll_down(3);
+                        }
+                        _ => {}
+                    }
+                }
                 Event::Resize(_, _) => {
                     app.needs_redraw = true;
                 }
