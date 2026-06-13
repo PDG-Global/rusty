@@ -3,15 +3,28 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{
+        Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+        Widget, Wrap,
+    },
 };
 
 use crate::app::{AppState, AutocompleteState, MessageRole};
 
-pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
+/// Fill the whole screen area with a dim background layer for modal overlays.
+fn dim_screen(area: Rect, buf: &mut Buffer) {
+    let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            buf[(x, y)].set_char(' ').set_style(dim_style);
+        }
+    }
+}
+
+pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
     // Dynamically size the input area based on content length.
     // 2 border rows + ceil(text_width / inner_width) content rows, clamped to [3..8].
     let inner_width = area.width.saturating_sub(2).max(1) as usize;
@@ -73,60 +86,49 @@ pub fn draw(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Overlay session picker if active
     if app.session_picker.is_some() {
-        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                buf[(x, y)].set_char(' ').set_style(dim_style);
-            }
-        }
+        dim_screen(area, buf);
         let picker_area = centered_rect(80, 16, area);
         draw_session_picker(app, picker_area, buf);
     }
 
     // Overlay file picker if active
     if app.file_picker.is_some() {
-        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                buf[(x, y)].set_char(' ').set_style(dim_style);
-            }
-        }
+        dim_screen(area, buf);
         let picker_area = centered_rect(60, 20, area);
         draw_file_picker(app, picker_area, buf);
     }
 
     // Overlay settings if active
     if app.settings_overlay.is_some() {
-        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                buf[(x, y)].set_char(' ').set_style(dim_style);
-            }
-        }
+        dim_screen(area, buf);
         draw_settings(app, area, buf);
     }
 
     // Overlay model form if active (separate from settings overlay)
     if app.model_form.is_some() {
-        let dim_style = Style::default().fg(Color::Gray).bg(Color::Black);
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                buf[(x, y)].set_char(' ').set_style(dim_style);
-            }
-        }
+        dim_screen(area, buf);
         let form_area = centered_rect(60, 70, area);
         draw_model_form(app, form_area, buf);
     }
+
+    // Permission prompt is rendered last so it sits above everything else.
+    if app.permission_prompt.is_some() {
+        dim_screen(area, buf);
+        let prompt_area = centered_rect(70, 10, area);
+        draw_permission_prompt(app, prompt_area, buf);
+    }
 }
 
-fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
+fn draw_chat(app: &mut AppState, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Gray))
-        .title(Span::styled("rusty", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+        .border_style(Style::default().fg(Color::Gray));
 
     let inner = block.inner(area);
-    block.render(area, buf);
+
+    // Keep the viewport height in sync with the real rendered area so scroll
+    // math uses the correct value.
+    app.viewport_height = inner.height as usize;
 
     let width = inner.width as usize;
     let mut lines: Vec<Line> = Vec::new();
@@ -149,7 +151,9 @@ fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Thinking text — collapsed or expanded
     if app.is_thinking {
-        let think_style = Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC);
+        let think_style = Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::ITALIC);
         let count = app.thinking_text.lines().count();
         if app.thinking_expanded && !app.thinking_text.is_empty() {
             lines.push(Line::from(Span::styled(
@@ -161,7 +165,9 @@ fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
                 for wline in wrapped {
                     lines.push(Line::from(Span::styled(
                         wline,
-                        Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+                        Style::default()
+                            .fg(Color::Gray)
+                            .add_modifier(Modifier::ITALIC),
                     )));
                 }
             }
@@ -178,7 +184,10 @@ fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
         let think_style = Style::default().fg(Color::Gray);
         if app.thinking_expanded && !app.saved_thinking.is_empty() {
             lines.push(Line::from(Span::styled(
-                format!("  thought ({} lines, ctrl+o to collapse)", app.thinking_line_count),
+                format!(
+                    "  thought ({} lines, ctrl+o to collapse)",
+                    app.thinking_line_count
+                ),
                 think_style,
             )));
             for line in app.saved_thinking.lines() {
@@ -189,7 +198,10 @@ fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
             }
         } else {
             lines.push(Line::from(Span::styled(
-                format!("  thought ({} lines, ctrl+o to expand)", app.thinking_line_count),
+                format!(
+                    "  thought ({} lines, ctrl+o to expand)",
+                    app.thinking_line_count
+                ),
                 think_style,
             )));
         }
@@ -198,56 +210,82 @@ fn draw_chat(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Streaming text
     if app.is_streaming && !app.streaming_text.is_empty() {
-        render_content(&app.streaming_text, "  ", Style::default().fg(Color::White), &mut lines, width);
+        render_content(
+            &app.streaming_text,
+            "  ",
+            Style::default().fg(Color::White),
+            &mut lines,
+            width,
+        );
         lines.push(Line::from(Span::styled(
             "  \u{2588}",
             Style::default().fg(Color::Green),
         )));
     }
 
-    // Inline permission prompt
-    if let Some(ref prompt) = app.permission_prompt {
-        use rusty_core::permissions::build_tool_description;
-        let desc = build_tool_description(&prompt.request.tool_name, &prompt.request.raw_input);
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("  \u{25B6} ", Style::default().fg(Color::Yellow)),
-            Span::styled(
-                format!("{} ", &prompt.request.tool_name),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(desc, Style::default().fg(Color::White)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("    Permission required ", Style::default().fg(Color::White)),
-            Span::styled("[y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled(" Allow ", Style::default().fg(Color::Gray)),
-            Span::styled("[n]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::styled(" Deny ", Style::default().fg(Color::Gray)),
-            Span::styled("[a]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(" Session ", Style::default().fg(Color::Gray)),
-            Span::styled("[d]", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-            Span::styled(" Always", Style::default().fg(Color::Gray)),
-        ]));
-    }
-
-    // Scroll — prefer user's manual offset, otherwise auto-scroll to bottom
+    // Scroll — use absolute anchor if user has scrolled, otherwise auto-scroll to bottom
     let visible_height = inner.height as usize;
-    let scroll = if app.scroll_offset > 0 {
-        // User has scrolled up; start line = total - viewport - offset
-        lines.len().saturating_sub(visible_height + app.scroll_offset)
+    let scroll = if let Some(anchor) = app.scroll_anchor {
+        // User has scrolled up — anchor is distance from bottom
+        lines.len().saturating_sub(visible_height + anchor)
     } else if lines.len() > visible_height {
         lines.len() - visible_height
     } else {
         0
     };
 
+    let content_overflows = lines.len() > visible_height;
+    let total_lines = lines.len();
+
+    // Title shows scroll hint when content overflows so users know how to
+    // navigate. Mouse wheel does not work in all terminals, so keyboard hints
+    // are essential.
+    let title = if content_overflows || app.is_user_scrolled {
+        Line::from(vec![
+            Span::styled("rusty", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(" — PgUp/PgDn · Shift+Up/Down scroll", Style::default().fg(Color::DarkGray)),
+        ])
+    } else {
+        Line::from(Span::styled(
+            "rusty",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ))
+    };
+    block
+        .title(title)
+        .title_alignment(Alignment::Right)
+        .render(area, buf);
+
     let paragraph = Paragraph::new(lines).scroll((scroll as u16, 0));
     Widget::render(&paragraph, inner, buf);
+
+    // Draw a minimal scrollbar gutter when content overflows.
+    if content_overflows {
+        let mut scrollbar_state = ScrollbarState::new(total_lines)
+            .position(scroll)
+            .viewport_content_length(visible_height);
+        let scrollbar_area = Rect {
+            x: inner.x + inner.width.saturating_sub(1),
+            y: inner.y,
+            width: 1,
+            height: inner.height,
+        };
+        let scrollbar = Scrollbar::default()
+            .orientation(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None);
+        scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
+    }
 }
 
 /// Render content with code blocks, tables, inline markdown, and word wrapping
-fn render_content(content: &str, prefix: &str, base_style: Style, lines: &mut Vec<Line>, width: usize) {
+fn render_content(
+    content: &str,
+    prefix: &str,
+    base_style: Style,
+    lines: &mut Vec<Line>,
+    width: usize,
+) {
     let msg_lines: Vec<&str> = content.lines().collect();
     let mut in_code_block = false;
 
@@ -265,7 +303,9 @@ fn render_content(content: &str, prefix: &str, base_style: Style, lines: &mut Ve
             for wline in wrapped {
                 lines.push(Line::from(Span::styled(
                     wline,
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 )));
             }
             continue;
@@ -315,7 +355,10 @@ fn render_content(content: &str, prefix: &str, base_style: Style, lines: &mut Ve
             in_code_block = !in_code_block;
             let wrapped = wrap_text(&format!("  {line_str}"), width, "");
             for wline in wrapped {
-                lines.push(Line::from(Span::styled(wline, Style::default().fg(Color::Gray))));
+                lines.push(Line::from(Span::styled(
+                    wline,
+                    Style::default().fg(Color::Gray),
+                )));
             }
             continue;
         }
@@ -412,7 +455,9 @@ fn render_content(content: &str, prefix: &str, base_style: Style, lines: &mut Ve
 
         // Blockquotes: >
         if let Some(quote_text) = parse_blockquote(line_str) {
-            let quote_style = Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC);
+            let quote_style = Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::ITALIC);
             let indent = if i == 0 { prefix } else { "  " };
             let mut spans = vec![Span::styled(indent.to_string(), base_style)];
             spans.push(Span::styled("│ ", Style::default().fg(Color::Gray)));
@@ -549,7 +594,11 @@ fn wrap_text(text: &str, width: usize, continuation_indent: &str) -> Vec<String>
     let mut pos = 0;
 
     while pos < chars.len() {
-        let avail = if result.is_empty() { width } else { width - continuation_indent.len() };
+        let avail = if result.is_empty() {
+            width
+        } else {
+            width - continuation_indent.len()
+        };
 
         if pos + avail >= chars.len() {
             let line: String = chars[pos..].iter().collect();
@@ -598,7 +647,11 @@ fn wrap_text(text: &str, width: usize, continuation_indent: &str) -> Vec<String>
 
 /// Wrap a styled Line (Vec of Spans) to fit within `width` columns.
 /// Returns Vec of Vec<Span> (one per wrapped line).
-fn wrap_line(spans: &[Span<'static>], width: usize, continuation_indent: &str) -> Vec<Vec<Span<'static>>> {
+fn wrap_line(
+    spans: &[Span<'static>],
+    width: usize,
+    continuation_indent: &str,
+) -> Vec<Vec<Span<'static>>> {
     // Flatten to (char, style) pairs for wrapping
     let mut chars_with_style: Vec<(char, Style)> = Vec::new();
     for span in spans {
@@ -616,7 +669,11 @@ fn wrap_line(spans: &[Span<'static>], width: usize, continuation_indent: &str) -
     let mut pos = 0;
 
     while pos < chars_with_style.len() {
-        let avail = if result.is_empty() { width } else { width - continuation_indent.len() };
+        let avail = if result.is_empty() {
+            width
+        } else {
+            width - continuation_indent.len()
+        };
 
         if pos + avail >= chars_with_style.len() {
             // Rest fits
@@ -695,9 +752,7 @@ fn is_table_separator(line: &str) -> bool {
     let trimmed = line.trim();
     // Looks like |---|---| or | --- | --- | or |:---:|---:|
     trimmed.starts_with('|')
-        && trimmed
-            .chars()
-            .all(|c| "|- \t:".contains(c))
+        && trimmed.chars().all(|c| "|- \t:".contains(c))
         && trimmed.contains('-')
 }
 
@@ -757,10 +812,7 @@ fn parse_table_row(line: &str) -> Vec<String> {
         .unwrap_or(trimmed)
         .strip_suffix('|')
         .unwrap_or(trimmed);
-    inner
-        .split('|')
-        .map(|s| s.trim().to_string())
-        .collect()
+    inner.split('|').map(|s| s.trim().to_string()).collect()
 }
 
 fn render_table(
@@ -876,52 +928,67 @@ fn render_table(
                         if let Some(end) = find_closing(&chars, i + 2, "**") {
                             let visible_text: String = chars[i + 2..end].iter().collect();
                             let vis_w = str_display_width(&visible_text);
-                            if used + vis_w > w { break; }
+                            if used + vis_w > w {
+                                break;
+                            }
                             out.extend(chars[i..=end + 1].iter());
                             used += vis_w;
                             i = end + 2;
                             continue;
                         }
-                        marker_len = 0; visible = 0; // fall through
+                        marker_len = 0;
+                        visible = 0; // fall through
                     } else if chars[i] == '*' && (i + 1 < len && chars[i + 1] != '*') {
                         if let Some(end) = find_closing(&chars, i + 1, "*") {
                             let visible_text: String = chars[i + 1..end].iter().collect();
                             let vis_w = str_display_width(&visible_text);
-                            if used + vis_w > w { break; }
+                            if used + vis_w > w {
+                                break;
+                            }
                             out.extend(chars[i..=end].iter());
                             used += vis_w;
                             i = end + 1;
                             continue;
                         }
-                        marker_len = 0; visible = 0;
+                        marker_len = 0;
+                        visible = 0;
                     } else if chars[i] == '_' {
                         if let Some(end) = find_closing(&chars, i + 1, "_") {
                             let visible_text: String = chars[i + 1..end].iter().collect();
                             let vis_w = str_display_width(&visible_text);
-                            if used + vis_w > w { break; }
+                            if used + vis_w > w {
+                                break;
+                            }
                             out.extend(chars[i..=end].iter());
                             used += vis_w;
                             i = end + 1;
                             continue;
                         }
-                        marker_len = 0; visible = 0;
+                        marker_len = 0;
+                        visible = 0;
                     } else if chars[i] == '`' {
                         if let Some(end) = find_closing(&chars, i + 1, "`") {
                             let visible_text: String = chars[i + 1..end].iter().collect();
                             let vis_w = str_display_width(&visible_text);
-                            if used + vis_w > w { break; }
+                            if used + vis_w > w {
+                                break;
+                            }
                             out.extend(chars[i..=end].iter());
                             used += vis_w;
                             i = end + 1;
                             continue;
                         }
-                        marker_len = 0; visible = 0;
+                        marker_len = 0;
+                        visible = 0;
                     } else {
-                        marker_len = 0; visible = 0;
+                        marker_len = 0;
+                        visible = 0;
                     }
                     let _ = (marker_len, visible);
                     let cw = char_display_width(chars[i]);
-                    if used + cw > w { break; }
+                    if used + cw > w {
+                        break;
+                    }
                     out.push(chars[i]);
                     used += cw;
                     i += 1;
@@ -931,7 +998,10 @@ fn render_table(
 
             // Parse inline markdown for styled rendering
             let cell_spans = parse_inline_markdown(&truncated, base_style);
-            let cell_vis_w: usize = cell_spans.iter().map(|s| str_display_width(&s.content)).sum();
+            let cell_vis_w: usize = cell_spans
+                .iter()
+                .map(|s| str_display_width(&s.content))
+                .sum();
 
             // Build cell with padding applied to the last span
             let pad_needed = w.saturating_sub(cell_vis_w);
@@ -1060,7 +1130,9 @@ fn parse_inline_markdown(text: &str, base_style: Style) -> Vec<Span<'static>> {
                 let code_text: String = chars[start..end].iter().collect();
                 spans.push(Span::styled(
                     code_text,
-                    Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::LightGreen)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 i = end + 1;
                 continue;
@@ -1082,10 +1154,9 @@ fn find_closing(chars: &[char], start: usize, delim: &str) -> Option<usize> {
     let delim_chars: Vec<char> = delim.chars().collect();
     let delim_len = delim_chars.len();
     for i in start..chars.len() {
-        if i + delim_len <= chars.len() && chars[i..i + delim_len] == *delim_chars
-            && i > start {
-                return Some(i);
-            }
+        if i + delim_len <= chars.len() && chars[i..i + delim_len] == *delim_chars && i > start {
+            return Some(i);
+        }
     }
     None
 }
@@ -1139,7 +1210,7 @@ fn strip_inline_markdown(text: &str) -> String {
 fn draw_todos(app: &AppState, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .title(Span::styled(
-            " ☑ Tasks ",
+            " tasks ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -1201,15 +1272,7 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
             Color::Magenta
         } else {
             Color::Green
-        }))
-        .title(Span::styled(
-            if is_slash { " command " } else { " input " },
-            Style::default().fg(if is_slash {
-                Color::Magenta
-            } else {
-                Color::Green
-            }).add_modifier(Modifier::BOLD),
-        ));
+        }));
 
     let inner = block.inner(area);
     block.render(area, buf);
@@ -1223,7 +1286,12 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
         ));
     } else {
         let (text, style) = if is_slash {
-            (app.input.clone(), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+            (
+                app.input.clone(),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             (app.input.clone(), Style::default().fg(Color::White))
         };
@@ -1260,17 +1328,22 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     Widget::render(&paragraph, inner, buf);
 }
 
-fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
-    let model_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let separator_style = Style::default().fg(Color::Gray);
-    let state_style = if app.is_streaming {
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+/// Compact token count (e.g. 1234 -> "1.2k", 123 -> "123").
+fn compact_tokens(n: u32) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
     } else {
-        Style::default().fg(Color::Gray)
-    };
-    let state_text = if app.is_streaming { "streaming" } else { "ready" };
+        n.to_string()
+    }
+}
 
-    // Context-window usage warning
+fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
+    let separator_style = Style::default().fg(Color::DarkGray);
+    let muted_style = Style::default().fg(Color::Gray);
+
+    // Context-window usage
     let context_window = app.status.context_window;
     let current_context = app.status.current_context_tokens;
     let usage_pct = if context_window > 0 {
@@ -1281,36 +1354,33 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
     let token_style = if usage_pct >= 90 {
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
     } else if usage_pct >= 75 {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        muted_style
     };
 
-    let cached_style = Style::default().fg(Color::DarkGray);
-    let cached_span = if app.status.cached_input_tokens > 0 {
-        Span::styled(format!("| cached: {} ", app.status.cached_input_tokens), cached_style)
+    // State text and style
+    let state_text = if app.is_streaming { "streaming" } else { "ready" };
+    let state_style = if app.is_streaming {
+        Style::default().fg(Color::Green)
     } else {
-        Span::styled("", cached_style)
+        muted_style
     };
 
-    let think_style = Style::default().fg(Color::Gray);
-    let think_span = match app.status.thinking_level {
-        Some(level) => Span::styled(format!("| thinking: {level} "), think_style),
-        None => Span::styled("", think_style),
-    };
-
-    let plan_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-    let plan_span = if app.plan_mode {
-        Span::styled("| plan ", plan_style)
+    // Scroll hint appears when the user has scrolled up, otherwise show the
+    // keyboard shortcut so users know scrollback exists.
+    let scroll_hint = if app.is_user_scrolled {
+        Span::styled("Shift+Up/Down ", Style::default().fg(Color::Yellow))
     } else {
-        Span::styled("", plan_style)
+        Span::styled("", Style::default())
     };
 
     let cwd_display = app
         .working_dir
         .as_deref()
         .map(|d| {
-            // Show a short version: use ~ for home dir
             let display = match std::env::var("HOME") {
                 Ok(home) => {
                     let home_prefix = format!("{}/", home);
@@ -1321,9 +1391,8 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
                 }
                 Err(_) => d.to_string(),
             };
-            // Truncate if too long
-            if display.len() > 40 {
-                let safe = display.floor_char_boundary(display.len() - 39);
+            if display.len() > 24 {
+                let safe = display.floor_char_boundary(display.len() - 23);
                 format!("…{}", &display[safe..])
             } else {
                 display
@@ -1331,32 +1400,68 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         })
         .unwrap_or_default();
 
-    let cwd_span = if cwd_display.is_empty() {
-        Span::styled("", separator_style)
-    } else {
-        Span::styled(format!("| {cwd_display}"), separator_style)
-    };
-
-    let update_span = match &app.update_available {
-        Some(ver) => Span::styled(
-            format!("| update: {ver} "),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+    // Left side: model and context usage with actual numbers.
+    let mut left = vec![
+        Span::styled(
+            format!(" {} ", app.status.model),
+            Style::default().fg(Color::Cyan),
         ),
-        None => Span::styled("", separator_style),
-    };
-
-    let spans = vec![
-        Span::styled(format!(" {} ", app.status.model), model_style),
-        Span::styled("| ", separator_style),
-        Span::styled(format!("context: {}/{} ({}%) ", current_context, context_window, usage_pct.min(999)), token_style),
-        cached_span,
-        Span::styled("| ", separator_style),
-        Span::styled(format!("{state_text} "), state_style),
-        think_span,
-        plan_span,
-        cwd_span,
-        update_span,
+        Span::styled("|", separator_style),
+        Span::styled(
+            format!(
+                " ctx {}/{} ({}%) ",
+                compact_tokens(current_context),
+                compact_tokens(context_window),
+                usage_pct.min(999)
+            ),
+            token_style,
+        ),
     ];
+    if app.status.cached_input_tokens > 0 {
+        left.push(Span::styled(
+            format!("cached {} ", compact_tokens(app.status.cached_input_tokens)),
+            muted_style,
+        ));
+    }
+
+    // Right side: status, thinking level, plan mode, cwd, update.
+    let mut right = vec![
+        scroll_hint,
+        Span::styled(format!("{state_text} "), state_style),
+    ];
+    if let Some(level) = app.status.thinking_level {
+        right.push(Span::styled(
+            format!("think:{level} "),
+            Style::default().fg(Color::Gray),
+        ));
+    }
+    if app.plan_mode {
+        right.push(Span::styled("plan ", Style::default().fg(Color::Yellow)));
+    }
+    if !cwd_display.is_empty() {
+        right.push(Span::styled(format!("{cwd_display} "), muted_style));
+    }
+    if let Some(ver) = &app.update_available {
+        right.push(Span::styled(
+            format!("update {ver}"),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+
+    // Build full line, right-padded so the right side is anchored.
+    let left_line = Line::from(left);
+    let right_line = Line::from(right);
+    let left_text = left_line.to_string();
+    let right_text = right_line.to_string();
+    let width = area.width as usize;
+    let left_len = unicode_display_width(&left_text);
+    let right_len = unicode_display_width(&right_text);
+    let gap = width.saturating_sub(left_len + right_len);
+
+    let mut spans = left_line.spans;
+    spans.push(Span::styled(" ".repeat(gap), Style::default()));
+    spans.extend(right_line.spans);
+
     let paragraph = Paragraph::new(Line::from(spans));
     Widget::render(&paragraph, area, buf);
 }
@@ -1365,10 +1470,11 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
 /// Calculate the display width of a string in terminal columns.
 /// Handles wide characters (CJK, emoji) that occupy 2 columns.
 fn unicode_display_width(s: &str) -> usize {
-    s.chars().map(|c| {
-        // Common wide Unicode ranges: CJK, fullwidth, some emoji
-        let cp = c as u32;
-        if (0x1100..=0x115F).contains(&cp)
+    s.chars()
+        .map(|c| {
+            // Common wide Unicode ranges: CJK, fullwidth, some emoji
+            let cp = c as u32;
+            if (0x1100..=0x115F).contains(&cp)
             || (0x2E80..=0x303E).contains(&cp)
             || (0x3040..=0x33BF).contains(&cp)
             || (0x3400..=0x4DBF).contains(&cp)
@@ -1383,13 +1489,15 @@ fn unicode_display_width(s: &str) -> usize {
             || (0x30000..=0x3FFFD).contains(&cp)
             || (0x1F000..=0x1FAFF).contains(&cp)  // emoji
             || (0x2600..=0x27BF).contains(&cp)     // misc symbols
-            || (0xFE00..=0xFE0F).contains(&cp)     // variation selectors
-        {
-            2
-        } else {
-            1
-        }
-    }).sum()
+            || (0xFE00..=0xFE0F).contains(&cp)
+            // variation selectors
+            {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
 }
 
 /// Truncate a string to fit within a given display width (terminal columns).
@@ -1502,23 +1610,25 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                         let cursor = if is_selected { ">" } else { " " };
                         let active_marker = if is_active { "●" } else { " " };
                         let style = if is_selected {
-                            Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::Cyan)
+                            Style::default().fg(Color::Black).bg(Color::Cyan)
                         } else {
                             Style::default().fg(Color::White)
                         };
                         let marker_style = if is_selected {
                             style
                         } else if is_active {
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::DarkGray)
                         };
                         let name_style = if is_selected {
                             style
                         } else if is_active {
-                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::White)
                         };
@@ -1551,8 +1661,14 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
             lines.push(Line::from(""));
 
             let general_rows = [
-                ("Thinking level", crate::model_registry::thinking_level_label(settings.general_thinking_level)),
-                ("Permission mode", crate::app::permission_mode_label(settings.general_permission_mode)),
+                (
+                    "Thinking level",
+                    crate::model_registry::thinking_level_label(settings.general_thinking_level),
+                ),
+                (
+                    "Permission mode",
+                    crate::app::permission_mode_label(settings.general_permission_mode),
+                ),
             ];
 
             for (i, (label, value)) in general_rows.iter().enumerate() {
@@ -1580,11 +1696,26 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
     }
 
     lines.push(Line::from(vec![
-        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Select  "),
-        Span::styled("[Tab]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Tab]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Switch Tab  "),
-        Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Close"),
     ]));
 
@@ -1623,7 +1754,12 @@ fn draw_session_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Esc]",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" Close"),
             ]),
         ];
@@ -1639,28 +1775,41 @@ fn draw_session_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
     lines.push(Line::from(vec![
         Span::styled(
             "  ID        ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "Messages  ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "Model           ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "Updated          ",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "Preview",
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
     ]));
 
     let end = (picker.scroll_offset + visible_rows).min(picker.sessions.len());
-    for (i, session) in picker.sessions[picker.scroll_offset..end].iter().enumerate() {
+    for (i, session) in picker.sessions[picker.scroll_offset..end]
+        .iter()
+        .enumerate()
+    {
         let actual_idx = picker.scroll_offset + i;
         let is_selected = actual_idx == picker.selected;
 
@@ -1693,22 +1842,10 @@ fn draw_session_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
         let cursor = if is_selected { "> " } else { "  " };
 
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("{cursor}{id_display:<8}  ",),
-                style,
-            ),
-            Span::styled(
-                format!("{:<8}  ", session.message_count),
-                style,
-            ),
-            Span::styled(
-                format!("{model_display}  ",),
-                style,
-            ),
-            Span::styled(
-                format!("{:<16}  ", session.updated_at),
-                style,
-            ),
+            Span::styled(format!("{cursor}{id_display:<8}  ",), style),
+            Span::styled(format!("{:<8}  ", session.message_count), style),
+            Span::styled(format!("{model_display}  ",), style),
+            Span::styled(format!("{:<16}  ", session.updated_at), style),
             Span::styled(preview_display, style),
         ]));
     }
@@ -1733,11 +1870,26 @@ fn draw_session_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Footer
     lines.push(Line::from(vec![
-        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Resume  "),
-        Span::styled("[Up/Down]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Up/Down]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Navigate  "),
-        Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Cancel"),
     ]));
 
@@ -1772,7 +1924,10 @@ fn draw_file_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
     } else {
         Style::default().fg(Color::White)
     };
-    lines.push(Line::from(Span::styled(format!("  @{query_display}"), query_style)));
+    lines.push(Line::from(Span::styled(
+        format!("  @{query_display}"),
+        query_style,
+    )));
     lines.push(Line::from(""));
 
     if picker.matches.is_empty() {
@@ -1845,11 +2000,26 @@ fn draw_file_picker(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Footer
     lines.push(Line::from(vec![
-        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Select  "),
-        Span::styled("[Up/Down]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Up/Down]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Navigate  "),
-        Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Cancel"),
     ]));
 
@@ -1874,7 +2044,12 @@ fn draw_model_form(app: &AppState, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
 
     let inner = block.inner(area);
     block.render(area, buf);
@@ -1914,7 +2089,9 @@ fn draw_model_form(app: &AppState, area: Rect, buf: &mut Buffer) {
         // Cursor indicator
         let cursor = if is_active { "▸ " } else { "  " };
         let label_style = if is_active {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::White)
         };
@@ -1983,18 +2160,107 @@ fn draw_model_form(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     // Footer
     let footer_line = Line::from(vec![
-        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Enter]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Save  "),
-        Span::styled("[Esc]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Cancel"),
         Span::raw("  "),
-        Span::styled("[Tab]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Tab]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Next Field  "),
-        Span::styled("[Del]", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Del]",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Clear Field"),
     ]);
     let footer_para = Paragraph::new(footer_line);
     Widget::render(&footer_para, footer_area, buf);
+}
+
+/// Draw the permission prompt as a centered popup overlay.
+fn draw_permission_prompt(app: &AppState, area: Rect, buf: &mut Buffer) {
+    use rusty_core::permissions::build_tool_description;
+
+    let prompt = match &app.permission_prompt {
+        Some(p) => p,
+        None => return,
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(Span::styled(
+            " Permission ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(area);
+    block.render(area, buf);
+
+    let desc = build_tool_description(&prompt.request.tool_name, &prompt.request.raw_input);
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("Tool: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                &prompt.request.tool_name,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(desc, Style::default().fg(Color::White))),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "[y]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Allow  ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                "[n]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Deny  ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                "[a]",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Session  ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                "[d]",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Always", Style::default().fg(Color::Gray)),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(lines);
+    Widget::render(&paragraph, inner, buf);
 }
 
 fn draw_autocomplete(
@@ -2032,7 +2298,11 @@ fn draw_autocomplete(
 
     for (i, (name, desc)) in ac.matches.iter().enumerate().take(visible as usize) {
         let row_y = area.y + i as u16;
-        let style = if i == ac.selected { selected_style } else { normal_style };
+        let style = if i == ac.selected {
+            selected_style
+        } else {
+            normal_style
+        };
 
         // Clear row
         for col in 0..area.width {
@@ -2056,7 +2326,11 @@ fn draw_autocomplete(
         let min_gap = 2u16;
         if i != ac.selected && name_len + min_gap + desc_len < area.width {
             let desc_start = area.width.saturating_sub(desc_len);
-            let style = if i == ac.selected { selected_style } else { desc_style };
+            let style = if i == ac.selected {
+                selected_style
+            } else {
+                desc_style
+            };
             for (ci, ch) in desc_text.chars().enumerate() {
                 let col = desc_start + ci as u16;
                 if col >= area.width {

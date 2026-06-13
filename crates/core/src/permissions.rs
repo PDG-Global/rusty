@@ -113,7 +113,11 @@ pub fn is_protected_path(path: &str) -> bool {
             }
             // Also match without leading dot (e.g. "id_rsa" in a path)
             let trimmed = pat.trim_start_matches('.');
-            if trimmed != *pat && components.iter().any(|c| c.trim_start_matches('.') == trimmed) {
+            if trimmed != *pat
+                && components
+                    .iter()
+                    .any(|c| c.trim_start_matches('.') == trimmed)
+            {
                 return true;
             }
             return false;
@@ -141,7 +145,9 @@ pub fn check_auto_permission(mode: PermissionMode, level: PermissionLevel) -> Pe
                 PermissionDecision::AllowOnce
             } else {
                 // Execute still requires approval in AcceptEdits mode
-                PermissionDecision::Deny("Execute requires approval in AcceptEdits mode".to_string())
+                PermissionDecision::Deny(
+                    "Execute requires approval in AcceptEdits mode".to_string(),
+                )
             }
         }
         PermissionMode::Plan => {
@@ -262,7 +268,11 @@ fn contains_redirect(cmd: &str) -> bool {
                 let prev_ok = if i == 0 {
                     true
                 } else {
-                    matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'0'..=b'9' | b'&' | b'>' | b'|' | b';' | b'(' | b'{')
+                    matches!(
+                        bytes[i - 1],
+                        b' ' | b'\t' | b'\n' | b'0'
+                            ..=b'9' | b'&' | b'>' | b'|' | b';' | b'(' | b'{'
+                    )
                 };
                 if prev_ok {
                     return true;
@@ -317,14 +327,12 @@ fn classify_single_command(cmd: &str) -> BashClassification {
 
     // Commands that are always safe (read-only)
     match bin {
-        "ls" | "cat" | "grep" | "rg" | "wc" | "head" | "tail" | "echo"
-        | "pwd" | "which" | "whoami" | "date" | "uname"
-        | "file" | "stat" | "du" | "df" | "tree" | "less" | "more" | "type"
-        | "help" | "man" | "info" | "true" | "false" | "test" | "["
-        | "diff" | "comm" | "uniq" | "cut" | "tr"
-        | "basename" | "dirname" | "realpath" | "readlink"
-        | "hostname" | "id" | "groups" | "tty" | "stty" | "clear" | "history"
-        | "strings" | "hexdump" | "od" | "xxd" | "md5sum" | "sha256sum" => {
+        "ls" | "cat" | "grep" | "rg" | "wc" | "head" | "tail" | "echo" | "pwd" | "which"
+        | "whoami" | "date" | "uname" | "file" | "stat" | "du" | "df" | "tree" | "less"
+        | "more" | "type" | "help" | "man" | "info" | "true" | "false" | "test" | "[" | "diff"
+        | "comm" | "uniq" | "cut" | "tr" | "basename" | "dirname" | "realpath" | "readlink"
+        | "hostname" | "id" | "groups" | "tty" | "stty" | "clear" | "history" | "strings"
+        | "hexdump" | "od" | "xxd" | "md5sum" | "sha256sum" => {
             return BashClassification::ReadOnly;
         }
         // sed: read-only unless -i (in-place edit) or w (write to file)
@@ -334,10 +342,7 @@ fn classify_single_command(cmd: &str) -> BashClassification {
             }
             let full = parts[1..].join(" ");
             // sed 'w filename' writes pattern space to a file
-            if Regex::new(r"(?:^|[;\s|])w\s+\S")
-                .unwrap()
-                .is_match(&full)
-            {
+            if Regex::new(r"(?:^|[;\s|])w\s+\S").unwrap().is_match(&full) {
                 return BashClassification::Write;
             }
             return BashClassification::ReadOnly;
@@ -448,6 +453,19 @@ fn classify_git_subcommand(args: &[&str]) -> BashClassification {
         None => return BashClassification::ReadOnly, // bare `git` is harmless
     };
 
+    // Flags that let git operate outside the working directory change the
+    // effective scope of the command; treat them as write/execute.
+    if args.iter().any(|a| {
+        *a == "-C"
+            || a.starts_with("-C=")
+            || *a == "--git-dir"
+            || a.starts_with("--git-dir=")
+            || *a == "--work-tree"
+            || a.starts_with("--work-tree=")
+    }) {
+        return BashClassification::Write;
+    }
+
     // git config: read-only for `git config --get/list`, write for --global/--system/--edit/set
     if sub == "config" {
         let rest = &args[1..];
@@ -461,7 +479,11 @@ fn classify_git_subcommand(args: &[&str]) -> BashClassification {
             return BashClassification::Write;
         }
         // `git config key value` (setting a value) has 2+ non-flag args
-        let non_flags: Vec<&str> = rest.iter().copied().filter(|a| !a.starts_with('-')).collect();
+        let non_flags: Vec<&str> = rest
+            .iter()
+            .copied()
+            .filter(|a| !a.starts_with('-'))
+            .collect();
         if non_flags.len() >= 2 {
             return BashClassification::Write;
         }
@@ -475,13 +497,10 @@ fn classify_git_subcommand(args: &[&str]) -> BashClassification {
 
     match sub {
         // Read-only git subcommands
-        "status" | "log" | "diff" | "show" | "branch" | "tag" | "remote"
-        | "blame" | "shortlog" | "describe" | "rev-parse" | "rev-list"
-        | "ls-files" | "ls-remote" | "ls-tree" | "cat-file" | "for-each-ref"
-        | "symbolic-ref" | "name-rev" | "count-objects" | "version"
-        | "help" | "archive" | "grep" => {
-            BashClassification::ReadOnly
-        }
+        "status" | "log" | "diff" | "show" | "branch" | "tag" | "remote" | "blame" | "shortlog"
+        | "describe" | "rev-parse" | "rev-list" | "ls-files" | "ls-remote" | "ls-tree"
+        | "cat-file" | "for-each-ref" | "symbolic-ref" | "name-rev" | "count-objects"
+        | "version" | "help" | "archive" | "grep" => BashClassification::ReadOnly,
         _ => BashClassification::Write,
     }
 }
@@ -501,11 +520,9 @@ fn classify_cargo_subcommand(args: &[&str]) -> BashClassification {
     }
 
     match sub {
-        "check" | "clippy" | "test" | "doc" | "tree" | "metadata"
-        | "version" | "help" | "search" | "verify-project" | "locate-project"
-        | "manifest" | "read-manifest" | "rustc" | "rustdoc" => {
-            BashClassification::ReadOnly
-        }
+        "check" | "clippy" | "test" | "doc" | "tree" | "metadata" | "version" | "help"
+        | "search" | "verify-project" | "locate-project" | "manifest" | "read-manifest"
+        | "rustc" | "rustdoc" => BashClassification::ReadOnly,
         _ => BashClassification::Write,
     }
 }
@@ -517,10 +534,8 @@ fn classify_npm_subcommand(args: &[&str]) -> BashClassification {
     };
 
     match sub {
-        "list" | "ls" | "outdated" | "view" | "info" | "search" | "whoami"
-        | "version" | "help" | "config" | "prefix" | "root" | "bin" => {
-            BashClassification::ReadOnly
-        }
+        "list" | "ls" | "outdated" | "view" | "info" | "search" | "whoami" | "version" | "help"
+        | "config" | "prefix" | "root" | "bin" => BashClassification::ReadOnly,
         _ => BashClassification::Write,
     }
 }
@@ -546,8 +561,8 @@ fn classify_docker_subcommand(args: &[&str]) -> BashClassification {
     };
 
     match sub {
-        "ps" | "images" | "logs" | "inspect" | "top" | "port" | "stats"
-        | "version" | "info" | "help" => BashClassification::ReadOnly,
+        "ps" | "images" | "logs" | "inspect" | "top" | "port" | "stats" | "version" | "info"
+        | "help" => BashClassification::ReadOnly,
         _ => BashClassification::Write,
     }
 }
@@ -576,9 +591,29 @@ pub fn build_tool_description(tool_name: &str, arguments: &str) -> String {
 pub fn make_allow_key(tool_name: &str, arguments: &str) -> String {
     // Commands that should never be broadly allowed — require full command match
     const DANGEROUS_COMMANDS: &[&str] = &[
-        "rm", "chmod", "chown", "kill", "dd", "mkfs", "fdisk", "mount", "umount",
-        "reboot", "shutdown", "init", "systemctl", "service",
-        "mv", "cp", "sudo", "ssh", "curl", "wget", "tar", "apt", "make",
+        "rm",
+        "chmod",
+        "chown",
+        "kill",
+        "dd",
+        "mkfs",
+        "fdisk",
+        "mount",
+        "umount",
+        "reboot",
+        "shutdown",
+        "init",
+        "systemctl",
+        "service",
+        "mv",
+        "cp",
+        "sudo",
+        "ssh",
+        "curl",
+        "wget",
+        "tar",
+        "apt",
+        "make",
     ];
 
     if tool_name == "bash" {
@@ -606,41 +641,129 @@ mod tests {
 
     #[test]
     fn test_classify_read_only_commands() {
-        assert_eq!(classify_bash_command("ls -la"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("cat foo.txt"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("git status"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("git log --oneline"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("git diff"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("cargo check"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("cargo test"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("npm list"), BashClassification::ReadOnly);
+        assert_eq!(
+            classify_bash_command("ls -la"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("cat foo.txt"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("git status"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("git log --oneline"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("git diff"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("cargo check"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("cargo test"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("npm list"),
+            BashClassification::ReadOnly
+        );
     }
 
     #[test]
     fn test_classify_write_commands() {
-        assert_eq!(classify_bash_command("rm -rf /tmp/foo"), BashClassification::Write);
-        assert_eq!(classify_bash_command("git push origin main"), BashClassification::Write);
-        assert_eq!(classify_bash_command("git commit -m msg"), BashClassification::Write);
-        assert_eq!(classify_bash_command("cargo build"), BashClassification::Write);
-        assert_eq!(classify_bash_command("cargo run"), BashClassification::Write);
-        assert_eq!(classify_bash_command("npm install foo"), BashClassification::Write);
+        assert_eq!(
+            classify_bash_command("rm -rf /tmp/foo"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("git push origin main"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("git commit -m msg"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("cargo build"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("cargo run"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("npm install foo"),
+            BashClassification::Write
+        );
+    }
+
+    #[test]
+    fn test_git_outside_working_dir_is_write() {
+        // -C and --git-dir let git operate on arbitrary directories.
+        assert_eq!(
+            classify_bash_command("git -C /etc status"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("git --git-dir=/etc/.git status"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("git --work-tree=/etc status"),
+            BashClassification::Write
+        );
+        // Plain git status remains read-only.
+        assert_eq!(
+            classify_bash_command("git status"),
+            BashClassification::ReadOnly
+        );
     }
 
     #[test]
     fn test_compound_commands() {
-        assert_eq!(classify_bash_command("ls && git push"), BashClassification::Write);
-        assert_eq!(classify_bash_command("ls | grep foo"), BashClassification::ReadOnly);
-        assert_eq!(classify_bash_command("echo hello > file.txt"), BashClassification::Write);
+        assert_eq!(
+            classify_bash_command("ls && git push"),
+            BashClassification::Write
+        );
+        assert_eq!(
+            classify_bash_command("ls | grep foo"),
+            BashClassification::ReadOnly
+        );
+        assert_eq!(
+            classify_bash_command("echo hello > file.txt"),
+            BashClassification::Write
+        );
     }
 
     #[test]
     fn test_eval_source_always_execute() {
-        assert_eq!(classify_bash_command("eval echo hi"), BashClassification::Execute);
-        assert_eq!(classify_bash_command("source setup.sh"), BashClassification::Execute);
-        assert_eq!(classify_bash_command(". setup.sh"), BashClassification::Execute);
+        assert_eq!(
+            classify_bash_command("eval echo hi"),
+            BashClassification::Execute
+        );
+        assert_eq!(
+            classify_bash_command("source setup.sh"),
+            BashClassification::Execute
+        );
+        assert_eq!(
+            classify_bash_command(". setup.sh"),
+            BashClassification::Execute
+        );
         assert_eq!(classify_bash_command("env"), BashClassification::Execute);
-        assert_eq!(classify_bash_command("printenv"), BashClassification::Execute);
-        assert_eq!(classify_bash_command("env | grep PATH"), BashClassification::Execute);
+        assert_eq!(
+            classify_bash_command("printenv"),
+            BashClassification::Execute
+        );
+        assert_eq!(
+            classify_bash_command("env | grep PATH"),
+            BashClassification::Execute
+        );
     }
 
     #[test]

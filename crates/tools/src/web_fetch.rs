@@ -308,10 +308,28 @@ fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_blocked_ip(std::net::IpAddr::V4(v4));
             }
+            // IPv4-compatible IPv6 addresses (::a.b.c.d, now deprecated) are
+            // also decoded and checked against IPv4 rules so that ::127.0.0.1
+            // cannot bypass the blocklist.
+            let segments = v6.segments();
+            // IPv4-compatible addresses (::a.b.c.d) are deprecated but still parsed
+            // by some stacks. Decode them and run the IPv4 blocklist, but skip ::1
+            // which is the canonical IPv6 loopback and is handled below.
+            if segments[0..6].iter().all(|&s| s == 0)
+                && segments[6] != 0xFFFF
+                && segments[6] != 0
+            {
+                let v4 = std::net::Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    (segments[6] & 0xFF) as u8,
+                    (segments[7] >> 8) as u8,
+                    (segments[7] & 0xFF) as u8,
+                );
+                return is_blocked_ip(std::net::IpAddr::V4(v4));
+            }
             v6.is_loopback()       // ::1
             || v6.is_unspecified() // ::
             || {
-                let segments = v6.segments();
                 (segments[0] & 0xFFC0) == 0xFE80  // fe80::/10 (link-local)
                 || (segments[0] & 0xFE00) == 0xFC00 // fc00::/7 (unique local)
                 || (segments[0] & 0xFF00) == 0xFF00 // ff00::/8 (multicast)
@@ -453,6 +471,22 @@ mod tests {
         assert!(!is_blocked_ip("::ffff:8.8.8.8".parse().unwrap())); // Google DNS
         assert!(!is_blocked_ip("::ffff:1.1.1.1".parse().unwrap())); // Cloudflare
         assert!(!is_blocked_ip("::ffff:93.184.216.34".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_blocked_ipv4_compatible_ipv6() {
+        // Deprecated IPv4-compatible notation (::a.b.c.d/96) must still be
+        // checked against IPv4 blocklist rules.
+        assert!(is_blocked_ip("::127.0.0.1".parse().unwrap()));
+        assert!(is_blocked_ip("::10.0.0.1".parse().unwrap()));
+        assert!(is_blocked_ip("::192.168.1.1".parse().unwrap()));
+        assert!(is_blocked_ip("::169.254.169.254".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_allowed_ipv4_compatible_ipv6_public() {
+        assert!(!is_blocked_ip("::8.8.8.8".parse().unwrap()));
+        assert!(!is_blocked_ip("::1.1.1.1".parse().unwrap()));
     }
 
     #[test]

@@ -939,8 +939,10 @@ pub struct AppState {
     last_key_time: Option<Instant>,
     /// Whether we're currently in paste mode (rapid input detected)
     pub paste_mode: bool,
-    /// Number of lines the user has scrolled up from the bottom (0 = at bottom)
-    pub scroll_offset: usize,
+    /// Absolute line index where the viewport starts (None = auto-scroll to bottom)
+    pub scroll_anchor: Option<usize>,
+    /// True when user has manually scrolled away from the bottom
+    pub is_user_scrolled: bool,
     /// Set by the Enter handler in the Models tab — the TUI main loop
     /// picks this up and sends `TuiCommand::SwitchModel` to the agent task.
     pub model_switch_requested: Option<String>,
@@ -1095,7 +1097,8 @@ impl Default for AppState {
             file_picker: None,
             last_key_time: None,
             paste_mode: false,
-            scroll_offset: 0,
+            scroll_anchor: None,
+            is_user_scrolled: false,
             model_switch_requested: None,
             model_form: None,
             thinking_level_change_requested: None,
@@ -1659,6 +1662,15 @@ impl AppState {
                 self.confirming_exit = false;
                 self.scroll_down(1);
             }
+            // macOS-friendly line scrolling (Ctrl+Up/Down is Mission Control).
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.confirming_exit = false;
+                self.scroll_up(1);
+            }
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.confirming_exit = false;
+                self.scroll_down(1);
+            }
             KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.confirming_exit = false;
                 self.scroll_top();
@@ -1819,25 +1831,38 @@ impl AppState {
 
     /// Scroll up by `n` lines (toward older messages).
     pub fn scroll_up(&mut self, n: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_add(n);
+        let anchor = self.scroll_anchor.unwrap_or(self.viewport_height);
+        self.scroll_anchor = Some(anchor.saturating_add(n));
+        self.is_user_scrolled = true;
         self.needs_redraw = true;
     }
 
     /// Scroll down by `n` lines (toward newer messages).
     pub fn scroll_down(&mut self, n: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(n);
+        if let Some(anchor) = self.scroll_anchor {
+            let new_anchor = anchor.saturating_sub(n);
+            if new_anchor == 0 {
+                // Returned to bottom — resume auto-scroll
+                self.scroll_anchor = None;
+                self.is_user_scrolled = false;
+            } else {
+                self.scroll_anchor = Some(new_anchor);
+            }
+        }
         self.needs_redraw = true;
     }
 
-    /// Jump to the bottom (most recent content). Resets scroll offset to 0.
+    /// Jump to the bottom (most recent content). Resumes auto-scroll.
     pub fn scroll_to_bottom(&mut self) {
-        self.scroll_offset = 0;
+        self.scroll_anchor = None;
+        self.is_user_scrolled = false;
         self.needs_redraw = true;
     }
 
     /// Scroll to the very top (oldest message).
     pub fn scroll_top(&mut self) {
-        self.scroll_offset = usize::MAX;
+        self.scroll_anchor = Some(usize::MAX);
+        self.is_user_scrolled = true;
         self.needs_redraw = true;
     }
 

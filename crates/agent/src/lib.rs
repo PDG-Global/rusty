@@ -262,8 +262,23 @@ pub async fn build_system_prompt(
     let base = config
         .system_prompt
         .as_deref()
-        .unwrap_or("You are a helpful AI coding assistant. Be concise and precise.");
+        .unwrap_or(
+            "You are a precise coding assistant. Your job is to solve the user's request with \
+             the minimum number of words and actions. Avoid filler, pleasantries, meta-commentary, \
+             and summarising what you just did."
+        );
     parts.push(base.to_string());
+
+    // Global response style — applies to every message, not only written documents.
+    parts.push(
+        "## Response Style\n\n\
+        Keep every response terse and on point. Do not use filler phrases such as \"That's a \
+        great idea\", \"Certainly!\", \"Of course\", \"Great question\", \"Let me\", \"Here's \
+        what I found\", or \"I hope this helps\". Do not summarise tool outputs unless the user \
+        asks for a summary. Do not explain why you are about to do something; just do it. State \
+        facts, show code, and report outcomes. One sentence is often enough."
+            .to_string(),
+    );
 
     // Anti-injection guard: instruct model to treat context files as untrusted
     parts.push(
@@ -276,7 +291,7 @@ pub async fn build_system_prompt(
             .to_string(),
     );
 
-    // Task tracking: gentle guidance — todowrite is a helper, not a jail
+    // Task tracking and work-to-completion behaviour
     parts.push(
         "## Task Tracking\n\n\
         Use `todowrite` proactively and often when progress tracking helps the current work. \
@@ -291,7 +306,12 @@ pub async fn build_system_prompt(
         - If no available tool can move any task forward, stop and report where you are stuck \
           instead of repeatedly re-ordering the same todos.\n\n\
         The todo list lives in the conversation history (returned by the todowrite tool), not in \
-        the system prompt. You can query it by calling todowrite with no arguments."
+        the system prompt. You can query it by calling todowrite with no arguments.\n\n\
+        ## Working to Completion\n\n\
+        Work through multi-step requests in one continuous flow. Do not stop after the first step \
+        and do not ask the user to confirm the next obvious action. Only stop when the task is \
+        complete, you are genuinely blocked, or you need a decision only the user can make. Be \
+        economical: prefer one well-chosen tool call over several, and do not narrate each step."
             .to_string(),
     );
 
@@ -313,7 +333,8 @@ pub async fn build_system_prompt(
         \"basically\", or \"essentially\". Get to the point.\n\
         5. **No AI tells.** Do not use phrases like \"Certainly!\", \"Of course!\", \
         \"Great question!\", \"I'd be happy to\", \"Let me\", \"Here's\", or similar \
-        preamble. Start responses directly with the answer or action.\n\
+        preamble. Start responses directly with the answer or action. The global Response Style \
+        rules above apply to every message, including this one.\n\
         6. **Match existing tone.** When editing existing documents, match the voice and \
         style already in use rather than imposing a different register."
             .to_string(),

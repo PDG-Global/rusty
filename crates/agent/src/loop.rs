@@ -440,9 +440,25 @@ impl Agent {
         // Persisted across turns so the stop-reason check can see it.
         let mut had_write_or_execute_this_run = false;
 
+        // Track whether any tools were used at all (for fallback continuation).
+        let mut made_progress_this_run = false;
+        // Limit fallback continuation to once per run to avoid loops.
+        let mut auto_continued_once = false;
+        // Track if plan mode blocked a write/execute tool this turn.
+        let mut plan_mode_blocked_this_turn = false;
+
         for turn in 0..self.max_turns {
             // Reset per-turn deduplication tracking.
             self.dedup_keys_this_turn.clear();
+
+            // If plan mode blocked progress last turn, auto-exit so the model can execute.
+            // Don't set exited_plan_mode_this_turn — we want the model to keep working,
+            // not hand control back to the user.
+            if plan_mode_blocked_this_turn && self.plan_mode {
+                warn!("Plan mode blocked progress last turn; auto-exiting plan mode");
+                self.plan_mode = false;
+            }
+            plan_mode_blocked_this_turn = false;
             if let Some(c) = cancel {
                 if c.is_cancelled() {
                     self.finalize_plan().await;
@@ -805,6 +821,15 @@ impl Agent {
                 for (tc, decision) in &permission_results {
                     if let PermissionDecision::Deny(reason) = decision {
                         warn!("Tool {} denied: {}", tc.name, reason);
+                        // Track if plan mode blocked a write/execute tool
+                        if self.plan_mode {
+                            if let Some(tool) = self.tools.get(&tc.name) {
+                                let level = tool.permission_level();
+                                if level == PermissionLevel::Write || level == PermissionLevel::Execute {
+                                    plan_mode_blocked_this_turn = true;
+                                }
+                            }
+                        }
                         spawn_handles.push(None);
                         is_duplicate.push(false);
                         continue;
@@ -819,6 +844,9 @@ impl Agent {
                         continue;
                     }
                     self.dedup_keys_this_turn.insert(dedup_key);
+
+                    // Track any tool usage for fallback continuation
+                    made_progress_this_run = true;
 
                     // Track write/execute usage for research-loop detection
                     if let Some(tool) = self.tools.get(&tc.name) {
@@ -1010,6 +1038,26 @@ impl Agent {
                         self.messages.push(Message::user(continue_msg));
                         continue;
                     }
+
+                    // Fallback continuation: the model used tools this run but stopped
+                    // without todowrite tasks. Give it one nudge to keep going, in case
+                    // it stopped mid-request. This catches the common case where the model
+                    // does partial work without creating a task list.
+                    if !self.exited_plan_mode_this_turn
+                        && made_progress_this_run
+                        && had_write_or_execute_this_run
+                        && !auto_continued_once
+                    {
+                        auto_continued_once = true;
+                        warn!("Model stopped after write/execute with no incomplete tasks; nudging once");
+                        self.messages.push(Message::user(
+                            "If you have more work to do to fully complete the request, continue. \
+                             Otherwise, confirm the task is complete."
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+
                     self.finalize_plan().await;
                     return Ok(assistant_text);
                 }
@@ -1266,6 +1314,16 @@ fn extract_path_from_tool_args(tool_name: &str, arguments: &str) -> Option<Strin
     match tool_name {
         "file_read" | "file_write" | "file_edit" => {
             v["path"].as_str().or_else(|| v["file_path"].as_str()).map(|s| s.to_string())
+        }
+        "apply_patch" => {
+            // apply_patch can target protected files embedded in the patch text.
+            // Scan the raw arguments for any protected path so the tiered check
+            // can reject writes to sensitive files.
+            let patch_text = v["patch"].as_str().or_else(|| v["content"].as_str())?;
+            rusty_core::permissions::PROTECTED_PATH_PATTERNS
+                .iter()
+                .find(|&&p| patch_text.contains(p))
+                .map(|&p| p.to_string())
         }
         _ => None,
     }

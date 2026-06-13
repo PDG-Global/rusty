@@ -1837,7 +1837,8 @@ async fn tui_main_loop(
                                 app.is_streaming = true;
                                 app.streaming_text.clear();
                                 app.streaming_text = "...".to_string();
-                                app.scroll_offset = 0;
+                                app.scroll_anchor = None;
+                                app.is_user_scrolled = false;
                                 app.needs_redraw = true;
                                 let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(blocks));
                             }
@@ -1948,7 +1949,8 @@ async fn tui_main_loop(
                             app.is_streaming = true;
                             app.streaming_text.clear();
                             app.streaming_text = "...".to_string();
-                            app.scroll_offset = 0;
+                            app.scroll_anchor = None;
+                            app.is_user_scrolled = false;
                             app.needs_redraw = true;
                             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(blocks));
                         }
@@ -1989,7 +1991,8 @@ async fn handle_slash_command(
             app.is_streaming = true;
             app.streaming_text.clear();
             app.streaming_text = "...".to_string();
-            app.scroll_offset = 0;
+            app.scroll_anchor = None;
+            app.is_user_scrolled = false;
             app.needs_redraw = true;
             let init_prompt = build_init_prompt();
             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: init_prompt }]));
@@ -2199,7 +2202,8 @@ async fn handle_slash_command(
             app.is_streaming = true;
             app.streaming_text.clear();
             app.streaming_text = "...".to_string();
-            app.scroll_offset = 0;
+            app.scroll_anchor = None;
+            app.is_user_scrolled = false;
             app.needs_redraw = true;
             let plan_prompt = "Enter plan mode. Read the relevant files and create a detailed plan. Do not execute any write or execute tools.".to_string();
             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: plan_prompt }]));

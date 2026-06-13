@@ -102,11 +102,22 @@ impl Tool for AgentTool {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> Result<ToolResult, RustyError> {
-        let task = input["task"]
-            .as_str()
-            .ok_or_else(|| RustyError::Tool("Missing 'task' parameter".into()))?;
+        // Some models pass the task in `context` or omit `task` entirely.
+        // Fall back to `context` so a single-argument call still works.
+        let (task, context) = match (input["task"].as_str(), input["context"].as_str()) {
+            (Some(t), Some(c)) if !t.trim().is_empty() => (t, c),
+            (Some(t), None) if !t.trim().is_empty() => (t, ""),
+            (None, Some(c)) if !c.trim().is_empty() => (c, ""),
+            (Some(t), Some(c)) if t.trim().is_empty() && !c.trim().is_empty() => (c, ""),
+            _ => {
+                return Err(RustyError::Tool(
+                    "Missing 'task' parameter. Provide a clear task description for the sub-agent."
+                        .into(),
+                ));
+            }
+        };
 
-        let context = input["context"].as_str().unwrap_or("");
+        let task = task.trim();
         let subagent_type = input["subagent_type"].as_str().unwrap_or("explore");
         let resume = input["resume"].as_str().unwrap_or("");
         let description = input["description"].as_str().unwrap_or("background task");
