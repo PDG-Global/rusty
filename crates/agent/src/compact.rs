@@ -112,7 +112,7 @@ pub async fn maybe_compact(
         tools: vec![],
         max_tokens: 2048,
         temperature: None,
-        thinking_budget: Some(rusty_core::level_to_budget(rusty_core::ThinkingLevel::Minimal)),
+        thinking_budget: None,
     };
 
     let mut stream = provider.create_message_stream(request).await?;
@@ -186,7 +186,7 @@ pub async fn force_compact(
         tools: vec![],
         max_tokens: 2048,
         temperature: None,
-        thinking_budget: Some(rusty_core::level_to_budget(rusty_core::ThinkingLevel::Minimal)),
+        thinking_budget: None,
     };
 
     let mut stream = provider.create_message_stream(request).await?;

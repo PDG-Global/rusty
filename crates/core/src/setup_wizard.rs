@@ -29,6 +29,10 @@ pub struct ProviderPreset {
     pub provider: ProviderType,
     /// Optional extra HTTP headers to send with every request.
     pub extra_headers: Option<Vec<(&'static str, &'static str)>>,
+    /// Sampling temperature. Defaults to 0.7 if not set.
+    pub temperature: Option<f32>,
+    /// Thinking/reasoning token budget. None means thinking is not supported.
+    pub thinking_budget: Option<u32>,
 }
 
 impl ProviderPreset {
@@ -45,6 +49,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: Some(4096),
             },
             Self {
                 name: "Xiaomi MiMo (China)",
@@ -56,6 +62,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: Some(4096),
             },
             Self {
                 name: "Kimi (Global)",
@@ -66,7 +74,9 @@ impl ProviderPreset {
                 available_models: &["kimi-for-coding"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
-                extra_headers: None,
+                extra_headers: Some(vec![("X-Title", "Rusty")]),
+                temperature: Some(1.0),
+                thinking_budget: Some(4096),
             },
             Self {
                 name: "Kimi (China)",
@@ -77,7 +87,9 @@ impl ProviderPreset {
                 available_models: &["kimi-for-coding"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
-                extra_headers: None,
+                extra_headers: Some(vec![("X-Title", "Rusty")]),
+                temperature: Some(1.0),
+                thinking_budget: Some(4096),
             },
             Self {
                 name: "DeepSeek (Global)",
@@ -89,6 +101,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: Some(4096),
             },
             Self {
                 name: "DeepSeek (China)",
@@ -100,6 +114,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: Some(4096),
             },
             Self {
                 name: "Zhipu GLM (Global)",
@@ -111,6 +127,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
             },
             Self {
                 name: "Zhipu GLM (China)",
@@ -122,6 +140,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
             },
             Self {
                 name: "MiniMax (Global)",
@@ -133,6 +153,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
             },
             Self {
                 name: "MiniMax (China)",
@@ -144,6 +166,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
             },
             Self {
                 name: "OpenAI",
@@ -155,6 +179,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
             },
             Self {
                 name: "Ollama (local)",
@@ -166,6 +192,8 @@ impl ProviderPreset {
                 needs_key: false,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
             },
             Self {
                 name: "Custom (OpenAI-compatible)",
@@ -177,6 +205,8 @@ impl ProviderPreset {
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
             },
         ]
     }
@@ -459,8 +489,8 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
         model: model.trim().to_string(),
         available_models: preset.available_models.iter().map(|s| s.to_string()).collect(),
         max_tokens: 16_384,
-        temperature: Some(0.7),
-        thinking_budget: None,
+        temperature: Some(preset.temperature.unwrap_or(0.7)),
+        thinking_budget: preset.thinking_budget,
         extra_headers: preset.extra_headers.clone().map(|h| h.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()),
         context_window: None,
     };

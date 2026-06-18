@@ -521,6 +521,7 @@ impl Settings {
             serde_json::from_str(&content)?
         };
         settings.migrate();
+        settings.fixup();
         Ok(settings)
     }
 
@@ -553,6 +554,38 @@ impl Settings {
         // Migrate the API key into per-model storage
         if let Some(key) = self.api_key.clone() {
             self.api_keys.insert("default".to_string(), key);
+        }
+    }
+
+    /// Patch existing model entries with known-good defaults for providers
+    /// that require specific settings (e.g. Kimi requires temperature=1 and
+    /// X-Title header, MiMo/DeepSeek support thinking). Called after `migrate()`.
+    /// Idempotent.
+    pub fn fixup(&mut self) {
+        for entry in &mut self.models {
+            let name_lower = entry.name.to_lowercase();
+            let base_lower = entry.api_base.to_lowercase();
+            let is_kimi = name_lower.contains("kimi") || base_lower.contains("kimi.com");
+            let is_mimo = name_lower.starts_with("xiaomi")
+                || base_lower.contains("xiaomimimo.com");
+            let is_deepseek = name_lower.starts_with("deepseek")
+                || base_lower.contains("api.deepseek.com");
+
+            if is_kimi {
+                // Kimi requires temperature=1 and X-Title header to identify as coding agent
+                entry.temperature = Some(1.0);
+                let headers = entry.extra_headers.get_or_insert_with(HashMap::new);
+                headers.insert("X-Title".to_string(), "Rusty".to_string());
+                // Kimi supports reasoning_content for thinking
+                if entry.thinking_budget.is_none() {
+                    entry.thinking_budget = Some(4096);
+                }
+            } else if is_mimo || is_deepseek {
+                // These providers support thinking — set a default budget if missing
+                if entry.thinking_budget.is_none() {
+                    entry.thinking_budget = Some(4096);
+                }
+            }
         }
     }
 
@@ -1061,5 +1094,109 @@ mod tests {
 
         let key = settings.resolve_active_api_key();
         assert_eq!(key.unwrap(), "sk-per-model");
+    }
+
+    #[test]
+    fn fixup_kimi_sets_temperature_and_thinking() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "Kimi".into(),
+            name: "kimi-global".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://api.kimi.com/coding/v1".into(),
+            model: "kimi-for-coding".into(),
+            available_models: vec![],
+            max_tokens: 32768,
+            temperature: Some(0.7),
+            thinking_budget: None,
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        assert_eq!(settings.models[0].temperature, Some(1.0));
+        assert_eq!(settings.models[0].thinking_budget, Some(4096));
+        let headers = settings.models[0].extra_headers.as_ref().unwrap();
+        assert_eq!(headers.get("X-Title").unwrap(), "Rusty");
+    }
+
+    #[test]
+    fn fixup_mimo_sets_thinking_budget_if_missing() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "Xiaomi MiMo".into(),
+            name: "xiaomi-global".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://token-plan.xiaomimimo.com/v1".into(),
+            model: "mimo-v2.5-pro".into(),
+            available_models: vec![],
+            max_tokens: 32768,
+            temperature: Some(0.7),
+            thinking_budget: None,
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        assert_eq!(settings.models[0].thinking_budget, Some(4096));
+    }
+
+    #[test]
+    fn fixup_deepseek_sets_thinking_budget_if_missing() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "DeepSeek".into(),
+            name: "deepseek-cn".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://api.deepseek.com".into(),
+            model: "deepseek-v4-pro".into(),
+            available_models: vec![],
+            max_tokens: 384000,
+            temperature: Some(0.7),
+            thinking_budget: None,
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        assert_eq!(settings.models[0].thinking_budget, Some(4096));
+    }
+
+    #[test]
+    fn fixup_does_not_overwrite_existing_thinking_budget() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "Xiaomi MiMo".into(),
+            name: "xiaomi-global".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://token-plan.xiaomimimo.com/v1".into(),
+            model: "mimo-v2.5-pro".into(),
+            available_models: vec![],
+            max_tokens: 32768,
+            temperature: Some(0.7),
+            thinking_budget: Some(16384),
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        assert_eq!(settings.models[0].thinking_budget, Some(16384));
+    }
+
+    #[test]
+    fn fixup_ignores_unknown_providers() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "Custom".into(),
+            name: "my-model".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "http://localhost:8080/v1".into(),
+            model: "default".into(),
+            available_models: vec![],
+            max_tokens: 16384,
+            temperature: Some(0.7),
+            thinking_budget: None,
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        assert_eq!(settings.models[0].temperature, Some(0.7));
+        assert_eq!(settings.models[0].thinking_budget, None);
     }
 }

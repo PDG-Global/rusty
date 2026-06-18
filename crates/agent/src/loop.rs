@@ -524,12 +524,16 @@ impl Agent {
 
             let tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();
 
-            // Use the configured thinking level directly — no dynamic downgrade.
-            let level = self.config.resolve_thinking_level();
-            let thinking_budget = Some(level_to_budget(level));
+            // Only send thinking budget when the model explicitly supports it
+            // (i.e. the model entry declared a thinking_budget).
+            // This prevents sending reasoning_budget to providers that don't support it (e.g. Kimi).
+            let thinking_budget = self.config.thinking_budget;
+            let level = thinking_budget
+                .map(rusty_core::budget_to_level)
+                .unwrap_or(rusty_core::ThinkingLevel::Minimal);
 
             if let Some(cb) = on_thinking_level {
-                cb(Some(level));
+                cb(if thinking_budget.is_some() { Some(level) } else { None });
             }
 
             // Ensure max_tokens always exceeds thinking_budget + headroom to prevent API hangs.
@@ -1094,7 +1098,7 @@ impl Agent {
             tools: vec![],
             max_tokens: 1024,
             temperature: self.config.temperature,
-            thinking_budget: Some(level_to_budget(ThinkingLevel::Minimal)),
+            thinking_budget: self.config.thinking_budget.map(|_| level_to_budget(ThinkingLevel::Minimal)),
         };
 
         let mut stream = match self.provider.create_message_stream(summary_request).await {

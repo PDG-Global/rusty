@@ -184,7 +184,7 @@ impl LlmProvider for OpenAiProvider {
             stream: true,
             temperature: request.temperature,
             tools: oai_tools,
-            stream_options: Some(StreamOptions { include_usage: true }),
+            stream_options: None,
             reasoning_budget: request.thinking_budget,
         };
 
@@ -235,9 +235,7 @@ impl LlmProvider for OpenAiProvider {
                             continue;
                         }
 
-                        trace!("SSE line: {}", line);
-
-                        if line == "data: [DONE]" {
+                        if line == "data: [DONE]" || line == "data:[DONE]" {
                             return Some((
                                 Ok(StreamEvent::Done {
                                     stop_reason: Some("end_turn".to_string()),
@@ -246,49 +244,47 @@ impl LlmProvider for OpenAiProvider {
                             ));
                         }
 
-                        if let Some(data) = line.strip_prefix("data: ") {
+                        if let Some(data) = line.strip_prefix("data:").map(|s| s.trim_start()) {
                             match serde_json::from_str::<OaiStreamChunk>(data) {
                                 Ok(chunk) => {
-                                    // Emit usage data if present (sent on final chunk
-                                    // when stream_options.include_usage is true)
-                                    if let Some(usage) = &chunk.usage {
-                                        return Some((
-                                            Ok(StreamEvent::Usage(UsageInfo {
-                                                input_tokens: usage.prompt_tokens,
-                                                output_tokens: usage.completion_tokens,
-                                                cached_tokens: usage.cached_tokens(),
-                                            })),
-                                            (stream, line_buf, tool_calls),
-                                        ));
-                                    }
-
-                                    let choice = match chunk.choices.first() {
-                                        Some(c) => c,
-                                        None => continue,
-                                    };
-
+                                    let choice = chunk.choices.first();
                                     let mut events = Vec::new();
 
-                                    // Thinking/reasoning content
-                                    if let Some(thinking) = &choice.delta.reasoning_content {
-                                        if !thinking.is_empty() {
-                                            events.push(Ok(StreamEvent::ThinkingDelta(
-                                                thinking.clone(),
-                                            )));
+                                    // Text content
+                                    if let Some(c) = choice {
+                                        if let Some(content) = &c.delta.content {
+                                            if !content.is_empty() {
+                                                events.push(Ok(StreamEvent::TextDelta(
+                                                    content.clone(),
+                                                )));
+                                            }
                                         }
                                     }
 
-                                    // Text content
-                                    if let Some(content) = &choice.delta.content {
-                                        if !content.is_empty() {
-                                            events.push(Ok(StreamEvent::TextDelta(
-                                                content.clone(),
-                                            )));
+                                    // Thinking/reasoning content — emit as ThinkingDelta for UI,
+                                    // and also as TextDelta so the agent accumulates it.
+                                    // Some providers (Kimi) put all output in reasoning_content
+                                    // with empty content, so TextDelta is needed to capture it.
+                                    if let Some(c) = choice {
+                                        if let Some(thinking) = &c.delta.reasoning_content {
+                                            if !thinking.is_empty() {
+                                                events.push(Ok(StreamEvent::ThinkingDelta(
+                                                    thinking.clone(),
+                                                )));
+                                                // Only emit as text if no regular content
+                                                // was present in this chunk
+                                                if !events.iter().any(|e| matches!(e, Ok(StreamEvent::TextDelta(_)))) {
+                                                    events.push(Ok(StreamEvent::TextDelta(
+                                                        thinking.clone(),
+                                                    )));
+                                                }
+                                            }
                                         }
                                     }
 
                                     // Tool calls
-                                    if let Some(tc_deltas) = &choice.delta.tool_calls {
+                                    if let Some(c) = choice {
+                                    if let Some(tc_deltas) = &c.delta.tool_calls {
                                         for tc in tc_deltas {
                                             // Ensure we have enough slots
                                             while tool_calls.len() <= tc.index {
@@ -344,9 +340,11 @@ impl LlmProvider for OpenAiProvider {
                                             }));
                                         }
                                     }
+                                    }
 
                                     // Finish reason
-                                    if let Some(finish) = &choice.finish_reason {
+                                    if let Some(c) = choice {
+                                    if let Some(finish) = &c.finish_reason {
                                         let stop_reason = match finish.as_str() {
                                             "tool_calls" => "tool_use",
                                             "stop" => "end_turn",
@@ -356,6 +354,16 @@ impl LlmProvider for OpenAiProvider {
                                         events.push(Ok(StreamEvent::Done {
                                             stop_reason: Some(stop_reason.to_string()),
                                         }));
+                                    }
+                                    }
+
+                                    // Usage data (sent on final chunk when stream_options is used)
+                                    if let Some(usage) = &chunk.usage {
+                                        events.push(Ok(StreamEvent::Usage(UsageInfo {
+                                            input_tokens: usage.prompt_tokens,
+                                            output_tokens: usage.completion_tokens,
+                                            cached_tokens: usage.cached_tokens(),
+                                        })));
                                     }
 
                                     if events.is_empty() {

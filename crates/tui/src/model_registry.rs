@@ -28,9 +28,13 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             model: "kimi-for-coding".into(),
             available_models: vec!["kimi-for-coding".into()],
             max_tokens: 32_768,
-            temperature: Some(0.7),
-            thinking_budget: None,
-            extra_headers: None,
+            temperature: Some(1.0),
+            thinking_budget: Some(4096),
+            extra_headers: Some(
+                vec![("X-Title".to_string(), "Rusty".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
             context_window: Some(262_144),
         },
         ModelEntry {
@@ -41,9 +45,13 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             model: "kimi-for-coding".into(),
             available_models: vec!["kimi-for-coding".into()],
             max_tokens: 32_768,
-            temperature: Some(0.7),
-            thinking_budget: None,
-            extra_headers: None,
+            temperature: Some(1.0),
+            thinking_budget: Some(4096),
+            extra_headers: Some(
+                vec![("X-Title".to_string(), "Rusty".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
             context_window: Some(262_144),
         },
         // ── Xiaomi MiMo ──────────────────────────────────────────────────
@@ -56,7 +64,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             available_models: vec!["mimo-v2.5-pro".into(), "mimo-v2.5-flash".into()],
             max_tokens: 32_768,
             temperature: Some(0.7),
-            thinking_budget: None,
+            thinking_budget: Some(4096),
             extra_headers: None,
             context_window: None,
         },
@@ -69,7 +77,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             available_models: vec!["mimo-v2.5-pro".into(), "mimo-v2.5-flash".into()],
             max_tokens: 32_768,
             temperature: Some(0.7),
-            thinking_budget: None,
+            thinking_budget: Some(4096),
             extra_headers: None,
             context_window: None,
         },
@@ -83,7 +91,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             available_models: vec!["deepseek-v4-pro".into(), "deepseek-v4-flash".into()],
             max_tokens: 384_000,
             temperature: Some(0.7),
-            thinking_budget: None,
+            thinking_budget: Some(4096),
             extra_headers: None,
             context_window: None,
         },
@@ -96,7 +104,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             available_models: vec!["deepseek-v4-pro".into(), "deepseek-v4-flash".into()],
             max_tokens: 384_000,
             temperature: Some(0.7),
-            thinking_budget: None,
+            thinking_budget: Some(4096),
             extra_headers: None,
             context_window: None,
         },

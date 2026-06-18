@@ -338,10 +338,10 @@ async fn main() -> Result<()> {
                 }
             }
             "kimi" | "moonshot" => {
-                config.api_base = Some("https://api.kimi.com/coding/v1/".to_string());
-                config.provider_type = rusty_core::ProviderType::Anthropic;
+                config.api_base = Some("https://api.kimi.com/coding/v1".to_string());
+                config.temperature = Some(1.0);
                 if args.model.is_none() && settings.default_model.is_none() {
-                    config.model = "kimi-k2.6".to_string();
+                    config.model = "kimi-for-coding".to_string();
                 }
             }
             "openai" => {
@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
             config.max_tokens = entry.max_tokens;
         }
         if args.temperature.is_none() {
-            config.temperature = entry.temperature;
+            config.temperature = config.temperature.or(entry.temperature);
         }
         if args.thinking_budget.is_none() {
             config.thinking_budget = entry.thinking_budget;
