@@ -52,3 +52,4 @@ site-docs/
 # Build artifacts directory
 dist/
 .wrangler/
+.mimocode/

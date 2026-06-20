@@ -1827,6 +1827,7 @@ async fn tui_main_loop(
                                 app.messages.push(rusty_tui::app::ChatMessage {
                                     role: rusty_tui::app::MessageRole::User,
                                     content: input.clone(),
+                                    tool_blocks: vec![],
                                 });
                                 app.history.push(input.clone());
                                 app.history_idx = None;
@@ -1834,9 +1835,12 @@ async fn tui_main_loop(
                                 app.input.clear();
                                 app.cursor_pos = 0;
                                 app.clear_pasted_content();
-                                app.is_streaming = true;
-                                app.streaming_text.clear();
-                                app.streaming_text = "...".to_string();
+            app.is_streaming = true;
+            app.streaming_text.clear();
+            app.streaming_tool_blocks.clear();
+            app.streaming_text = "...".to_string();
+
+
                                 app.scroll_anchor = None;
                                 app.is_user_scrolled = false;
                                 app.needs_redraw = true;
@@ -1943,11 +1947,13 @@ async fn tui_main_loop(
                             app.messages.push(rusty_tui::app::ChatMessage {
                                 role: rusty_tui::app::MessageRole::User,
                                 content: input.clone(),
+                                tool_blocks: vec![],
                             });
                             app.history.push(input.clone());
                             app.history_idx = None;
                             app.is_streaming = true;
                             app.streaming_text.clear();
+                            app.streaming_tool_blocks.clear();
                             app.streaming_text = "...".to_string();
                             app.scroll_anchor = None;
                             app.is_user_scrolled = false;
@@ -1987,6 +1993,7 @@ async fn handle_slash_command(
             app.messages.push(rusty_tui::app::ChatMessage {
                 role: rusty_tui::app::MessageRole::User,
                 content: "/init (generate AGENTS.md)".to_string(),
+                tool_blocks: vec![],
             });
             app.is_streaming = true;
             app.streaming_text.clear();
@@ -2064,6 +2071,7 @@ async fn handle_slash_command(
         rusty_tui::app::SlashCommand::Clear => {
             app.messages.clear();
             app.streaming_text.clear();
+            app.streaming_tool_blocks.clear();
             app.thinking_text.clear();
             app.saved_thinking.clear();
             app.thinking_line_count = 0;
@@ -2198,6 +2206,7 @@ async fn handle_slash_command(
             app.messages.push(rusty_tui::app::ChatMessage {
                 role: rusty_tui::app::MessageRole::User,
                 content: "/plan (enter explicit plan mode)".to_string(),
+                tool_blocks: vec![],
             });
             app.is_streaming = true;
             app.streaming_text.clear();
@@ -2244,6 +2253,7 @@ async fn handle_session_picker_select(
             let msg_count = session.messages.len();
             app.messages.clear();
             app.streaming_text.clear();
+            app.streaming_tool_blocks.clear();
             app.thinking_text.clear();
             app.saved_thinking.clear();
             app.thinking_line_count = 0;
@@ -2259,6 +2269,7 @@ async fn handle_session_picker_select(
                 app.messages.push(rusty_tui::app::ChatMessage {
                     role,
                     content: msg.get_all_text(),
+                    tool_blocks: vec![],
                 });
             }
 

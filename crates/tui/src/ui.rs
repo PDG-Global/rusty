@@ -12,7 +12,211 @@ use ratatui::{
     },
 };
 
-use crate::app::{AppState, AutocompleteState, MessageRole};
+use crate::app::{AppState, AutocompleteState, MessageRole, ToolBlock, ToolStatus};
+use crate::sidebar::SidebarPanel;
+
+/// Draw the sidebar with three panels: Files, Tools, Tasks.
+fn draw_sidebar(app: &mut AppState, area: Rect, buf: &mut Buffer) {
+    // Populate files on first open
+    if app.sidebar.files.is_empty() {
+        if let Some(ref wd) = app.working_dir {
+            app.sidebar.populate_files(wd);
+        }
+    }
+    // Always update tool summaries from messages
+    app.sidebar.update_tools(&app.messages);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(" sidebar ", Style::default().fg(Color::DarkGray)));
+    let inner = block.inner(area);
+    block.render(area, buf);
+
+    let panel_count = 3;
+    let panel_height = inner.height / panel_count;
+    let mut y = inner.y;
+
+    // Files panel
+    let files_area = Rect {
+        x: inner.x,
+        y,
+        width: inner.width,
+        height: panel_height,
+    };
+    draw_sidebar_files(app, files_area, buf);
+    y += panel_height;
+
+    // Tools panel
+    let tools_area = Rect {
+        x: inner.x,
+        y,
+        width: inner.width,
+        height: panel_height,
+    };
+    draw_sidebar_tools(app, tools_area, buf);
+    y += panel_height;
+
+    // Tasks panel (remaining space)
+    let tasks_height = inner.height.saturating_sub(panel_height * 2);
+    let tasks_area = Rect {
+        x: inner.x,
+        y,
+        width: inner.width,
+        height: tasks_height,
+    };
+    draw_sidebar_tasks(app, tasks_area, buf);
+}
+
+fn draw_sidebar_files(app: &mut AppState, area: Rect, buf: &mut Buffer) {
+    let is_focused = app.sidebar.focused_panel == SidebarPanel::Files;
+    let border_color = if is_focused { Color::Cyan } else { Color::DarkGray };
+
+    let collapse_indicator = if app.sidebar.files_collapsed { "▸" } else { "▾" };
+    let title = format!(" {collapse_indicator} Files ({}) ", app.sidebar.files.len());
+
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(title, Style::default().fg(border_color)));
+    let inner = block.inner(area);
+
+    if app.sidebar.files_collapsed {
+        block.render(area, buf);
+        return;
+    }
+
+    let max_width = inner.width.saturating_sub(2) as usize;
+    let visible_height = inner.height as usize;
+    let start = app.sidebar.file_scroll.min(app.sidebar.files.len().saturating_sub(visible_height));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for entry in &app.sidebar.files[start..] {
+        if lines.len() >= visible_height {
+            break;
+        }
+        let indent = "  ".repeat(entry.depth);
+        let style = if entry.is_dir {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else if entry.is_active {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let name = truncate_str(&entry.display_name, max_width.saturating_sub(indent.len()));
+        lines.push(Line::from(vec![
+            Span::styled(indent, style),
+            Span::styled(name, style),
+        ]));
+    }
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    block.render(area, buf);
+    Widget::render(paragraph, inner, buf);
+}
+
+fn draw_sidebar_tools(app: &mut AppState, area: Rect, buf: &mut Buffer) {
+    let is_focused = app.sidebar.focused_panel == SidebarPanel::Tools;
+    let border_color = if is_focused { Color::Cyan } else { Color::DarkGray };
+
+    let collapse_indicator = if app.sidebar.tools_collapsed { "▸" } else { "▾" };
+    let title = format!(" {collapse_indicator} Tools ({}) ", app.sidebar.tools.len());
+
+    let block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(title, Style::default().fg(border_color)));
+    let inner = block.inner(area);
+
+    if app.sidebar.tools_collapsed {
+        block.render(area, buf);
+        return;
+    }
+
+    let max_width = inner.width.saturating_sub(2) as usize;
+    let visible_height = inner.height as usize;
+    let start = app.sidebar.tool_scroll.min(app.sidebar.tools.len().saturating_sub(visible_height));
+
+    let mut lines: Vec<Line> = Vec::new();
+    for tool in &app.sidebar.tools[start..] {
+        if lines.len() >= visible_height {
+            break;
+        }
+        let (symbol, color) = match tool.last_status {
+            ToolStatus::Running => ("▶", Color::Yellow),
+            ToolStatus::Success => ("✓", Color::Green),
+            ToolStatus::Error => ("✗", Color::Red),
+        };
+        let text = format!("{symbol} {} ({})", tool.name, tool.count);
+        let truncated = truncate_str(&text, max_width);
+        lines.push(Line::from(Span::styled(truncated, Style::default().fg(color))));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " No tools used yet",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    block.render(area, buf);
+    Widget::render(paragraph, inner, buf);
+}
+
+fn draw_sidebar_tasks(app: &mut AppState, area: Rect, buf: &mut Buffer) {
+    let is_focused = app.sidebar.focused_panel == SidebarPanel::Tasks;
+    let border_color = if is_focused { Color::Cyan } else { Color::DarkGray };
+
+    let collapse_indicator = if app.sidebar.tasks_collapsed { "▸" } else { "▾" };
+    let title = format!(" {collapse_indicator} Tasks ");
+
+    let block = Block::default()
+        .borders(Borders::NONE)
+        .title(Span::styled(title, Style::default().fg(border_color)));
+    let inner = block.inner(area);
+
+    if app.sidebar.tasks_collapsed {
+        block.render(area, buf);
+        return;
+    }
+
+    let max_width = inner.width.saturating_sub(2) as usize;
+    let visible_height = inner.height as usize;
+
+    let mut lines: Vec<Line> = Vec::new();
+    match app.pinned_todos.as_ref() {
+        Some(todos) => {
+            let start = app.sidebar.task_scroll.min(todos.lines().count().saturating_sub(visible_height));
+            for line in todos.lines().skip(start) {
+                if lines.len() >= visible_height {
+                    break;
+                }
+                let style = if line.contains("[completed]") {
+                    Style::default().fg(Color::Green)
+                } else if line.contains("[in_progress]") {
+                    Style::default().fg(Color::Yellow)
+                } else if line.contains("[pending]") {
+                    Style::default().fg(Color::White)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let truncated = truncate_str(line, max_width);
+                lines.push(Line::from(Span::styled(truncated, style)));
+            }
+        }
+        None => {
+            lines.push(Line::from(Span::styled(
+                " No active tasks",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    block.render(area, buf);
+    Widget::render(paragraph, inner, buf);
+}
 
 /// Fill the whole screen area with a dim background layer for modal overlays.
 fn dim_screen(area: Rect, buf: &mut Buffer) {
@@ -25,9 +229,27 @@ fn dim_screen(area: Rect, buf: &mut Buffer) {
 }
 
 pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
+    let layout_mode = crate::app::LayoutMode::from_width(area.width);
+
+    // Horizontal split: main area | sidebar (only in Full mode)
+    let sidebar_width: u16 = if app.sidebar.visible && layout_mode == crate::app::LayoutMode::Full {
+        36
+    } else {
+        0
+    };
+    let h_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(1), Constraint::Length(sidebar_width)])
+        .split(area);
+
+    let main_area = h_chunks[0];
+    if sidebar_width > 0 {
+        draw_sidebar(app, h_chunks[1], buf);
+    }
+
     // Dynamically size the input area based on content length.
     // 2 border rows + ceil(text_width / inner_width) content rows, clamped to [3..8].
-    let inner_width = area.width.saturating_sub(2).max(1) as usize;
+    let inner_width = main_area.width.saturating_sub(2).max(1) as usize;
     let text_len = if app.input.is_empty() {
         28 // placeholder "Type a message or / for commands..."
     } else {
@@ -37,7 +259,10 @@ pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
     let input_height = (content_rows as u16 + 2).clamp(3, 8);
 
     // Dynamically size the todo panel based on content
-    let todo_height = if let Some(ref todos) = app.pinned_todos {
+    // Hide when sidebar is visible (tasks are shown in sidebar instead)
+    let todo_height = if app.sidebar.visible && sidebar_width > 0 {
+        0
+    } else if let Some(ref todos) = app.pinned_todos {
         let line_count = todos.lines().count() as u16;
         // 2 for borders + content lines, capped at 12
         (line_count + 2).min(12)
@@ -55,7 +280,7 @@ pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
-        .split(area);
+        .split(main_area);
 
     let mut idx = 0;
     draw_chat(app, chunks[idx], buf);
@@ -78,7 +303,7 @@ pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
                 input_area.x + 1,
                 input_area.y + input_area.height,
                 input_area.width.saturating_sub(2),
-                area,
+                main_area,
                 buf,
             );
         }
@@ -145,8 +370,16 @@ fn draw_chat(app: &mut AppState, area: Rect, buf: &mut Buffer) {
             MessageRole::System => ("! ", Style::default().fg(Color::LightYellow)),
         };
 
-        render_content(&msg.content, prefix, base_style, &mut lines, width);
-        lines.push(Line::from(""));
+        if msg.role == MessageRole::Assistant && !msg.tool_blocks.is_empty() {
+            render_content_with_tools(&msg.content, &msg.tool_blocks, prefix, base_style, &mut lines, width);
+        } else {
+            render_content(&msg.content, prefix, base_style, &mut lines, width);
+        }
+        // Thin separator between messages
+        lines.push(Line::from(Span::styled(
+            "\u{2500}".repeat(width.min(80)),
+            Style::default().fg(Color::DarkGray),
+        )));
     }
 
     // Thinking text — collapsed or expanded
@@ -210,13 +443,24 @@ fn draw_chat(app: &mut AppState, area: Rect, buf: &mut Buffer) {
 
     // Streaming text
     if app.is_streaming && !app.streaming_text.is_empty() {
-        render_content(
-            &app.streaming_text,
-            "  ",
-            Style::default().fg(Color::White),
-            &mut lines,
-            width,
-        );
+        if !app.streaming_tool_blocks.is_empty() {
+            render_content_with_tools(
+                &app.streaming_text,
+                &app.streaming_tool_blocks,
+                "  ",
+                Style::default().fg(Color::White),
+                &mut lines,
+                width,
+            );
+        } else {
+            render_content(
+                &app.streaming_text,
+                "  ",
+                Style::default().fg(Color::White),
+                &mut lines,
+                width,
+            );
+        }
         lines.push(Line::from(Span::styled(
             "  \u{2588}",
             Style::default().fg(Color::Green),
@@ -484,6 +728,156 @@ fn render_content(
     }
 }
 
+/// Render assistant message content with collapsible tool blocks.
+/// Tool indicator lines (▶/✓/✗) are replaced with ToolBlock rendering.
+fn render_content_with_tools(
+    content: &str,
+    tool_blocks: &[ToolBlock],
+    prefix: &str,
+    base_style: Style,
+    lines: &mut Vec<Line<'static>>,
+    width: usize,
+) {
+    let msg_lines: Vec<&str> = content.lines().collect();
+    let mut tool_block_idx = 0;
+    let mut is_first_content_line = true;
+    let mut in_code_block = false;
+
+    for line_text in &msg_lines {
+        let line_str = *line_text;
+
+        // Match tool indicator lines and render from ToolBlock data
+        if line_str.starts_with("  \u{25B6} ") || line_str.starts_with("  \u{2713} ") || line_str.starts_with("  \u{2717} ") {
+            if let Some(block) = tool_blocks.get(tool_block_idx) {
+                render_tool_block(block, lines, width);
+                tool_block_idx += 1;
+                is_first_content_line = false;
+                continue;
+            }
+        }
+
+        // Skip inline tool output lines (⎿/…) when we have structured data
+        if line_str.starts_with("    \u{257F} ") || line_str.starts_with("    \u{2026} ") {
+            if tool_block_idx > 0 && tool_blocks.get(tool_block_idx - 1).is_some() {
+                continue;
+            }
+        }
+
+        // Code block fences
+        if line_str.starts_with("```") {
+            in_code_block = !in_code_block;
+            let indent = if is_first_content_line { prefix } else { "  " };
+            is_first_content_line = false;
+            let wrapped = wrap_text(&format!("{indent}{line_str}"), width, "");
+            for wline in wrapped {
+                lines.push(Line::from(Span::styled(
+                    wline,
+                    Style::default().fg(Color::Gray),
+                )));
+            }
+            continue;
+        }
+
+        // Code block content
+        if in_code_block {
+            let indent = "    ";
+            let wrapped = wrap_text(&format!("{indent}{line_str}"), width, indent);
+            for wline in wrapped {
+                lines.push(Line::from(Span::styled(
+                    wline,
+                    Style::default().fg(Color::LightGreen),
+                )));
+            }
+            continue;
+        }
+
+        // ATX headings
+        if let Some(heading) = parse_atx_heading(line_str) {
+            let style = match heading.level {
+                1 => base_style.fg(Color::White).add_modifier(Modifier::BOLD),
+                2 => base_style.fg(Color::LightCyan).add_modifier(Modifier::BOLD),
+                _ => base_style.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            };
+            let indent = if is_first_content_line { prefix } else { "  " };
+            is_first_content_line = false;
+            let mut spans = vec![Span::styled(indent.to_string(), base_style)];
+            spans.extend(parse_inline_markdown(&heading.text, style));
+            for wrapped_line in wrap_line(&spans, width, indent) {
+                lines.push(Line::from(wrapped_line));
+            }
+            continue;
+        }
+
+        // Horizontal rules
+        if is_horizontal_rule(line_str) {
+            is_first_content_line = false;
+            let rule: String = "\u{2500}".repeat(width.saturating_sub(4));
+            lines.push(Line::from(Span::styled(
+                format!("  {rule}"),
+                Style::default().fg(Color::Gray),
+            )));
+            continue;
+        }
+
+        // Regular content line — render with prefix and inline markdown
+        let indent = if is_first_content_line { prefix } else { "  " };
+        is_first_content_line = false;
+        let mut spans = vec![Span::styled(indent.to_string(), base_style)];
+        spans.extend(parse_inline_markdown(line_str, base_style));
+        for wrapped_line in wrap_line(&spans, width, indent) {
+            lines.push(Line::from(wrapped_line));
+        }
+    }
+}
+
+/// Render a single tool block (collapsed or expanded).
+fn render_tool_block(block: &ToolBlock, lines: &mut Vec<Line<'static>>, width: usize) {
+    let (symbol, color) = match block.status {
+        ToolStatus::Running => ("\u{25B6}", Color::Yellow),
+        ToolStatus::Success => ("\u{2713}", Color::Green),
+        ToolStatus::Error => ("\u{2717}", Color::Red),
+    };
+
+    let expand_indicator = if block.is_expanded { "\u{25BC}" } else { "\u{25B6}" };
+
+    // Build header line: "  ✓ bash — cargo check (3 lines) ▸"
+    let header = if block.summary.is_empty() {
+        format!("  {symbol} {} {expand_indicator}", block.display_label)
+    } else {
+        format!("  {symbol} {} ({}) {expand_indicator}", block.display_label, block.summary)
+    };
+
+    let header_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let wrapped = wrap_text(&header, width, "");
+    for wline in wrapped {
+        lines.push(Line::from(Span::styled(wline, header_style)));
+    }
+
+    // If expanded, render the full output
+    if block.is_expanded && !block.full_output.is_empty() {
+        let output_lines: Vec<&str> = block.full_output.lines().collect();
+        let max_lines = 50;
+        let shown = output_lines.len().min(max_lines);
+        for line in &output_lines[..shown] {
+            let out_line = format!("    \u{257F} {line}");
+            let wrapped = wrap_text(&out_line, width, "");
+            for wline in wrapped {
+                lines.push(Line::from(Span::styled(
+                    wline,
+                    Style::default().fg(Color::Gray),
+                )));
+            }
+        }
+        if output_lines.len() > max_lines {
+            let remaining = output_lines.len() - max_lines;
+            lines.push(Line::from(Span::styled(
+                format!("    \u{2026} ({remaining} more lines)"),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
+}
+
 /// Parsed ATX heading info
 struct HeadingInfo {
     level: usize,
@@ -584,6 +978,19 @@ fn parse_blockquote(line: &str) -> Option<String> {
 
 /// Wrap plain text to fit within `width` columns. Returns Vec of strings.
 /// `continuation_indent` is prepended to continuation lines.
+/// Truncate a string to max_width characters, adding "…" if truncated.
+fn truncate_str(s: &str, max_width: usize) -> String {
+    let mut width = 0;
+    for (i, ch) in s.char_indices() {
+        let w = if ch.is_ascii() { 1 } else { 2 };
+        if width + w > max_width.saturating_sub(1) {
+            return format!("{}…", &s[..i]);
+        }
+        width += w;
+    }
+    s.to_string()
+}
+
 fn wrap_text(text: &str, width: usize, continuation_indent: &str) -> Vec<String> {
     if width == 0 || text.len() <= width {
         return vec![text.to_string()];
@@ -1266,13 +1673,23 @@ fn draw_todos(app: &AppState, area: Rect, buf: &mut Buffer) {
 
 fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     let is_slash = app.input.starts_with('/');
+    let line_count = app.input.lines().count().max(1);
+    let max_lines = (area.height.saturating_sub(2)) as usize;
+
+    let title = if line_count > 1 {
+        format!(" [{line_count}/{max_lines}] ")
+    } else {
+        String::new()
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if is_slash {
             Color::Magenta
         } else {
             Color::Green
-        }));
+        }))
+        .title(Span::styled(title, Style::default().fg(Color::DarkGray)));
 
     let inner = block.inner(area);
     block.render(area, buf);
@@ -1400,13 +1817,18 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
         })
         .unwrap_or_default();
 
-    // Left side: model and context usage with actual numbers.
+    // Left side: brand, model and context usage with actual numbers.
     let mut left = vec![
         Span::styled(
-            format!(" {} ", app.status.model),
+            " rusty",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" \u{2502} ", separator_style),
+        Span::styled(
+            format!("{} ", app.status.model),
             Style::default().fg(Color::Cyan),
         ),
-        Span::styled("|", separator_style),
+        Span::styled("\u{2502} ", separator_style),
         Span::styled(
             format!(
                 " ctx {}/{} ({}%) ",

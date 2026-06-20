@@ -3,6 +3,7 @@
 
 pub mod app;
  pub mod model_registry;
+pub mod sidebar;
 pub mod ui;
 
 use app::{AgentEvent, AppState, MessageRole};
@@ -95,6 +96,7 @@ async fn run_loop(
                         app.messages.push(app::ChatMessage {
                             role: MessageRole::User,
                             content: input.clone(),
+                            tool_blocks: vec![],
                         });
                         app.history.push(input.clone());
                         app.history_idx = None;
@@ -102,6 +104,7 @@ async fn run_loop(
                         app.cursor_pos = 0;
                         app.is_streaming = true;
                         app.streaming_text.clear();
+                        app.streaming_tool_blocks.clear();
                         app.scroll_anchor = None;
                         app.is_user_scrolled = false;
                         app.needs_redraw = true;

@@ -167,6 +167,7 @@ pub struct OaiStreamDelta {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OaiStreamToolCall {
+    #[serde(default)]
     pub index: usize,
     pub id: Option<String>,
     pub function: Option<OaiStreamFunction>,

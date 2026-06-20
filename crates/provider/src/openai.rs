@@ -330,9 +330,16 @@ impl LlmProvider for OpenAiProvider {
                                                 }
                                             }
 
+                                            // If no ID was provided (some providers omit it),
+                                            // generate a synthetic one based on index
+                                            let effective_id = match &tc.id {
+                                                Some(id) if !id.is_empty() => Some(id.clone()),
+                                                _ => Some(format!("call_{}", tc.index)),
+                                            };
+
                                             events.push(Ok(StreamEvent::ToolCallDelta {
                                                 index: tc.index,
-                                                id: tc.id.clone(),
+                                                id: effective_id,
                                                 name: tc.function.as_ref().and_then(|f| {
                                                     f.name.clone()
                                                 }),

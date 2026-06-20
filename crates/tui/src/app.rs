@@ -898,6 +898,8 @@ pub struct AppState {
     /// Working directory to display in the status bar.
     pub working_dir: Option<String>,
     pub streaming_text: String,
+    /// Tool blocks accumulated during the current streaming turn
+    pub streaming_tool_blocks: Vec<ToolBlock>,
     pub thinking_text: String,
     pub is_streaming: bool,
     pub is_thinking: bool,
@@ -915,6 +917,8 @@ pub struct AppState {
     pub settings_overlay: Option<SettingsState>,
     /// Tools currently executing — name -> start index in streaming_text
     pub pending_tools: Vec<PendingTool>,
+    /// Counter for generating unique tool block IDs
+    pub next_tool_id: usize,
     /// Whether we're waiting for clear confirmation
     pub clear_pending: bool,
     /// Whether we're in rename mode (waiting for new name)
@@ -935,6 +939,8 @@ pub struct AppState {
     pub pinned_todos: Option<String>,
     /// File picker state for @ file references
     pub file_picker: Option<FilePickerState>,
+    /// Sidebar state (file tree, tools, tasks)
+    pub sidebar: crate::sidebar::SidebarState,
     /// Timestamp of the last key event, used for paste detection
     last_key_time: Option<Instant>,
     /// Whether we're currently in paste mode (rapid input detected)
@@ -1037,9 +1043,55 @@ impl AutocompleteState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolStatus {
+    Running,
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolBlock {
+    pub id: usize,
+    pub name: String,
+    pub display_label: String,
+    pub status: ToolStatus,
+    pub summary: String,
+    pub full_output: String,
+    pub is_expanded: bool,
+}
+
+/// Layout mode based on terminal width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutMode {
+    /// >=120 cols: sidebar + chat
+    Full,
+    /// 80-119 cols: tab bar + chat
+    TabBar,
+    /// 60-79 cols: chat only
+    Compact,
+    /// <60 cols: chat only, minimal status
+    Minimal,
+}
+
+impl LayoutMode {
+    pub fn from_width(width: u16) -> Self {
+        if width >= 120 {
+            Self::Full
+        } else if width >= 80 {
+            Self::TabBar
+        } else if width >= 60 {
+            Self::Compact
+        } else {
+            Self::Minimal
+        }
+    }
+}
+
 pub struct ChatMessage {
     pub role: MessageRole,
     pub content: String,
+    pub tool_blocks: Vec<ToolBlock>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1072,6 +1124,7 @@ impl Default for AppState {
             messages: Vec::new(),
             status: StatusInfo::default(),
             streaming_text: String::new(),
+            streaming_tool_blocks: Vec::new(),
             thinking_text: String::new(),
             is_streaming: false,
             is_thinking: false,
@@ -1084,6 +1137,7 @@ impl Default for AppState {
             session_picker: None,
             settings_overlay: None,
             pending_tools: Vec::new(),
+            next_tool_id: 0,
             clear_pending: false,
             is_renaming: false,
             session_name: None,
@@ -1095,6 +1149,7 @@ impl Default for AppState {
             pinned_todos: None,
             working_dir: None,
             file_picker: None,
+            sidebar: crate::sidebar::SidebarState::default(),
             last_key_time: None,
             paste_mode: false,
             scroll_anchor: None,
@@ -1262,6 +1317,7 @@ impl AppState {
                     self.clear_pending = false;
                     self.messages.clear();
                     self.streaming_text.clear();
+                    self.streaming_tool_blocks.clear();
                     self.thinking_text.clear();
                     self.saved_thinking.clear();
                     self.thinking_line_count = 0;
@@ -1272,6 +1328,7 @@ impl AppState {
                     self.messages.push(ChatMessage {
                         role: MessageRole::System,
                         content: "__CLEAR__".to_string(),
+                        tool_blocks: vec![],
                     });
                 }
                 _ => {
@@ -1533,10 +1590,12 @@ impl AppState {
                         self.messages.push(ChatMessage {
                             role: MessageRole::System,
                             content: format!("Session renamed to: {name}"),
+                            tool_blocks: vec![],
                         });
                         self.messages.push(ChatMessage {
                             role: MessageRole::System,
                             content: format!("__RENAME__{name}"),
+                            tool_blocks: vec![],
                         });
                     }
                     self.input.clear();
@@ -1608,6 +1667,24 @@ impl AppState {
                 self.needs_redraw = true;
                 return;
             }
+            // Sidebar navigation when visible
+            KeyCode::Up | KeyCode::Char('k')
+                if self.sidebar.visible && !self.is_streaming && self.input.is_empty() => {
+                    self.sidebar.nav_up();
+                    self.needs_redraw = true;
+                    return;
+                }
+            KeyCode::Down | KeyCode::Char('j')
+                if self.sidebar.visible && !self.is_streaming && self.input.is_empty() => {
+                    self.sidebar.nav_down();
+                    self.needs_redraw = true;
+                    return;
+                }
+            KeyCode::Tab if self.sidebar.visible && self.input.is_empty() => {
+                self.sidebar.cycle_panel();
+                self.needs_redraw = true;
+                return;
+            }
             _ => {}
         }
         // Dismiss autocomplete on any other key if it's active (e.g. typing continues)
@@ -1636,6 +1713,44 @@ impl AppState {
                     self.thinking_expanded = !self.thinking_expanded;
                     self.needs_redraw = true;
                 }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    // Toggle all tool blocks expand/collapse
+                    self.confirming_exit = false;
+                    let any_collapsed = self.messages.iter().any(|m|
+                        m.tool_blocks.iter().any(|b| !b.is_expanded)
+                    );
+                    for msg in &mut self.messages {
+                        for block in &mut msg.tool_blocks {
+                            block.is_expanded = any_collapsed;
+                        }
+                    }
+                    // Also toggle streaming tool blocks
+                    for block in &mut self.streaming_tool_blocks {
+                        block.is_expanded = any_collapsed;
+                    }
+                    self.needs_redraw = true;
+                }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Toggle nearest tool block expand/collapse
+                self.confirming_exit = false;
+                self.toggle_nearest_tool_block();
+                self.needs_redraw = true;
+            }
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Toggle sidebar visibility
+                self.confirming_exit = false;
+                self.sidebar.toggle();
+                self.needs_redraw = true;
+            }
+            KeyCode::Char(']') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Cycle sidebar focus: Files -> Tools -> Tasks -> Chat
+                self.confirming_exit = false;
+                if self.sidebar.visible {
+                    self.sidebar.cycle_panel();
+                }
+                self.needs_redraw = true;
+            }
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL)
                 && self.input.is_empty() => {
                     self.should_quit = true;
@@ -2033,6 +2148,7 @@ impl AppState {
             self.messages.push(ChatMessage {
                 role: MessageRole::System,
                 content: format!("Queued: {}", text),
+                tool_blocks: vec![],
             });
             self.needs_redraw = true;
         }
@@ -2054,6 +2170,7 @@ impl AppState {
         // Clear the placeholder "..." when real thinking starts
         if !self.is_thinking && self.streaming_text == "..." {
             self.streaming_text.clear();
+            self.streaming_tool_blocks.clear();
         }
         self.is_thinking = true;
         self.thinking_text.push_str(text);
@@ -2062,9 +2179,11 @@ impl AppState {
 
     pub fn finish_streaming(&mut self) {
         if !self.streaming_text.is_empty() {
+            let tool_blocks = std::mem::take(&mut self.streaming_tool_blocks);
             self.messages.push(ChatMessage {
                 role: MessageRole::Assistant,
                 content: self.streaming_text.clone(),
+                tool_blocks,
             });
         }
         // Save any remaining thinking text
@@ -2073,6 +2192,7 @@ impl AppState {
             self.thinking_line_count = self.thinking_text.lines().count();
         }
         self.streaming_text.clear();
+        self.streaming_tool_blocks.clear();
         self.thinking_text.clear();
         self.pending_tools.clear();
         self.is_streaming = false;
@@ -2084,9 +2204,11 @@ impl AppState {
     pub fn push_error(&mut self, msg: &str) {
         // Flush any partial streaming content as an assistant message before the error
         if !self.streaming_text.is_empty() {
+            let tool_blocks = std::mem::take(&mut self.streaming_tool_blocks);
             self.messages.push(ChatMessage {
                 role: MessageRole::Assistant,
                 content: self.streaming_text.clone(),
+                tool_blocks,
             });
         }
         // Save any remaining thinking text so it remains accessible
@@ -2098,10 +2220,12 @@ impl AppState {
         self.messages.push(ChatMessage {
             role: MessageRole::System,
             content: format!("Error: {msg}"),
+            tool_blocks: vec![],
         });
 
         // Full cleanup of streaming state (mirrors finish_streaming)
         self.streaming_text.clear();
+        self.streaming_tool_blocks.clear();
         self.thinking_text.clear();
         self.pending_tools.clear();
         self.is_streaming = false;
@@ -2114,6 +2238,7 @@ impl AppState {
         self.messages.push(ChatMessage {
             role: MessageRole::System,
             content: msg.to_string(),
+            tool_blocks: vec![],
         });
         self.needs_redraw = true;
     }
@@ -2126,12 +2251,23 @@ impl AppState {
         }
         // Trailing newline ensures subsequent text deltas start on their own line
         self.streaming_text.push_str(&format!("  \u{25B6} {label}\n"));
+        let tool_id = self.next_tool_id;
+        self.next_tool_id += 1;
         self.pending_tools.push(PendingTool {
             name: name.to_string(),
             arguments: arguments.to_string(),
             line_start,
             output: None,
             is_error: false,
+        });
+        self.streaming_tool_blocks.push(ToolBlock {
+            id: tool_id,
+            name: name.to_string(),
+            display_label: label,
+            status: ToolStatus::Running,
+            summary: String::new(),
+            full_output: String::new(),
+            is_expanded: false,
         });
         self.needs_redraw = true;
     }
@@ -2145,6 +2281,18 @@ impl AppState {
         } else {
             format!("  {symbol} {label} \u{2014} {summary}\n")
         };
+
+        // Update the ToolBlock with finished status
+        if let Some(block) = self.streaming_tool_blocks.iter_mut().rev().find(|b| b.name == name && b.status == ToolStatus::Running) {
+            block.status = if is_error { ToolStatus::Error } else { ToolStatus::Success };
+            block.summary = summary.clone();
+            // Cap output at 10KB
+            if output.len() > 10240 {
+                block.full_output = format!("{}... (truncated)", &output[..10240]);
+            } else {
+                block.full_output = output.to_string();
+            }
+        }
 
         // Find and remove the pending tool entry
         if let Some(pos) = self.pending_tools.iter().position(|t| t.name == name) {
@@ -2179,6 +2327,23 @@ impl AppState {
         }
 
         self.needs_redraw = true;
+    }
+
+    /// Toggle expand/collapse of the last tool block in the most recent assistant message.
+    fn toggle_nearest_tool_block(&mut self) {
+        // Find the last assistant message with tool blocks
+        for msg in self.messages.iter_mut().rev() {
+            if msg.role == MessageRole::Assistant && !msg.tool_blocks.is_empty() {
+                if let Some(block) = msg.tool_blocks.last_mut() {
+                    block.is_expanded = !block.is_expanded;
+                }
+                return;
+            }
+        }
+        // Also check streaming tool blocks
+        if let Some(block) = self.streaming_tool_blocks.last_mut() {
+            block.is_expanded = !block.is_expanded;
+        }
     }
 
     /// Generate a unique paste placeholder ID
