@@ -542,6 +542,10 @@ async fn main() -> Result<()> {
     )
     .await;
 
+    // Generate session ID early so NoteTool can use it for its file path.
+    // For resumed sessions this comes from --resume; for new sessions we pre-generate it.
+    let session_id = args.resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
     // Build tools (including agent tool, memory tool, plan tool, and background task tools)
     let mut tools: Vec<Box<dyn Tool>> = all_tools();
     let memory_tool = rusty_tools::memory::MemoryTool::new(project_memory);
@@ -549,6 +553,11 @@ async fn main() -> Result<()> {
 
     let plan_tool = rusty_tools::todowrite::TodoWriteTool::new(plan.clone());
     tools.push(Box::new(plan_tool));
+
+    // Note scratchpad tool — session-scoped file for recording observations
+    let notes_path = rusty_core::ConversationSession::notes_path(&sessions_dir, &session_id);
+    let note_tool = rusty_tools::note::NoteTool::new(notes_path.clone());
+    tools.push(Box::new(note_tool));
 
     // Background manager for tracking fire-and-forget subagents
     let background_manager = Arc::new(rusty_tools::background::BackgroundManager::new());
@@ -575,8 +584,9 @@ async fn main() -> Result<()> {
     info!("Working directory: {}", working_dir.display());
 
     // Load or create session
-    let mut agent = if let Some(session_id) = &args.resume {
-        if let Some(session) = rusty_core::ConversationSession::load(&sessions_dir, session_id).await? {
+    let checkpoint_path = rusty_core::ConversationSession::checkpoint_path(&sessions_dir, &session_id);
+    let mut agent = if args.resume.is_some() {
+        if let Some(session) = rusty_core::ConversationSession::load(&sessions_dir, &session_id).await? {
             info!("Resumed session: {}", session.id);
             let mut a = Agent::new(
                 provider.clone(),
@@ -611,6 +621,8 @@ async fn main() -> Result<()> {
     };
     agent.set_permission_mode(config.permission_mode);
     agent.set_plan(plan.clone());
+    agent.set_notes_path(notes_path);
+    agent.set_checkpoint_path(checkpoint_path);
 
     // Run mode
     if let Some(prompt) = args.prompt {
@@ -627,13 +639,13 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir, keymap, plan.clone()).await?;
+        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir, keymap, plan.clone(), session_id).await?;
         return Ok(());
     }
 
     // Save session (headless modes only — TUI saves internally)
     let session = rusty_core::ConversationSession {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: session_id,
         name: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -990,6 +1002,7 @@ async fn run_tui(
     sessions_dir: &Path,
     keymap: Option<keymap_lib::KeyMap>,
     plan: Arc<tokio::sync::Mutex<Plan>>,
+    session_id: String,
 ) -> Result<()> {
     use rusty_core::Message;
 
@@ -1545,7 +1558,7 @@ async fn run_tui(
     let messages = msg_return_rx.await.unwrap_or_default();
 
     let session = rusty_core::ConversationSession {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: session_id,
         name: tui_app.session_name.clone(),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),

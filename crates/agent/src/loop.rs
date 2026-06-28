@@ -116,6 +116,13 @@ pub struct Agent {
     /// Turns since the last todowrite tool call. Used to inject a gentle
     /// reminder when the model has not updated its task list recently.
     turns_since_todowrite: u32,
+    /// Highest checkpoint tier executed in the current context growth cycle.
+    /// Resets after tier 3 (full compaction) shrinks the context.
+    last_checkpoint_tier: crate::compact::CheckpointTier,
+    /// Path to the session-scoped notes scratchpad file.
+    notes_path: Option<PathBuf>,
+    /// Path to the session-scoped checkpoint file.
+    checkpoint_path: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -165,6 +172,9 @@ impl Agent {
             file_reads_this_run: 0,
             dedup_keys_this_turn: HashSet::new(),
             turns_since_todowrite: 0,
+            last_checkpoint_tier: crate::compact::CheckpointTier::None,
+            notes_path: None,
+            checkpoint_path: None,
         }
     }
 
@@ -195,6 +205,16 @@ impl Agent {
     /// Set the persistent plan for this agent.
     pub fn set_plan(&mut self, plan: Arc<tokio::sync::Mutex<Plan>>) {
         self.plan = Some(plan);
+    }
+
+    /// Set the path to the session-scoped notes scratchpad file.
+    pub fn set_notes_path(&mut self, path: PathBuf) {
+        self.notes_path = Some(path);
+    }
+
+    /// Set the path to the session-scoped checkpoint file.
+    pub fn set_checkpoint_path(&mut self, path: PathBuf) {
+        self.checkpoint_path = Some(path);
     }
 
     /// Refresh the system prompt. The plan is no longer injected here —
@@ -264,9 +284,13 @@ impl Agent {
             &*self.provider,
             &self.system_prompt,
             plan_text.as_deref(),
+            self.notes_path.as_deref(),
+            self.checkpoint_path.as_deref(),
         )
         .await;
         self.messages = msgs;
+        // Reset checkpoint tier after forced compaction
+        self.last_checkpoint_tier = crate::compact::CheckpointTier::None;
         result
     }
 
@@ -514,8 +538,24 @@ impl Agent {
             } else {
                 None
             };
-            let did_compact = maybe_compact(&mut self.messages, &*self.provider, &self.system_prompt, context_window, plan_text.as_deref()).await?;
-            if did_compact {
+            let new_tier = maybe_compact(
+                &mut self.messages,
+                &*self.provider,
+                &self.system_prompt,
+                context_window,
+                plan_text.as_deref(),
+                self.last_checkpoint_tier,
+                self.notes_path.as_deref(),
+                self.checkpoint_path.as_deref(),
+            ).await?;
+            if new_tier.as_u8() > self.last_checkpoint_tier.as_u8() {
+                self.last_checkpoint_tier = new_tier;
+                // After full compaction, reset tier so the cycle can start fresh
+                if new_tier == crate::compact::CheckpointTier::Compacted {
+                    self.last_checkpoint_tier = crate::compact::CheckpointTier::None;
+                }
+            }
+            if new_tier == crate::compact::CheckpointTier::Compacted {
                 self.messages.push(Message::user(
                     "[System: Conversation history was automatically compacted to save context space. \
                      Key decisions and code changes are preserved in the summary above.]"

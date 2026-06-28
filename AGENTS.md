@@ -51,7 +51,7 @@ cli → agent → provider
 | `permissions.rs` | `PermissionMode` (Default/AcceptEdits/Bypass/Plan), `PermissionLevel` (None/ReadOnly/Write/Execute), `PermissionRequest`/`PermissionDecision`, `PermissionChoice` (AllowOnce/AllowSession/AllowAlways/Deny) user-facing prompt options, bash command classifier (`classify_bash_command`), `build_tool_description`, `make_allow_key`. |
 | `error.rs` | `RustyError` enum: Api, ApiStatus, Auth, PermissionDenied, Tool, Io, Json, Http, RateLimit (with retry_after), ContextWindowExceeded, MaxTokensReached, Cancelled, Config, Other. Helpers: `is_retryable()`, `is_context_limit()`. |
 | `context.rs` | `build_system_context()` (platform info, working directory, git status, recent commits, sandbox notice). `build_user_context()` (discovers AGENTS.md/CLAUDE.md/RUSTY.md files walking up from working dir to root, plus `~/.rusty/` global files, includes current date). Context files capped at 30KB (`CONTEXT_FILES_MAX_BYTES`). Content sanitised: `<` and `>` escaped to fullwidth equivalents to prevent XML tag breakout from the `<environment_context>` wrapper. |
-| `history.rs` | `ConversationSession` - save/load/list sessions in `~/.rusty/sessions/` as JSON files with id, messages, model, timestamps. |
+| `history.rs` | `ConversationSession` - save/load/list sessions in `~/.rusty/sessions/` as JSON files with id, messages, model, timestamps. `notes_path()` and `checkpoint_path()` helpers for sidecar files. |
 | `cost.rs` | `CostTracker` - Thread-safe token usage tracking (input/output totals, total thinking tokens). Estimates cost from configurable per-token pricing. Available via `/cost` slash command. |
 | `memory.rs` | `ProjectMemory` - per-project persistent memory storage in `~/.rusty/memory/{project_id}.json`. Project ID derived from git root slug. CRUD operations: save, search (substring), list, delete. 100-entry cap with FIFO eviction. Multi-layer content sanitisation: control character stripping, length truncation (2000 chars), XML tag neutralisation, regex injection pattern matching. |
 
@@ -79,6 +79,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `glob.rs` | `glob` | ReadOnly | File pattern matching. |
 | `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via reqwest (30s timeout). Configurable max_length (default 10000 chars). Comprehensive SSRF protection (see Security section). |
 | `todowrite.rs` | `todowrite` | None | Structured task list management. Accepts array of todo items with content, status (pending/in_progress/completed/cancelled), and priority (high/medium/low). Renders grouped by priority with status indicators. Persists across conversation. |
+| `note.rs` | `note` | None | Session-scoped scratchpad for recording observations. Appends to `~/.rusty/sessions/{id}.notes.md`. Content is processed during checkpoint extraction and cleared after use. |
 | `agent.rs` | `agent` | None | Spawn sub-agents via `SubAgentFn` callback. Accepts `task` (required) and `context` (optional). |
 | `memory.rs` | `memory` | None | Per-project persistent memory. Actions: `save`, `search`, `list`, `delete`. Backed by `ProjectMemory` in core (`~/.rusty/memory/{project_id}.json`). Capped at 100 entries per project with FIFO eviction. Content sanitised on input and output to prevent prompt injection. |
 
@@ -93,7 +94,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | File | Purpose |
 |---|---|
 | `loop.rs` | `Agent` struct - core orchestrator. Holds provider, tools, config, message history, permission state. `run()` method: send messages, stream response, accumulate text + tool calls, execute tools concurrently via `JoinSet`, repeat until done/max turns/cancellation. Supports `cancel()` via `AtomicBool`. |
-| `compact.rs` | Auto-compaction: when messages exceed ~80k tokens or 40 messages, summarizes older messages (keeping last 10) via an LLM call. |
+| `compact.rs` | Multi-tier auto-compaction: Tier 1 (25% context) micro-compacts old tool results, Tier 2 (50%) extracts structured checkpoint to `checkpoint.md`, Tier 3 (75%) summarizes old messages via LLM. Integrates with notes scratchpad. |
 | `lib.rs` | `spawn_subagent()` (same-process tokio task, BypassPermissions), `make_agent_tool()` (constructs `AgentTool` with spawn callback), `build_system_prompt()` (assembles system prompt with tool descriptions, permissions, platform info, date, optional plan-with-tasks instructions). |
 
 **Agent loop flow:**
@@ -210,9 +211,11 @@ When given multi-step work, follow this discipline:
 
 5. **Concurrent tool execution**: Multiple tool calls within a single LLM response are executed concurrently via `tokio::JoinSet`. Each tool call runs as an independent spawned task, with results collected and returned in call-order once all complete. This significantly reduces wall-clock time when the model issues several independent calls.
 
-6. **Auto-compaction**: Long conversations are automatically summarized (keeping last 10 messages) to stay within context limits (~80k tokens or 40 messages threshold).
+6. **Auto-compaction**: Long conversations are automatically managed via a three-tier system: Tier 1 (25% context) replaces old tool results with placeholders, Tier 2 (50%) extracts structured checkpoint to `checkpoint.md` using an LLM call, Tier 3 (75%) summarizes old messages (keeping last 10). Notes scratchpad content is incorporated into checkpoints and summaries.
 
-7. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume` or `/resume`.
+7. **Notes scratchpad**: The `note` tool writes observations to a session-scoped `notes.md` file. Content is processed during checkpoint extraction and cleared, providing a low-friction way to persist context that would otherwise be lost during compaction.
+
+8. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume` or `/resume`. Sidecar files: `{id}.notes.md` (scratchpad) and `{id}.checkpoint.md` (structured state) are cleaned up with the session.
 
 8. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory.
 
@@ -480,5 +483,5 @@ TUI Display ← Agent Events ← Tool Execution ← Tool Calls
 ---
 
 *Last updated: June 2026*
-*Version: 0.1.5*
+*Version: 0.1.9*
 *Rust edition: 2021*

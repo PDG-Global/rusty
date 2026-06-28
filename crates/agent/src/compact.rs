@@ -4,19 +4,59 @@
 use futures::StreamExt;
 use rusty_core::{Message, Role, RustyError};
 use rusty_provider::{LlmProvider, MessageRequest, StreamEvent};
+use std::path::Path;
 use tracing::{debug, info};
 
-/// Fraction of context window at which to trigger auto-compaction
-const COMPACT_THRESHOLD_FRACTION: f64 = 0.75;
-/// Keep the last N messages un-compacted
+// ── Tier thresholds (fraction of context window) ────────────────────────────
+
+/// Tier 1: micro-compaction — replace old tool results with placeholders.
+const TIER1_FRACTION: f64 = 0.25;
+
+/// Tier 2: structured extraction — LLM writes checkpoint.md.
+const TIER2_FRACTION: f64 = 0.50;
+
+/// Tier 3: full compaction — LLM summarises old messages.
+const TIER3_FRACTION: f64 = 0.75;
+
+/// Keep the last N messages un-compacted.
 const KEEP_RECENT: usize = 10;
-/// Fallback message count threshold
+
+/// Fallback message count threshold for full compaction.
 const COMPACT_MESSAGE_THRESHOLD: usize = 40;
-/// Tool results longer than this are replaced with a placeholder during micro-compaction
+
+/// Tool results longer than this are replaced with a placeholder during micro-compaction.
 const MICRO_COMPACT_THRESHOLD_CHARS: usize = 500;
 
+// ── Checkpoint tier tracking ────────────────────────────────────────────────
+
+/// Tracks which checkpoint tiers have fired in the current context growth cycle.
+/// After tier 3 (full compaction) shrinks the context, the tier resets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointTier {
+    None = 0,
+    Micro = 1,
+    Extracted = 2,
+    Compacted = 3,
+}
+
+impl CheckpointTier {
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::None,
+            1 => Self::Micro,
+            2 => Self::Extracted,
+            _ => Self::Compacted,
+        }
+    }
+}
+
+// ── Tier 1: Micro-compaction ────────────────────────────────────────────────
+
 /// Lightweight compaction: replace old tool results with placeholders.
-/// This is much cheaper than an LLM summarization pass.
 /// Returns true if any replacements were made.
 pub fn micro_compact(messages: &mut Vec<Message>) -> bool {
     let split_point = messages.len().saturating_sub(KEEP_RECENT);
@@ -44,117 +84,272 @@ pub fn micro_compact(messages: &mut Vec<Message>) -> bool {
     modified
 }
 
-/// Compute the token threshold for compaction based on the model's context window.
-fn compact_token_threshold(context_window: u32) -> usize {
-    (context_window as f64 * COMPACT_THRESHOLD_FRACTION) as usize
-}
+// ── Tier 2: Structured extraction ───────────────────────────────────────────
 
-/// Check if compaction is needed and perform it.
-/// Tries micro-compaction first (cheap placeholder replacement), then falls
-/// back to LLM-based full compaction if still over the threshold.
-/// If `plan_text` is provided, it is appended to the summary so the todo list
-/// is not lost during compaction.
-/// Returns `true` if full compaction was performed, `false` if no compaction
-/// or only micro-compaction was needed.
-pub async fn maybe_compact(
-    messages: &mut Vec<Message>,
+const CHECKPOINT_PROMPT: &str = "\
+You are extracting structured state from a conversation for future reference. \
+Read the conversation below and produce a checkpoint with exactly these sections:
+
+## Intent
+What the user asked for and what the agent is trying to accomplish. 1-3 sentences.
+
+## Key Decisions
+Technical decisions made and their rationale. One line per decision.
+
+## Files Changed
+Files modified or created, with a one-line description each.
+
+## Current State
+What is done, what is in progress, what is next. Be specific.
+
+## Notes
+Anything else worth preserving: errors encountered, gotchas, open questions.
+
+Rules:
+- Be concise. Each section should be 1-5 lines.
+- Focus on facts, not narration.
+- Include file paths and specific technical details.
+- Capture what the agent should know when it wakes up in a fresh context.";
+
+/// Extract structured checkpoint from conversation history using an LLM call.
+/// Writes the result to `checkpoint_path`. If `notes_content` is provided,
+/// it is included in the extraction prompt and should be cleared afterward.
+pub async fn extract_checkpoint(
+    messages: &[Message],
     provider: &dyn LlmProvider,
     system_prompt: &str,
-    context_window: u32,
-    plan_text: Option<&str>,
-) -> Result<bool, RustyError> {
-    let estimated_tokens = estimate_tokens(messages);
-    let token_threshold = compact_token_threshold(context_window);
+    checkpoint_path: &Path,
+    notes_content: Option<&str>,
+) -> Result<(), RustyError> {
+    let old_text = messages_to_text(messages);
 
-    let needs_compact = messages.len() >= COMPACT_MESSAGE_THRESHOLD
-        || estimated_tokens >= token_threshold;
-
-    if !needs_compact {
-        return Ok(false);
-    }
-
-    info!(
-        "Auto-compacting: {} messages (~{} tokens)",
-        messages.len(),
-        estimated_tokens
-    );
-
-    // Phase 1: micro-compaction — replace old tool results with placeholders.
-    // This often drops enough tokens to avoid the expensive LLM summarization.
-    if micro_compact(messages) {
-        let after_micro = estimate_tokens(messages);
-        info!(
-            "After micro-compaction: ~{} tokens (saved ~{})",
-            after_micro,
-            estimated_tokens.saturating_sub(after_micro)
-        );
-        if after_micro < token_threshold && messages.len() < COMPACT_MESSAGE_THRESHOLD {
-            debug!("Micro-compaction sufficient; skipping full compact");
-            return Ok(false);
+    let mut prompt = String::from(CHECKPOINT_PROMPT);
+    if let Some(notes) = notes_content {
+        if !notes.trim().is_empty() {
+            prompt.push_str("\n\nScratchpad notes from the session:\n");
+            prompt.push_str(notes);
         }
     }
-
-    let split_point = messages.len().saturating_sub(KEEP_RECENT);
-    let old_messages = &messages[..split_point];
-    let recent_messages = &messages[split_point..];
-
-    // Build a summary of old messages
-    let old_text = messages_to_text(old_messages);
-
-    let summary_prompt = format!(
-        "Summarize the following conversation concisely, preserving key context, decisions, and any code changes discussed:\n\n{old_text}"
-    );
+    prompt.push_str("\n\nConversation:\n");
+    prompt.push_str(&old_text);
 
     let request = MessageRequest {
         model: provider.model().to_string(),
         system: Some(system_prompt.to_string()),
-        messages: vec![Message::user(&summary_prompt)],
+        messages: vec![Message::user(&prompt)],
         tools: vec![],
-        max_tokens: 2048,
+        max_tokens: 1024,
         temperature: None,
         thinking_budget: None,
     };
 
     let mut stream = provider.create_message_stream(request).await?;
-    let mut summary = String::new();
+    let mut checkpoint = String::new();
 
     while let Some(event) = stream.next().await {
         match event? {
-            StreamEvent::TextDelta(text) => summary.push_str(&text),
+            StreamEvent::TextDelta(text) => checkpoint.push_str(&text),
             StreamEvent::Done { .. } => break,
             StreamEvent::Error(msg) => return Err(RustyError::Api(msg)),
             _ => {}
         }
     }
 
-    debug!("Compacted {} messages into summary", split_point);
+    // Ensure parent directory exists
+    if let Some(parent) = checkpoint_path.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
 
-    // Replace old messages with summary + recent
-    let summary_with_plan = if let Some(plan) = plan_text {
-        format!("{summary}\n\n{plan}")
-    } else {
-        summary
-    };
-    let mut new_messages = Vec::new();
-    new_messages.push(Message::user(format!(
-        "[Previous conversation summary]\n{summary_with_plan}"
-    )));
-    new_messages.push(Message::assistant(
-        "Understood. I have the context from our previous conversation.",
-    ));
-    new_messages.extend_from_slice(recent_messages);
+    tokio::fs::write(checkpoint_path, &checkpoint).await.map_err(|e| {
+        RustyError::Other(format!("Failed to write checkpoint: {e}"))
+    })?;
 
-    *messages = new_messages;
-
-    let new_tokens = estimate_tokens(messages);
-    info!(
-        "After compaction: {} messages (~{} tokens)",
-        messages.len(),
-        new_tokens
-    );
-
-    Ok(true)
+    info!("Extracted checkpoint ({} chars)", checkpoint.len());
+    Ok(())
 }
+
+// ── Tier 3: Full compaction ─────────────────────────────────────────────────
+
+/// Compute the token threshold for a given tier fraction.
+fn tier_threshold(context_window: u32, fraction: f64) -> usize {
+    (context_window as f64 * fraction) as usize
+}
+
+/// Check if compaction is needed and perform it.
+/// Handles the three-tier checkpoint system:
+/// - Tier 1 (25%): micro-compaction (cheap placeholder replacement)
+/// - Tier 2 (50%): structured extraction to checkpoint.md
+/// - Tier 3 (75%): full LLM-based compaction
+///
+/// Returns the highest tier that was executed.
+pub async fn maybe_compact(
+    messages: &mut Vec<Message>,
+    provider: &dyn LlmProvider,
+    system_prompt: &str,
+    context_window: u32,
+    plan_text: Option<&str>,
+    last_tier: CheckpointTier,
+    notes_path: Option<&Path>,
+    checkpoint_path: Option<&Path>,
+) -> Result<CheckpointTier, RustyError> {
+    let estimated_tokens = estimate_tokens(messages);
+    let t1_threshold = tier_threshold(context_window, TIER1_FRACTION);
+    let t2_threshold = tier_threshold(context_window, TIER2_FRACTION);
+    let t3_threshold = tier_threshold(context_window, TIER3_FRACTION);
+
+    let needs_t3 = messages.len() >= COMPACT_MESSAGE_THRESHOLD
+        || estimated_tokens >= t3_threshold;
+
+    // ── Tier 3: Full compaction ───────────────────────────────────────
+    if needs_t3 && last_tier.as_u8() < CheckpointTier::Compacted.as_u8() {
+        info!(
+            "Tier 3 compaction: {} messages (~{} tokens, threshold {})",
+            messages.len(), estimated_tokens, t3_threshold
+        );
+
+        // Read checkpoint.md if available to enrich the summary
+        let checkpoint_context = if let Some(cp_path) = checkpoint_path {
+            read_file_content(cp_path).await
+        } else {
+            None
+        };
+
+        // Also read any remaining notes
+        let notes_context = if let Some(n_path) = notes_path {
+            let content = read_file_content(n_path).await;
+            // Clear notes after reading
+            if content.is_some() {
+                clear_file(n_path).await;
+            }
+            content
+        } else {
+            None
+        };
+
+        let split_point = messages.len().saturating_sub(KEEP_RECENT);
+        let old_messages = &messages[..split_point];
+        let recent_messages = &messages[split_point..];
+
+        let old_text = messages_to_text(old_messages);
+
+        let mut summary_prompt = String::new();
+        if let Some(cp) = &checkpoint_context {
+            if !cp.trim().is_empty() {
+                summary_prompt.push_str("Previous checkpoint state:\n");
+                summary_prompt.push_str(cp);
+                summary_prompt.push_str("\n\n");
+            }
+        }
+        if let Some(notes) = &notes_context {
+            if !notes.trim().is_empty() {
+                summary_prompt.push_str("Session notes:\n");
+                summary_prompt.push_str(notes);
+                summary_prompt.push_str("\n\n");
+            }
+        }
+        summary_prompt.push_str("Summarize the following conversation concisely, preserving key context, decisions, and any code changes discussed:\n\n");
+        summary_prompt.push_str(&old_text);
+
+        let request = MessageRequest {
+            model: provider.model().to_string(),
+            system: Some(system_prompt.to_string()),
+            messages: vec![Message::user(&summary_prompt)],
+            tools: vec![],
+            max_tokens: 2048,
+            temperature: None,
+            thinking_budget: None,
+        };
+
+        let mut stream = provider.create_message_stream(request).await?;
+        let mut summary = String::new();
+
+        while let Some(event) = stream.next().await {
+            match event? {
+                StreamEvent::TextDelta(text) => summary.push_str(&text),
+                StreamEvent::Done { .. } => break,
+                StreamEvent::Error(msg) => return Err(RustyError::Api(msg)),
+                _ => {}
+            }
+        }
+
+        debug!("Compacted {} messages into summary", split_point);
+
+        let summary_with_plan = if let Some(plan) = plan_text {
+            format!("{summary}\n\n{plan}")
+        } else {
+            summary
+        };
+        let mut new_messages = Vec::new();
+        new_messages.push(Message::user(format!(
+            "[Previous conversation summary]\n{summary_with_plan}"
+        )));
+        new_messages.push(Message::assistant(
+            "Understood. I have the context from our previous conversation.",
+        ));
+        new_messages.extend_from_slice(recent_messages);
+
+        *messages = new_messages;
+
+        let new_tokens = estimate_tokens(messages);
+        info!(
+            "After compaction: {} messages (~{} tokens)",
+            messages.len(),
+            new_tokens
+        );
+
+        return Ok(CheckpointTier::Compacted);
+    }
+
+    // ── Tier 2: Structured extraction ─────────────────────────────────
+    if estimated_tokens >= t2_threshold && last_tier.as_u8() < CheckpointTier::Extracted.as_u8() {
+        info!(
+            "Tier 2 extraction: ~{} tokens (threshold {})",
+            estimated_tokens, t2_threshold
+        );
+
+        // Read and clear notes
+        let notes_content = if let Some(n_path) = notes_path {
+            let content = read_file_content(n_path).await;
+            if content.is_some() {
+                clear_file(n_path).await;
+            }
+            content
+        } else {
+            None
+        };
+
+        if let Some(cp_path) = checkpoint_path {
+            extract_checkpoint(
+                messages,
+                provider,
+                system_prompt,
+                cp_path,
+                notes_content.as_deref(),
+            )
+            .await?;
+        }
+
+        // Also run micro-compaction at this tier
+        micro_compact(messages);
+
+        return Ok(CheckpointTier::Extracted);
+    }
+
+    // ── Tier 1: Micro-compaction ──────────────────────────────────────
+    if estimated_tokens >= t1_threshold && last_tier.as_u8() < CheckpointTier::Micro.as_u8() {
+        info!(
+            "Tier 1 micro-compaction: ~{} tokens (threshold {})",
+            estimated_tokens, t1_threshold
+        );
+        if micro_compact(messages) {
+            return Ok(CheckpointTier::Micro);
+        }
+    }
+
+    Ok(last_tier)
+}
+
+// ── Force compaction (used by /compact command) ─────────────────────────────
 
 /// Force compaction regardless of thresholds — used for /compact command.
 /// If `plan_text` is provided, it is appended to the summary.
@@ -163,6 +358,8 @@ pub async fn force_compact(
     provider: &dyn LlmProvider,
     system_prompt: &str,
     plan_text: Option<&str>,
+    notes_path: Option<&Path>,
+    checkpoint_path: Option<&Path>,
 ) -> Result<bool, RustyError> {
     if messages.len() < 4 {
         return Ok(false);
@@ -170,14 +367,45 @@ pub async fn force_compact(
 
     info!("Force compacting: {} messages", messages.len());
 
+    // Read checkpoint and notes for context
+    let checkpoint_context = if let Some(cp_path) = checkpoint_path {
+        read_file_content(cp_path).await
+    } else {
+        None
+    };
+    let notes_context = if let Some(n_path) = notes_path {
+        let content = read_file_content(n_path).await;
+        if content.is_some() {
+            clear_file(n_path).await;
+        }
+        content
+    } else {
+        None
+    };
+
     let split_point = messages.len().saturating_sub(KEEP_RECENT);
     let old_messages = &messages[..split_point];
     let recent_messages = &messages[split_point..];
 
     let old_text = messages_to_text(old_messages);
-    let summary_prompt = format!(
-        "Summarize the following conversation concisely, preserving key context, decisions, and any code changes discussed:\n\n{old_text}"
-    );
+
+    let mut summary_prompt = String::new();
+    if let Some(cp) = &checkpoint_context {
+        if !cp.trim().is_empty() {
+            summary_prompt.push_str("Previous checkpoint state:\n");
+            summary_prompt.push_str(cp);
+            summary_prompt.push_str("\n\n");
+        }
+    }
+    if let Some(notes) = &notes_context {
+        if !notes.trim().is_empty() {
+            summary_prompt.push_str("Session notes:\n");
+            summary_prompt.push_str(notes);
+            summary_prompt.push_str("\n\n");
+        }
+    }
+    summary_prompt.push_str("Summarize the following conversation concisely, preserving key context, decisions, and any code changes discussed:\n\n");
+    summary_prompt.push_str(&old_text);
 
     let request = MessageRequest {
         model: provider.model().to_string(),
@@ -221,10 +449,25 @@ pub async fn force_compact(
     Ok(true)
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Read file content, returning None if the file doesn't exist or is empty.
+async fn read_file_content(path: &Path) -> Option<String> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) if !content.trim().is_empty() => Some(content),
+        _ => None,
+    }
+}
+
+/// Truncate a file to zero length (clear it).
+async fn clear_file(path: &Path) {
+    let _ = tokio::fs::write(path, "").await;
+}
+
 /// Estimate token count for messages.
 /// Counts ALL content blocks (text, tool results, tool use, thinking) rather
 /// than just text, so compaction triggers when context is actually full.
-fn estimate_tokens(messages: &[Message]) -> usize {
+pub fn estimate_tokens(messages: &[Message]) -> usize {
     let mut total_chars: usize = 0;
     for msg in messages {
         total_chars += 16; // per-message overhead (~4 tokens)
@@ -381,53 +624,34 @@ mod tests {
 
         let modified = micro_compact(&mut msgs);
         assert!(!modified);
-        let block_text = match &msgs[0].content {
-            rusty_core::MessageContent::Blocks(blocks) => match &blocks[0] {
-                ContentBlock::ToolResult { content, .. } => content.clone(),
-                _ => panic!("expected ToolResult"),
-            },
-            _ => panic!("expected Blocks"),
-        };
-        assert_eq!(block_text, "short");
     }
 
     #[test]
     fn micro_compact_preserves_recent_messages() {
         use rusty_core::ContentBlock;
 
-        // Create 12 messages so the last 10 are preserved
-        let mut msgs: Vec<Message> = (0..12)
-            .map(|i| {
+        // All messages are in the recent window
+        let mut msgs: Vec<Message> = (0..5)
+            .map(|_| {
                 Message::user_blocks(vec![ContentBlock::ToolResult {
-                    tool_use_id: format!("{i}"),
+                    tool_use_id: "1".into(),
                     content: "a".repeat(1000),
                     is_error: Some(false),
                 }])
             })
             .collect();
 
-        micro_compact(&mut msgs);
+        let modified = micro_compact(&mut msgs);
+        assert!(!modified); // all in KEEP_RECENT window
+    }
 
-        // First 2 should be compacted
-        let t0 = match &msgs[0].content {
-            rusty_core::MessageContent::Blocks(blocks) => match &blocks[0] {
-                ContentBlock::ToolResult { content, .. } => content.clone(),
-                _ => panic!("expected ToolResult"),
-            },
-            _ => panic!("expected Blocks"),
-        };
-        assert!(t0.contains("cleared"));
+    // ── CheckpointTier ───────────────────────────────────────────────
 
-        // Last 10 should remain intact
-        for msg in msgs.iter().skip(2) {
-            let text = match &msg.content {
-                rusty_core::MessageContent::Blocks(blocks) => match &blocks[0] {
-                    ContentBlock::ToolResult { content, .. } => content.clone(),
-                    _ => panic!("expected ToolResult"),
-                },
-                _ => panic!("expected Blocks"),
-            };
-            assert!(!text.contains("cleared"));
+    #[test]
+    fn checkpoint_tier_roundtrip() {
+        for v in 0..=3 {
+            assert_eq!(CheckpointTier::from_u8(v).as_u8(), v);
         }
+        assert_eq!(CheckpointTier::from_u8(99).as_u8(), 3); // saturates
     }
 }

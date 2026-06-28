@@ -331,8 +331,11 @@ impl LlmProvider for OpenAiProvider {
                                             }
 
                                             // If no ID was provided (some providers omit it),
-                                            // generate a synthetic one based on index
-                                            let effective_id = match &tc.id {
+                                            // generate a synthetic one based on index.
+                                            // Use existing.id (accumulated) rather than tc.id
+                                            // (this delta) so we don't overwrite a real ID
+                                            // from an earlier delta with a synthetic one.
+                                            let effective_id = match &existing.id {
                                                 Some(id) if !id.is_empty() => Some(id.clone()),
                                                 _ => Some(format!("call_{}", tc.index)),
                                             };

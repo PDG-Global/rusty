@@ -11,6 +11,7 @@ pub mod file_write;
 pub mod glob;
 pub mod grep;
 pub mod memory;
+pub mod note;
 pub mod plan_mode;
 pub mod task_output;
 pub mod task_stop;

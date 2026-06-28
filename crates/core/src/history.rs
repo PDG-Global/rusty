@@ -47,6 +47,16 @@ impl ConversationSession {
         sessions_dir.join(format!("{id}.json"))
     }
 
+    /// Path to the session-scoped notes scratchpad file.
+    pub fn notes_path(sessions_dir: &Path, id: &str) -> PathBuf {
+        sessions_dir.join(format!("{id}.notes.md"))
+    }
+
+    /// Path to the session-scoped checkpoint file for incremental extraction.
+    pub fn checkpoint_path(sessions_dir: &Path, id: &str) -> PathBuf {
+        sessions_dir.join(format!("{id}.checkpoint.md"))
+    }
+
     pub async fn save(&self, sessions_dir: &Path) -> anyhow::Result<()> {
         let path = Self::session_path(sessions_dir, &self.id);
         let content = serde_json::to_vec_pretty(self)?;
@@ -121,6 +131,11 @@ impl ConversationSession {
             let over_cap = kept >= MAX_SESSIONS_PER_PROJECT;
             if expired || over_cap {
                 let _ = tokio::fs::remove_file(path).await;
+                // Also clean up sidecar files (notes, checkpoint)
+                let notes = Self::notes_path(path.parent().unwrap_or(sessions_dir), &session.id);
+                let _ = tokio::fs::remove_file(notes).await;
+                let checkpoint = Self::checkpoint_path(path.parent().unwrap_or(sessions_dir), &session.id);
+                let _ = tokio::fs::remove_file(checkpoint).await;
             } else {
                 kept += 1;
             }
