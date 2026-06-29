@@ -112,8 +112,8 @@ pub fn default_model_list() -> Vec<ModelEntry> {
         ModelEntry {
             group: "Zhipu GLM".into(),
             name: "zhipu-global".into(),
-            provider: ProviderType::OpenAI,
-            api_base: "https://open.bigmodel.cn/api/paas/v4/".into(),
+            provider: ProviderType::Anthropic,
+            api_base: "https://api.z.ai/api/anthropic".into(),
             model: "glm-5.1".into(),
             available_models: vec!["glm-5.2".into(), "glm-5.1".into(), "glm-5-turbo".into(), "glm-4.6".into()],
             max_tokens: 8_192,
