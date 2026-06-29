@@ -65,10 +65,18 @@ impl Tool for NoteTool {
 
         let entry = format!("{content}\n");
 
-        // Append to notes file, creating it if it doesn't exist.
+        // Append to notes file, creating it with template if it doesn't exist.
         if let Some(parent) = self.notes_path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
                 RustyError::Tool(format!("Failed to create notes directory: {e}"))
+            })?;
+        }
+
+        // If file doesn't exist, create with template header
+        if !self.notes_path.exists() {
+            let header = "# Session notes\n_Free-form scratchpad. Append entries as you go; the checkpoint writer reconciles them at checkpoint events._\n\n";
+            tokio::fs::write(&self.notes_path, header).await.map_err(|e| {
+                RustyError::Tool(format!("Failed to create notes file: {e}"))
             })?;
         }
 
@@ -118,7 +126,10 @@ mod tests {
         let body = tokio::fs::read_to_string(&path).await.unwrap();
         assert!(body.contains("First observation"));
         assert!(body.contains("Second observation"));
-        assert!(body.starts_with("First observation"));
+        // File starts with template header
+        assert!(body.starts_with("# Session notes"));
+        // Observations appear after the header
+        assert!(body.find("First observation").unwrap() > body.find("# Session notes").unwrap());
     }
 
     #[tokio::test]
