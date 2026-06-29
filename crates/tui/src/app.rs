@@ -324,6 +324,8 @@ impl ModelFormState {
     pub fn build_entry(&self) -> Result<rusty_core::ModelEntry, String> {
         let name = self.field_buffers[0].trim().to_string();
         let model_id = self.field_buffers[1].trim().to_string();
+        // Provider is a read-only field whose value is cycled via key input.
+        let provider = rusty_core::ProviderType::from_display(&self.field_buffers[2]);
         let api_base = self.field_buffers[3].trim().to_string();
         let max_tokens_str = self.field_buffers[5].trim().to_string();
         let temp_str = self.field_buffers[6].trim().to_string();
@@ -360,7 +362,7 @@ impl ModelFormState {
         Ok(rusty_core::ModelEntry {
             group: String::new(),
             name,
-            provider: rusty_core::ProviderType::OpenAI,
+            provider,
             api_base,
             model: model_id,
             available_models: Vec::new(),
@@ -553,6 +555,13 @@ pub enum DisplayRow {
     GroupHeader { name: String, count: usize },
     /// A model entry. The `usize` indexes into `SettingsState.models`.
     ModelEntry(usize),
+    /// An expanded sub-model from `available_models`. Not selectable.
+    /// Fields: parent model index, the sub-model id, whether it is the active model id.
+    ExpandedModel {
+        parent: usize,
+        model: String,
+        is_active: bool,
+    },
 }
 
 /// Rows displayed in the General settings tab.
@@ -737,6 +746,17 @@ impl SettingsState {
                 seen_groups.push(group_name);
             }
             rows.push(DisplayRow::ModelEntry(i));
+
+            // When this entry is expanded, list its available_models.
+            if self.expanded == Some(i) && !entry.available_models.is_empty() {
+                for model in &entry.available_models {
+                    rows.push(DisplayRow::ExpandedModel {
+                        parent: i,
+                        model: model.clone(),
+                        is_active: *model == entry.model,
+                    });
+                }
+            }
         }
         rows
     }
@@ -1429,8 +1449,16 @@ impl AppState {
                     }
                 }
                 KeyCode::Char(c) => {
-                    // Provider field is read-only
+                    // Provider field is read-only text; cycle on space, ignore other chars.
                     if ModelFormField::ALL[form.current_field] == ModelFormField::Provider {
+                        if c == ' ' {
+                            let p = rusty_core::ProviderType::from_display(&form.field_buffers[2])
+                                .cycle();
+                            form.field_buffers[2] = p.to_string();
+                            form.field_cursors[2] = form.field_buffers[2].len();
+                            form.error = None;
+                            self.needs_redraw = true;
+                        }
                         return;
                     }
                     let buf = &mut form.field_buffers[form.current_field];

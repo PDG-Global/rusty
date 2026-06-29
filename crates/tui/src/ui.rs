@@ -2043,6 +2043,7 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                         let entry = &settings.models[*idx];
                         let is_selected = *idx == settings.selected;
                         let is_active = entry.name == settings.active_model_name;
+                        let is_expanded = settings.expanded == Some(*idx);
                         let cursor = if is_selected { ">" } else { " " };
                         let active_marker = if is_active { "●" } else { " " };
                         let style = if is_selected {
@@ -2068,10 +2069,12 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                         } else {
                             Style::default().fg(Color::White)
                         };
+                        let expand_indicator = if is_expanded { "\u{25BC} " } else { "  " };
                         lines.push(Line::from(vec![
                             Span::styled(format!(" {cursor}"), style),
                             Span::styled(format!("{active_marker} "), marker_style),
-                            Span::styled(format!("{:<24}", entry.name), name_style),
+                            Span::styled(expand_indicator.to_string(), style),
+                            Span::styled(format!("{:<22}", entry.name), name_style),
                             Span::styled(
                                 format!("{:<16}", entry.provider),
                                 if is_selected {
@@ -2088,6 +2091,25 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                                     Style::default().fg(Color::DarkGray)
                                 },
                             ),
+                        ]));
+                    }
+                    crate::app::DisplayRow::ExpandedModel {
+                        parent: _,
+                        model,
+                        is_active,
+                    } => {
+                        let sub_marker = if *is_active { "●" } else { " " };
+                        let sub_style = if *is_active {
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        lines.push(Line::from(vec![
+                            Span::raw("     "),
+                            Span::styled(format!("{sub_marker} "), sub_style),
+                            Span::styled(format!("{model}"), sub_style),
                         ]));
                     }
                 }
@@ -2139,6 +2161,13 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" Select  "),
+        Span::styled(
+            "[Space]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Expand  "),
         Span::styled(
             "[Tab]",
             Style::default()
@@ -2569,7 +2598,7 @@ fn draw_model_form(app: &AppState, area: Rect, buf: &mut Buffer) {
         // If provider field is active, show hint
         if is_provider && is_active {
             lines.push(Line::from(Span::styled(
-                "                    (OpenAI-compatible only)",
+                "                    (Space cycles: OpenAI <-> Anthropic)",
                 Style::default().fg(Color::DarkGray),
             )));
         }
