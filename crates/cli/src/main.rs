@@ -1109,7 +1109,9 @@ async fn run_tui(
                 cancel: CancelToken,
             ) -> tokio::task::JoinHandle<()> {
                 tokio::spawn(async move {
+                    tracing::debug!("[start_run] spawned, locking agent...");
                     let mut agent = agent.lock().await;
+                    tracing::debug!("[start_run] agent locked, starting run...");
 
                     let tx_text = event_tx.clone();
                     let text_cb: rusty_agent::r#loop::TextCallback = Box::new(move |text: &str| {
@@ -1194,6 +1196,23 @@ async fn run_tui(
                     let _ = event_tx.send(AgentTaskEvent::Event(
                         rusty_tui::app::AgentEvent::PlanMode(plan_mode),
                     ));
+
+                    // Generate a contextual follow-up suggestion via a non-streaming LLM call.
+                    // Best-effort: failures yield None and fall back to the heuristic in the TUI.
+                    tracing::debug!("[start_run] agent.run() complete, generating suggestion...");
+                    let suggestion = if plan_mode {
+                        tracing::debug!("[start_run] plan mode, skipping suggestion");
+                        None
+                    } else {
+                        tracing::debug!("[start_run] calling generate_followup_suggestion...");
+                        let s = agent.generate_followup_suggestion().await;
+                        tracing::debug!("[start_run] suggestion result: {:?}", s);
+                        s
+                    };
+                    let _ = event_tx.send(AgentTaskEvent::Event(
+                        rusty_tui::app::AgentEvent::Suggestion(suggestion),
+                    ));
+                    tracing::debug!("[start_run] suggestion event sent");
                 })
             }
 
@@ -1944,6 +1963,16 @@ async fn tui_main_loop(
                         rusty_tui::app::AgentEvent::PlanMode(mode) => {
                             app.plan_mode = mode;
                             app.needs_redraw = true;
+                        }
+                        rusty_tui::app::AgentEvent::Suggestion(suggestion) => {
+                            // Override the heuristic fallback with the LLM result when present.
+                            // When None, keep any heuristic suggestion already set as a fallback.
+                            if let Some(s) = suggestion {
+                                if !s.is_empty() {
+                                    app.input_suggestion = Some(s);
+                                    app.needs_redraw = true;
+                                }
+                            }
                         }
                     },
                     Some(AgentTaskEvent::PermissionRequest(msg)) => {

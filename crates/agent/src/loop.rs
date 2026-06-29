@@ -393,8 +393,10 @@ impl Agent {
     /// the model produces nothing usable, the call fails, or there is too
     /// little conversation to suggest from.
     pub async fn generate_followup_suggestion(&self) -> Option<String> {
+        debug!("[suggest] generate_followup_suggestion called, messages={}", self.messages.len());
         // Need at least one user turn and one assistant response.
         if self.messages.len() < 2 {
+            debug!("[suggest] too few messages, returning None");
             return None;
         }
 
@@ -421,7 +423,17 @@ impl Agent {
             thinking_budget: None,
         };
 
-        let response = self.provider.create_message(request).await.ok()?;
+        debug!("[suggest] calling LLM for suggestion...");
+        let response = match self.provider.create_message(request).await {
+            Ok(r) => {
+                debug!("[suggest] LLM response received");
+                r
+            }
+            Err(e) => {
+                debug!("[suggest] LLM call failed: {e}");
+                return None;
+            }
+        };
         let mut text = response
             .content
             .iter()
@@ -432,12 +444,13 @@ impl Agent {
             .collect::<Vec<_>>()
             .join("");
         text = text.trim().to_string();
+        debug!("[suggest] raw response: '{}'", text);
 
         if text.is_empty() || text.eq_ignore_ascii_case("NONE") {
-            debug!("Suggestion generation returned empty/NONE");
+            debug!("[suggest] empty or NONE, returning None");
             return None;
         }
-        debug!("Generated suggestion: {}", text);
+        debug!("[suggest] returning suggestion: {}", text);
 
         // Strip surrounding quotes if the model added them.
         if (text.starts_with('"') && text.ends_with('"'))
