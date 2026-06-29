@@ -123,6 +123,8 @@ pub struct Agent {
     notes_path: Option<PathBuf>,
     /// Path to the session-scoped checkpoint file.
     checkpoint_path: Option<PathBuf>,
+    /// Background checkpoint writer state.
+    writer_state: crate::checkpoint_writer::CheckpointWriterState,
 }
 
 #[derive(Default)]
@@ -175,6 +177,7 @@ impl Agent {
             last_checkpoint_tier: crate::compact::CheckpointTier::None,
             notes_path: None,
             checkpoint_path: None,
+            writer_state: crate::checkpoint_writer::CheckpointWriterState::new(),
         }
     }
 
@@ -230,6 +233,17 @@ impl Agent {
             prompt.push_str("\n\n");
             prompt.push_str(mode_text);
         }
+
+        // Inject checkpoint context if available (for rebuild after compaction)
+        if let Some(cp_path) = &self.checkpoint_path {
+            if let Some(checkpoint) = crate::compact::read_file_content(cp_path).await {
+                prompt.push_str("\n\n## Session Checkpoint\n\n");
+                prompt.push_str("The following checkpoint preserves key context from earlier in this session. ");
+                prompt.push_str("Use it to understand what has been done and what needs to happen next.\n\n");
+                prompt.push_str(&checkpoint);
+            }
+        }
+
         self.system_prompt = prompt;
     }
 
@@ -629,28 +643,86 @@ impl Agent {
             } else {
                 None
             };
-            let new_tier = maybe_compact(
-                &mut self.messages,
-                &*self.provider,
-                &self.system_prompt,
-                context_window,
-                plan_text.as_deref(),
-                self.last_checkpoint_tier,
-                self.notes_path.as_deref(),
-                self.checkpoint_path.as_deref(),
-            ).await?;
-            if new_tier.as_u8() > self.last_checkpoint_tier.as_u8() {
-                self.last_checkpoint_tier = new_tier;
-                // After full compaction, reset tier so the cycle can start fresh
-                if new_tier == crate::compact::CheckpointTier::Compacted {
-                    self.last_checkpoint_tier = crate::compact::CheckpointTier::None;
+            // Check for background writer results
+            while let Some(result) = self.writer_state.try_recv_result() {
+                match result {
+                    crate::checkpoint_writer::WriterResult::Success { chars } => {
+                        debug!("Background checkpoint writer completed ({} chars)", chars);
+                        if self.last_checkpoint_tier.as_u8() < crate::compact::CheckpointTier::Extracted.as_u8() {
+                            self.last_checkpoint_tier = crate::compact::CheckpointTier::Extracted;
+                        }
+                    }
+                    crate::checkpoint_writer::WriterResult::Failed(e) => {
+                        warn!("Background checkpoint writer failed: {e}");
+                    }
+                    crate::checkpoint_writer::WriterResult::Skipped(reason) => {
+                        debug!("Background checkpoint writer skipped: {reason}");
+                    }
                 }
             }
-            if new_tier == crate::compact::CheckpointTier::Compacted {
-                self.messages.push(Message::user(
-                    "[System: Conversation history was automatically compacted to save context space. \
-                     Key decisions and code changes are preserved in the summary above.]"
-                ));
+
+            // Tier 1: Micro-compaction (inline, cheap)
+            let estimated_tokens = crate::compact::estimate_tokens(&self.messages);
+            let t1_threshold = (context_window as f64 * 0.25) as usize;
+            if estimated_tokens >= t1_threshold
+                && self.last_checkpoint_tier.as_u8() < crate::compact::CheckpointTier::Micro.as_u8()
+            {
+                debug!("Tier 1 micro-compaction: ~{} tokens", estimated_tokens);
+                if crate::compact::micro_compact(&mut self.messages) {
+                    self.last_checkpoint_tier = crate::compact::CheckpointTier::Micro;
+                }
+            }
+
+            // Tier 2: Background checkpoint extraction (non-blocking)
+            let t2_threshold = (context_window as f64 * 0.50) as usize;
+            if estimated_tokens >= t2_threshold
+                && self.last_checkpoint_tier.as_u8() < crate::compact::CheckpointTier::Extracted.as_u8()
+                && !self.writer_state.is_running().await
+            {
+                debug!("Tier 2: spawning background checkpoint writer (~{} tokens)", estimated_tokens);
+                let spawned = crate::checkpoint_writer::spawn_checkpoint_writer(
+                    self.messages.clone(),
+                    self.provider.clone(),
+                    self.system_prompt.clone(),
+                    self.checkpoint_path.clone().unwrap_or_else(|| PathBuf::from("/dev/null")),
+                    self.notes_path.clone(),
+                    self.writer_state.running.clone(),
+                    self.writer_state.result_tx.clone(),
+                );
+                if spawned {
+                    // Don't update tier yet — wait for writer to complete
+                    debug!("Background checkpoint writer spawned");
+                }
+            }
+
+            // Tier 3: Full compaction (inline, blocking)
+            let t3_threshold = (context_window as f64 * 0.75) as usize;
+            let needs_t3 = self.messages.len() >= 40 || estimated_tokens >= t3_threshold;
+            if needs_t3 && self.last_checkpoint_tier.as_u8() < crate::compact::CheckpointTier::Compacted.as_u8() {
+                debug!("Tier 3 full compaction: {} messages (~{} tokens)", self.messages.len(), estimated_tokens);
+                let new_tier = maybe_compact(
+                    &mut self.messages,
+                    &*self.provider,
+                    &self.system_prompt,
+                    context_window,
+                    plan_text.as_deref(),
+                    self.last_checkpoint_tier,
+                    self.notes_path.as_deref(),
+                    self.checkpoint_path.as_deref(),
+                ).await?;
+                if new_tier.as_u8() > self.last_checkpoint_tier.as_u8() {
+                    self.last_checkpoint_tier = new_tier;
+                    // After full compaction, reset tier so the cycle can start fresh
+                    if new_tier == crate::compact::CheckpointTier::Compacted {
+                        self.last_checkpoint_tier = crate::compact::CheckpointTier::None;
+                    }
+                }
+                if new_tier == crate::compact::CheckpointTier::Compacted {
+                    self.messages.push(Message::user(
+                        "[System: Conversation history was automatically compacted to save context space. \
+                         Key decisions and code changes are preserved in the summary above.]"
+                    ));
+                }
             }
 
             let tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();

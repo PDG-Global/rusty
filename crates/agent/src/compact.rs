@@ -591,7 +591,7 @@ pub async fn force_compact(
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Read file content, returning None if the file doesn't exist or is empty.
-async fn read_file_content(path: &Path) -> Option<String> {
+pub async fn read_file_content(path: &Path) -> Option<String> {
     match tokio::fs::read_to_string(path).await {
         Ok(content) if !content.trim().is_empty() => Some(content),
         _ => None,
@@ -599,7 +599,7 @@ async fn read_file_content(path: &Path) -> Option<String> {
 }
 
 /// Truncate a file to zero length (clear it).
-async fn clear_file(path: &Path) {
+pub async fn clear_file(path: &Path) {
     let _ = tokio::fs::write(path, "").await;
 }
 
@@ -642,7 +642,7 @@ pub fn estimate_tokens(messages: &[Message]) -> usize {
     ((total_chars as f64 * 1.2 / 4.0).ceil() as usize).max(1)
 }
 
-fn messages_to_text(messages: &[Message]) -> String {
+pub fn messages_to_text(messages: &[Message]) -> String {
     let mut parts = Vec::new();
     for msg in messages {
         let role = match msg.role {

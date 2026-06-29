@@ -1,6 +1,7 @@
 // Copyright (C) 2026 PDG Global Limited
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+pub mod checkpoint_writer;
 pub mod compact;
 pub mod r#loop;
 
