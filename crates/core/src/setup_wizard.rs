@@ -134,7 +134,7 @@ impl ProviderPreset {
                 name: "Zhipu GLM (China)",
                 entry_name: "zhipu-cn",
                 group: "Zhipu GLM",
-                api_base: "https://api.z.ai/api/coding/paas/v4",
+                api_base: "https://open.bigmodel.cn/api/coding/paas/v4",
                 default_model: "glm-5.1",
                 available_models: &["glm-5.2", "glm-5.1", "glm-5-turbo", "glm-4.6"],
                 needs_key: true,
