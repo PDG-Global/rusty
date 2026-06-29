@@ -102,6 +102,12 @@ Files modified or created, with a one-line description each.
 ## Current State
 What is done, what is in progress, what is next. Be specific.
 
+## Next Step
+The single most important thing the agent should do when it resumes. \
+Write this as an actionable directive: 'When you resume, do X'. \
+This is critical — the agent wakes up with only this checkpoint and must \
+know exactly where to continue without re-reading the conversation.
+
 ## Notes
 Anything else worth preserving: errors encountered, gotchas, open questions.
 
@@ -109,7 +115,7 @@ Rules:
 - Be concise. Each section should be 1-5 lines.
 - Focus on facts, not narration.
 - Include file paths and specific technical details.
-- Capture what the agent should know when it wakes up in a fresh context.";
+- The Next Step section MUST be present and actionable.";
 
 /// Extract structured checkpoint from conversation history using an LLM call.
 /// Writes the result to `checkpoint_path`. If `notes_content` is provided,
@@ -247,7 +253,17 @@ pub async fn maybe_compact(
                 summary_prompt.push_str("\n\n");
             }
         }
-        summary_prompt.push_str("Summarize the following conversation concisely, preserving key context, decisions, and any code changes discussed:\n\n");
+        summary_prompt.push_str(
+            "Summarize the following conversation concisely. Your summary MUST include:\n\
+             1. What the user asked for (the original goal)\n\
+             2. What has been completed so far\n\
+             3. What is currently in progress\n\
+             4. What should be done next (the immediate next step)\n\
+             5. Key decisions and code changes made\n\n\
+             End your summary with a '## Next Step' section that clearly states what the agent \
+             should do when it resumes. This is critical — the agent will wake up with only \
+             this summary and needs to know exactly where to continue.\n\n"
+        );
         summary_prompt.push_str(&old_text);
 
         let request = MessageRequest {

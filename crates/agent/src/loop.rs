@@ -387,6 +387,84 @@ impl Agent {
         Ok(text)
     }
 
+    /// Generate a short, contextual follow-up suggestion based on the recent
+    /// conversation. Makes a single non-streaming LLM call with a minimal
+    /// system prompt and the last few messages of history. Returns `None` if
+    /// the model produces nothing usable, the call fails, or there is too
+    /// little conversation to suggest from.
+    pub async fn generate_followup_suggestion(&self) -> Option<String> {
+        // Need at least one user turn and one assistant response.
+        if self.messages.len() < 2 {
+            return None;
+        }
+
+        // Trim to the most recent few messages to keep the call cheap.
+        let recent: Vec<Message> = self.messages.iter().rev().take(6).rev().cloned().collect();
+
+        let system = "You suggest the next thing the user might ask. Given the conversation, \
+            reply with ONE short, natural follow-up question or request the user could send. \
+            Rules:\n\
+            - Output only the suggestion, nothing else. No quotes, no prefixes, no explanation.\n\
+            - Keep it under 12 words. Write as if you are the user.\n\
+            - Ask about a concrete next step (e.g. running tests, a related change, an edge case).\n\
+            - If the assistant just asked a clarifying question, do not repeat it; suggest \
+            something the user would want next.\n\
+            - If no suggestion is appropriate, reply with the single word: NONE";
+
+        let request = MessageRequest {
+            model: self.config.model.clone(),
+            system: Some(system.to_string()),
+            messages: recent,
+            tools: vec![],
+            max_tokens: 48,
+            temperature: Some(0.4),
+            thinking_budget: None,
+        };
+
+        let response = self.provider.create_message(request).await.ok()?;
+        let mut text = response
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        text = text.trim().to_string();
+
+        if text.is_empty() || text.eq_ignore_ascii_case("NONE") {
+            debug!("Suggestion generation returned empty/NONE");
+            return None;
+        }
+        debug!("Generated suggestion: {}", text);
+
+        // Strip surrounding quotes if the model added them.
+        if (text.starts_with('"') && text.ends_with('"'))
+            || (text.starts_with('\'') && text.ends_with('\''))
+            || (text.starts_with('\u{201C}') && text.ends_with('\u{201D}'))
+            || (text.starts_with('\u{2018}') && text.ends_with('\u{2019}'))
+        {
+            if text.chars().count() > 2 {
+                text = text[1..text.chars().count() - 1].trim().to_string();
+            }
+        }
+
+        // Cap to a reasonable length for the input line.
+        const MAX_LEN: usize = 120;
+        let count = text.chars().count();
+        if count > MAX_LEN {
+            let truncated: String = text.chars().take(MAX_LEN.saturating_sub(1)).collect();
+            text = format!("{truncated}\u{2026}");
+        }
+
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
     /// Extract details of incomplete tasks from the most recent `todowrite` call.
     /// Returns a vec of (status, content) pairs for tasks that are not completed/cancelled.
     fn incomplete_task_details(&self) -> Vec<(String, String)> {

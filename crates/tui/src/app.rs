@@ -177,6 +177,8 @@ pub enum AgentEvent {
     ModelChanged(String, u32),
     UpdateAvailable(rusty_core::update::UpdateCheckResult),
     PlanMode(bool),
+    /// LLM-generated follow-up suggestion (None signals no suggestion)
+    Suggestion(Option<String>),
 }
 
 /// Messages from the TUI to the agent task
@@ -2231,8 +2233,10 @@ impl AppState {
                 content: finished_text.clone(),
                 tool_blocks,
             });
-            // Derive a follow-up suggestion from the response.
-            self.input_suggestion = Self::extract_followup_suggestion(&finished_text);
+            // Derive a follow-up suggestion from the response (heuristic fallback).
+            let heuristic = Self::extract_followup_suggestion(&finished_text);
+            tracing::debug!("Heuristic suggestion: {:?}", heuristic);
+            self.input_suggestion = heuristic;
         }
         // Save any remaining thinking text
         if self.is_thinking && !self.thinking_text.is_empty() {

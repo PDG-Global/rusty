@@ -182,6 +182,16 @@ async fn run_loop(
                         app.plan_mode = mode;
                         app.needs_redraw = true;
                     }
+                    AgentEvent::Suggestion(suggestion) => {
+                        // Override the heuristic fallback with the LLM result when present.
+                        if let Some(s) = suggestion {
+                            if !s.is_empty() {
+                                tracing::debug!("LLM suggestion overriding heuristic: {}", s);
+                                app.input_suggestion = Some(s);
+                                app.needs_redraw = true;
+                            }
+                        }
+                    }
                 },
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => break,
