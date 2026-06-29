@@ -353,6 +353,8 @@ fn model_context_window(model: &str) -> u32 {
     let lower = model.to_lowercase();
     if lower.contains("mimo") {
         1_000_000
+    } else if lower.contains("glm") {
+        1_000_000
     } else if lower.contains("kimi") || lower.contains("k2.6") || lower.contains("moonshot") {
         200_000
     } else if lower.contains("gpt-4o") || lower.contains("gpt-4-turbo") {

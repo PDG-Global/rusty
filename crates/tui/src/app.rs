@@ -925,6 +925,9 @@ pub struct AppState {
     pub is_renaming: bool,
     /// Current session name (if renamed)
     pub session_name: Option<String>,
+    /// Auto-suggestion extracted from the last assistant response.
+    /// Shown faded when the input buffer is empty; Tab accepts it.
+    pub input_suggestion: Option<String>,
     /// Saved thinking text after thinking phase ends
     pub saved_thinking: String,
     /// Number of thinking lines (for collapsed display)
@@ -1141,6 +1144,7 @@ impl Default for AppState {
             clear_pending: false,
             is_renaming: false,
             session_name: None,
+            input_suggestion: None,
             saved_thinking: String::new(),
             thinking_line_count: 0,
             thinking_expanded: false,
@@ -1610,6 +1614,7 @@ impl AppState {
                     self.needs_redraw = true;
                 }
                 KeyCode::Char(c) => {
+                    self.input_suggestion = None;
                     self.input.insert(self.cursor_pos, c);
                     self.cursor_pos += c.len_utf8();
                     self.needs_redraw = true;
@@ -1814,6 +1819,7 @@ impl AppState {
             }
             KeyCode::Char(c) => {
                 self.confirming_exit = false;
+                self.input_suggestion = None;
                 self.input.insert(self.cursor_pos, c);
                 self.cursor_pos += c.len_utf8();
                 self.autocomplete = AutocompleteState::compute(&self.input);
@@ -1905,6 +1911,17 @@ impl AppState {
                     None => {}
                 }
             }
+            KeyCode::Tab if !self.is_streaming
+                // Accept the follow-up suggestion when input is empty.
+                && self.input.is_empty()
+                && self.input_suggestion.is_some() => {
+                    self.confirming_exit = false;
+                    if let Some(suggestion) = self.input_suggestion.take() {
+                        self.input = suggestion;
+                        self.cursor_pos = self.input.len();
+                        self.needs_redraw = true;
+                    }
+                }
             KeyCode::Tab if !self.is_streaming
                 // Tab-complete slash commands only when input is a bare command prefix (no spaces)
                 && self.input.starts_with('/')
@@ -2180,11 +2197,14 @@ impl AppState {
     pub fn finish_streaming(&mut self) {
         if !self.streaming_text.is_empty() {
             let tool_blocks = std::mem::take(&mut self.streaming_tool_blocks);
+            let finished_text = self.streaming_text.clone();
             self.messages.push(ChatMessage {
                 role: MessageRole::Assistant,
-                content: self.streaming_text.clone(),
+                content: finished_text.clone(),
                 tool_blocks,
             });
+            // Derive a follow-up suggestion from the response.
+            self.input_suggestion = Self::extract_followup_suggestion(&finished_text);
         }
         // Save any remaining thinking text
         if self.is_thinking && !self.thinking_text.is_empty() {
@@ -2199,6 +2219,68 @@ impl AppState {
         self.is_thinking = false;
         self.thinking_expanded = false;
         self.needs_redraw = true;
+    }
+
+    /// Extract a short follow-up suggestion from an assistant response.
+    ///
+    /// Preference order:
+    ///   1. The last question (sentence ending with '?') in the text.
+    ///   2. The last non-empty line.
+    /// Returns None if nothing useful is found. The result is trimmed and
+    /// capped to a reasonable length so it fits on the input line.
+    pub fn extract_followup_suggestion(text: &str) -> Option<String> {
+        let clean_line = |line: &str| -> String {
+            let trimmed = line.trim();
+            let stripped = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+                .or_else(|| trimmed.strip_prefix("+ "))
+                .unwrap_or(trimmed);
+            // Drop leading "N. " or "N)" numbered prefixes.
+            let stripped = stripped
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .trim_start_matches(|c: char| c == '.' || c == ')')
+                .trim_start();
+            stripped
+                .trim_matches(['#', '*', '`', '>'].as_ref())
+                .trim()
+                .to_string()
+        };
+
+        // Prefer the last sentence-ending question in the text.
+        if let Some(q) = text
+            .lines()
+            .map(clean_line)
+            .filter(|l| l.ends_with('?') && l.len() > 1)
+            .last()
+        {
+            return Self::cap_suggestion(&q);
+        }
+
+        // Otherwise take the last non-empty line with alphanumeric content.
+        if let Some(line) = text
+            .lines()
+            .map(clean_line)
+            .filter(|l| !l.is_empty() && l.chars().any(|c| c.is_alphanumeric()))
+            .last()
+        {
+            return Self::cap_suggestion(&line);
+        }
+        None
+    }
+
+    fn cap_suggestion(s: &str) -> Option<String> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        const MAX_LEN: usize = 120;
+        if s.chars().count() <= MAX_LEN {
+            Some(s.to_string())
+        } else {
+            let truncated: String = s.chars().take(MAX_LEN.saturating_sub(1)).collect();
+            Some(format!("{truncated}\u{2026}"))
+        }
     }
 
     pub fn push_error(&mut self, msg: &str) {

@@ -115,7 +115,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             provider: ProviderType::OpenAI,
             api_base: "https://open.bigmodel.cn/api/paas/v4/".into(),
             model: "glm-5.1".into(),
-            available_models: vec!["glm-5.1".into(), "glm-5-turbo".into(), "glm-4.6".into()],
+            available_models: vec!["glm-5.2".into(), "glm-5.1".into(), "glm-5-turbo".into(), "glm-4.6".into()],
             max_tokens: 8_192,
             temperature: Some(0.7),
             thinking_budget: None,

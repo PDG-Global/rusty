@@ -136,7 +136,7 @@ impl ProviderPreset {
                 group: "Zhipu GLM",
                 api_base: "https://api.z.ai/api/coding/paas/v4",
                 default_model: "glm-5.1",
-                available_models: &["glm-5.1", "glm-5-turbo", "glm-4.6"],
+                available_models: &["glm-5.2", "glm-5.1", "glm-5-turbo", "glm-4.6"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,

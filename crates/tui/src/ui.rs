@@ -1697,10 +1697,24 @@ fn draw_input(app: &AppState, area: Rect, buf: &mut Buffer) {
     // Render input text with a visible block cursor at cursor_pos
     let mut spans: Vec<Span<'_>> = Vec::new();
     if app.input.is_empty() {
-        spans.push(Span::styled(
-            "Type a message or / for commands...",
-            Style::default().fg(Color::Gray),
-        ));
+        if let Some(suggestion) = app.input_suggestion.as_ref().filter(|s| !s.is_empty()) {
+            spans.push(Span::styled(
+                suggestion.clone(),
+                Style::default().fg(Color::DarkGray),
+            ));
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                "[Tab]",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            ));
+        } else {
+            spans.push(Span::styled(
+                "Type a message or / for commands...",
+                Style::default().fg(Color::Gray),
+            ));
+        }
     } else {
         let (text, style) = if is_slash {
             (

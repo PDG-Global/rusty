@@ -1811,6 +1811,7 @@ async fn tui_main_loop(
                             && !app.paste_mode
                         {
                             let input = app.input.clone();
+                            app.input_suggestion = None;
 
                             if app.is_streaming {
                                 if input.starts_with('/') {
