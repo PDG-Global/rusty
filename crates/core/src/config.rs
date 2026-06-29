@@ -211,6 +211,25 @@ impl std::fmt::Display for ProviderType {
     }
 }
 
+impl ProviderType {
+    /// Parse a provider from its display string (case-insensitive).
+    /// Falls back to [`ProviderType::OpenAI`] for unknown values.
+    pub fn from_display(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "anthropic" => Self::Anthropic,
+            _ => Self::OpenAI,
+        }
+    }
+
+    /// Return the next provider in the cycle, used by form fields.
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::OpenAI => Self::Anthropic,
+            Self::Anthropic => Self::OpenAI,
+        }
+    }
+}
+
 /// A single provider/model configuration in the model registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
@@ -561,12 +580,38 @@ impl Settings {
 
     /// Patch existing model entries with known-good defaults for providers
     /// that require specific settings (e.g. Kimi requires temperature=1 and
-    /// X-Title header, MiMo/DeepSeek support thinking). Called after `migrate()`.
+    /// X-Title header, MiMo/DeepSeek support thinking). Also migrates Zhipu
+    /// GLM entries to their corrected endpoints (the original hardcoded
+    /// defaults pointed at the wrong URLs). Called after `migrate()`.
     /// Idempotent.
     pub fn fixup(&mut self) {
         for entry in &mut self.models {
             let name_lower = entry.name.to_lowercase();
             let base_lower = entry.api_base.to_lowercase();
+            let is_zhipu = name_lower.starts_with("zhipu") || base_lower.contains("bigmodel.cn")
+                || base_lower.contains("z.ai");
+
+            // Migrate Zhipu GLM endpoints to their correct URLs.
+            // zhipu-cn: the coding endpoint lives at open.bigmodel.cn
+            //   (legacy default was api.z.ai/api/coding/paas/v4).
+            // zhipu-global: the overseas endpoint uses the Anthropic wire
+            //   format at api.z.ai/api/anthropic (legacy default was
+            //   open.bigmodel.cn/api/paas/v4/ as an OpenAI endpoint).
+            if is_zhipu {
+                let is_global = name_lower.contains("global") || base_lower.contains("/anthropic");
+                if is_global {
+                    if entry.api_base != "https://api.z.ai/api/anthropic" {
+                        entry.api_base = "https://api.z.ai/api/anthropic".into();
+                    }
+                    entry.provider = ProviderType::Anthropic;
+                } else if base_lower.contains("z.ai/api/coding")
+                    || entry.api_base == "https://open.bigmodel.cn/api/paas/v4/"
+                {
+                    entry.api_base = "https://open.bigmodel.cn/api/coding/paas/v4".into();
+                    entry.provider = ProviderType::OpenAI;
+                }
+            }
+
             let is_kimi = name_lower.contains("kimi") || base_lower.contains("kimi.com");
             let is_mimo = name_lower.starts_with("xiaomi")
                 || base_lower.contains("xiaomimimo.com");
@@ -1159,6 +1204,80 @@ mod tests {
         });
         settings.fixup();
         assert_eq!(settings.models[0].thinking_budget, Some(4096));
+    }
+
+    #[test]
+    fn fixup_migrates_zhipu_cn_url_from_legacy_api_z_ai() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "Zhipu GLM".into(),
+            name: "zhipu-cn".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://api.z.ai/api/coding/paas/v4".into(),
+            model: "glm-5.1".into(),
+            available_models: vec![],
+            max_tokens: 8192,
+            temperature: None,
+            thinking_budget: None,
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        assert_eq!(
+            settings.models[0].api_base,
+            "https://open.bigmodel.cn/api/coding/paas/v4"
+        );
+        assert_eq!(settings.models[0].provider, ProviderType::OpenAI);
+    }
+
+    #[test]
+    fn fixup_migrates_zhipu_global_to_anthropic_endpoint() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "Zhipu GLM".into(),
+            name: "zhipu-global".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://open.bigmodel.cn/api/paas/v4/".into(),
+            model: "glm-5.1".into(),
+            available_models: vec![],
+            max_tokens: 8192,
+            temperature: None,
+            thinking_budget: None,
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        assert_eq!(
+            settings.models[0].api_base,
+            "https://api.z.ai/api/anthropic"
+        );
+        assert_eq!(settings.models[0].provider, ProviderType::Anthropic);
+    }
+
+    #[test]
+    fn fixup_zhipu_migration_is_idempotent() {
+        let mut settings = Settings::default();
+        settings.models.push(ModelEntry {
+            group: "Zhipu GLM".into(),
+            name: "zhipu-cn".into(),
+            provider: ProviderType::OpenAI,
+            api_base: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
+            model: "glm-5.1".into(),
+            available_models: vec![],
+            max_tokens: 8192,
+            temperature: None,
+            thinking_budget: None,
+            extra_headers: None,
+            context_window: None,
+        });
+        settings.fixup();
+        // Second run must not change an already-correct entry.
+        settings.fixup();
+        assert_eq!(
+            settings.models[0].api_base,
+            "https://open.bigmodel.cn/api/coding/paas/v4"
+        );
+        assert_eq!(settings.models[0].provider, ProviderType::OpenAI);
     }
 
     #[test]
