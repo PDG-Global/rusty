@@ -728,6 +728,17 @@ impl Agent {
                 tool_calls.len()
             );
 
+            // Fix any tool calls with empty IDs — some providers (Kimi) may not
+            // send IDs in streaming deltas, leaving tc.id as empty string.
+            // Generate synthetic IDs based on index. This must happen before
+            // building messages so both ToolUse and ToolResult use the same ID.
+            for (i, tc) in tool_calls.iter_mut().enumerate() {
+                if tc.id.trim().is_empty() {
+                    warn!("Tool call {} ({}) has empty ID after streaming — generating synthetic ID", i, tc.name);
+                    tc.id = format!("call_{i}");
+                }
+            }
+
             // Estimate tokens only if the provider didn't report usage
             // (common with OpenAI-compatible providers that don't support stream_options).
             // Also fall back to estimation if the reported usage seems implausibly low
@@ -842,6 +853,13 @@ impl Agent {
                 let mut permission_results: Vec<(&ToolCallState, PermissionDecision)> = Vec::new();
                 for tc in &tool_calls {
                     let decision = self.check_permission_for_tool(tc, &ctx).await;
+                    debug!(
+                        "Permission check: tool={}, mode={:?}, decision={:?}, callback={}",
+                        tc.name,
+                        self.permission_mode,
+                        decision,
+                        if self.permission_callback.is_some() { "set" } else { "NONE" }
+                    );
                     match &decision {
                         PermissionDecision::AllowSession => {
                             let key = make_allow_key(&tc.name, &tc.arguments);
