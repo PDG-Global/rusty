@@ -12,7 +12,6 @@ use crossterm::event::{EnableBracketedPaste, DisableBracketedPaste};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use rusty_agent::{Agent, AgentCallbacks};
 use rusty_core::CancelToken;
-use rusty_core::plan::Plan;
 use rusty_core::permissions::{PermissionDecision, PermissionRequest};
 use rusty_core::ContentBlock;
 use rusty_core::{Config, ConversationSession, CredentialManager, PermissionMode, Settings};
@@ -531,28 +530,31 @@ async fn main() -> Result<()> {
         Some(combined_memory_context)
     };
 
-    // Create plan for task management (shared between TodoWriteTool and Agent system prompt)
-    let plan = Arc::new(tokio::sync::Mutex::new(Plan::new(working_dir.to_string_lossy().to_string())));
+    // Generate session ID early so NoteTool and TaskRegistry can use it.
+    // For resumed sessions this comes from --resume; for new sessions we pre-generate it.
+    let session_id = args.resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Create task registry (SQLite-backed, shared between TodoWriteTool and Agent)
+    let task_registry = Arc::new(
+        rusty_core::task::TaskRegistry::for_project(&working_dir)
+            .map_err(|e| anyhow::anyhow!("Failed to open task registry: {e}"))?,
+    );
 
     let system_prompt = rusty_agent::build_system_prompt(
         &config,
         &working_dir,
         memory_context_opt.as_deref(),
-        None, // plan state is injected dynamically by refresh_system_prompt before each LLM call
+        None, // task list is injected dynamically by refresh_system_prompt before each LLM call
     )
     .await;
 
-    // Generate session ID early so NoteTool can use it for its file path.
-    // For resumed sessions this comes from --resume; for new sessions we pre-generate it.
-    let session_id = args.resume.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    // Build tools (including agent tool, memory tool, plan tool, and background task tools)
+    // Build tools (including agent tool, memory tool, task tool, and background task tools)
     let mut tools: Vec<Box<dyn Tool>> = all_tools();
     let memory_tool = rusty_tools::memory::MemoryTool::new(project_memory);
     tools.push(Box::new(memory_tool));
 
-    let plan_tool = rusty_tools::todowrite::TodoWriteTool::new(plan.clone());
-    tools.push(Box::new(plan_tool));
+    let task_tool = rusty_tools::todowrite::TodoWriteTool::new(task_registry.clone(), session_id.clone());
+    tools.push(Box::new(task_tool));
 
     // Note scratchpad tool — session-scoped file for recording observations
     let notes_path = rusty_core::ConversationSession::notes_path(&sessions_dir, &session_id);
@@ -620,7 +622,7 @@ async fn main() -> Result<()> {
         )
     };
     agent.set_permission_mode(config.permission_mode);
-    agent.set_plan(plan.clone());
+    agent.set_task_registry(task_registry.clone(), session_id.clone());
     agent.set_notes_path(notes_path);
     agent.set_checkpoint_path(checkpoint_path);
 
@@ -639,7 +641,7 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir, keymap, plan.clone(), session_id).await?;
+        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir, keymap, task_registry.clone(), session_id).await?;
         return Ok(());
     }
 
@@ -1001,7 +1003,7 @@ async fn run_tui(
     mut settings: Settings,
     sessions_dir: &Path,
     keymap: Option<keymap_lib::KeyMap>,
-    plan: Arc<tokio::sync::Mutex<Plan>>,
+    _task_registry: Arc<rusty_core::task::TaskRegistry>,
     session_id: String,
 ) -> Result<()> {
     use rusty_core::Message;

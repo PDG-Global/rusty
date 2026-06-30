@@ -377,15 +377,24 @@ pub async fn maybe_compact(
         }
         summary_prompt.push_str(
             "Summarize the following conversation concisely. Your summary MUST include:\n\n\
-             1. **Active intent**: The user's most recent request, VERBATIM BLOCK-QUOTED.\n\
-             2. **Next concrete action**: The single next step to take when resuming.\n\
-             3. **What was completed**: Key accomplishments and code changes.\n\
-             4. **Current state**: What's in progress, what files are involved.\n\
+             1. **Active intent**: The user's most ORIGINAL request that started this work, \
+             VERBATIM BLOCK-QUOTED. This is the single most important thing to preserve. \
+             If the user gave one request at the start, that is the intent — do not let it \
+             be overwritten by intermediate exploration or tangential work.\n\
+             2. **Next concrete action**: The single next step to take when resuming. \
+             Be specific: name files to edit, commands to run, or changes to make.\n\
+             3. **What was completed**: Key accomplishments and code changes made so far.\n\
+             4. **Current state**: What is in progress. List SPECIFIC file paths being edited.\n\
              5. **Key decisions**: Technical choices and their rationale.\n\
              6. **Errors and fixes**: Issues encountered and how resolved.\n\n\
-             CRITICAL: §1 must contain a verbatim block-quoted user request (> \"exact words\"). \
-             §2 must be an actionable directive the agent can execute immediately. \
-             The agent wakes up with ONLY this summary — it must know exactly where to continue.\n\n"
+             CRITICAL RULES:\n\
+             - §1 must contain a verbatim block-quoted user request (> \"exact words\"). \
+             Use the user's FIRST substantive request, not a later clarification.\n\
+             - §2 must be an actionable directive the agent can execute immediately.\n\
+             - §4 must list the exact file paths the agent was reading or writing.\n\
+             - The agent wakes up with ONLY this summary — it must know exactly where to continue.\n\
+             - Do NOT include git status, git diff, or unrelated repository state in the summary. \
+             Only include context directly relevant to the user's active request.\n\n"
         );
         summary_prompt.push_str(&old_text);
 
@@ -543,7 +552,16 @@ pub async fn force_compact(
             summary_prompt.push_str("\n\n");
         }
     }
-    summary_prompt.push_str("Summarize the following conversation concisely, preserving key context, decisions, and any code changes discussed:\n\n");
+    summary_prompt.push_str(
+        "Summarize the following conversation concisely. Your summary MUST include:\n\n\
+         1. **Active intent**: The user's most ORIGINAL request, VERBATIM BLOCK-QUOTED.\n\
+         2. **Next concrete action**: The single next step, with specific file paths.\n\
+         3. **What was completed**: Key accomplishments and code changes.\n\
+         4. **Current state**: What is in progress, specific files being edited.\n\
+         5. **Key decisions**: Technical choices and their rationale.\n\n\
+         CRITICAL: §1 must contain a verbatim block-quoted user request. \
+         The agent wakes up with ONLY this summary.\n\n"
+    );
     summary_prompt.push_str(&old_text);
 
     let request = MessageRequest {
@@ -655,6 +673,150 @@ pub fn messages_to_text(messages: &[Message]) -> String {
         }
     }
     parts.join("\n\n")
+}
+
+/// Extract a section from a checkpoint markdown file by its `## §N Title` header.
+/// Returns the section body (everything until the next `## §` header or end of file).
+#[allow(dead_code)] // used by tests; available for future rebuild-context consumers
+pub(crate) fn extract_section<'a>(checkpoint: &'a str, section_header: &str) -> Option<&'a str> {
+    let start = checkpoint.find(section_header)?;
+    let body_start = start + checkpoint[start..].find('\n')?;
+    let rest = &checkpoint[body_start..];
+    let end = rest[1..]
+        .find("\n## §")
+        .map(|i| i + 1)
+        .unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+/// Extract the last N user messages as plain text, for verbatim preservation
+/// in the rebuild context. Skips compaction boundary messages and empty texts.
+pub fn recent_user_messages(messages: &[Message], count: usize) -> Vec<String> {
+    messages
+        .iter()
+        .rev()
+        .filter(|m| m.role == Role::User)
+        .filter_map(|m| {
+            let text = m.get_all_text();
+            if text.contains("[Previous conversation summary]")
+                || text.contains("Conversation history was automatically compacted")
+            {
+                return None;
+            }
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(text)
+        })
+        .take(count)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+/// Generate a tail-aware reminder based on the last message role in the
+/// preserved tail. Mirrors MiMo Code's tail-aware system reminders.
+pub fn tail_aware_reminder(messages: &[Message]) -> &'static str {
+    let last = match messages.last() {
+        Some(m) => m,
+        None => return "",
+    };
+    match last.role {
+        Role::Assistant => {
+            if last.has_tool_use() {
+                "The previous assistant turn made tool calls. Process the tool results \
+                 and continue your work loop."
+            } else {
+                "The previous assistant turn ended. Check your task list before stopping \
+                 again — if work remains, continue."
+            }
+        }
+        Role::User => "",
+    }
+}
+
+/// Render the full rebuild context that is injected as a synthetic user message
+/// after Tier 3 compaction. Modeled after MiMo Code's renderRebuildContext().
+///
+/// Assembles: checkpoint.md content, notes.md content, recent verbatim user
+/// messages, seam framing, and a tail-aware reminder into a single message
+/// that tells the agent exactly where to resume.
+pub async fn render_rebuild_context(
+    checkpoint_path: Option<&Path>,
+    notes_path: Option<&Path>,
+    messages: &[Message],
+) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    // Header: explicit framing that this is a continuation
+    lines.push(
+        "This session is being continued from a previous conversation that was \
+         compacted to save context space. The checkpoint and notes below cover \
+         the earlier portion of the conversation."
+            .to_string(),
+    );
+    lines.push(String::new());
+
+    // Section 1: Session checkpoint (full body)
+    if let Some(cp_path) = checkpoint_path {
+        if let Some(checkpoint) = read_file_content(cp_path).await {
+            if !checkpoint.trim().is_empty() {
+                lines.push("## Session checkpoint".to_string());
+                lines.push(checkpoint.trim().to_string());
+                lines.push(String::new());
+            }
+        }
+    }
+
+    // Section 2: Session notes (full body)
+    if let Some(n_path) = notes_path {
+        if let Some(notes) = read_file_content(n_path).await {
+            if !notes.trim().is_empty() {
+                lines.push("## Session notes".to_string());
+                lines.push(notes.trim().to_string());
+                lines.push(String::new());
+            }
+        }
+    }
+
+    // Section 3: Recent user messages (verbatim)
+    let recent = recent_user_messages(messages, 5);
+    if !recent.is_empty() {
+        lines.push("## Recent user input (verbatim)".to_string());
+        for msg in &recent {
+            if msg.len() > 2000 {
+                lines.push(format!("> {}...(truncated)", &msg[..2000]));
+            } else {
+                lines.push(format!("> {msg}"));
+            }
+        }
+        lines.push(String::new());
+    }
+
+    // Section 4: Seam framing — explicit resume instructions
+    lines.push(
+        "Recent messages are preserved below — the assistant turn (and any tool results) \
+         you will see is real history, not pseudo-content. Continue your task by responding \
+         to the most recent state."
+            .to_string(),
+    );
+    lines.push(String::new());
+    lines.push(
+        "Resume directly. Do not acknowledge this memory dump, do not recap, \
+         do not preface with \"I will continue\" or similar. Pick up the last task \
+         as if the break never happened."
+            .to_string(),
+    );
+
+    // Section 5: Tail-aware reminder
+    let reminder = tail_aware_reminder(messages);
+    if !reminder.is_empty() {
+        lines.push(String::new());
+        lines.push(reminder.to_string());
+    }
+
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -792,5 +954,240 @@ mod tests {
             assert_eq!(CheckpointTier::from_u8(v).as_u8(), v);
         }
         assert_eq!(CheckpointTier::from_u8(99).as_u8(), 3); // saturates
+    }
+
+    // ── extract_section ────────────────────────────────────────────
+
+    #[test]
+    fn extract_section_finds_intent() {
+        let cp = "\
+# Session checkpoint
+
+## §1 Active intent
+> Transfer the site files to index.html
+
+## §2 Next concrete action
+Read rusty-website (1).html and extract content.
+
+## §3 Directives (this session)
+(none)
+";
+        let intent = extract_section(cp, "§1 Active intent").unwrap();
+        assert!(intent.contains("Transfer the site files"));
+        let next = extract_section(cp, "§2 Next concrete action").unwrap();
+        assert!(next.contains("Read rusty-website"));
+    }
+
+    #[test]
+    fn extract_section_returns_none_for_missing() {
+        let cp = "## §1 Active intent\nhello\n";
+        assert!(extract_section(cp, "§99 Missing").is_none());
+    }
+
+    #[test]
+    fn extract_section_last_section_goes_to_eof() {
+        let cp = "## §11 Open notes\nSome notes here.\nNo trailing section.";
+        let body = extract_section(cp, "§11 Open notes").unwrap();
+        assert!(body.contains("Some notes here."));
+        assert!(body.contains("No trailing section."));
+    }
+
+    // ── recent_user_messages ───────────────────────────────────────
+
+    #[test]
+    fn recent_user_messages_skips_compaction_boundaries() {
+        let msgs = vec![
+            Message::user("First real request"),
+            Message::assistant("Working on it"),
+            Message::user("[Previous conversation summary]\nSome summary"),
+            Message::user("Second real request"),
+            Message::assistant("Done"),
+        ];
+        let recent = recent_user_messages(&msgs, 10);
+        assert_eq!(recent.len(), 2);
+        assert!(recent[0].contains("First real request"));
+        assert!(recent[1].contains("Second real request"));
+    }
+
+    #[test]
+    fn recent_user_messages_limits_count() {
+        let msgs: Vec<Message> = (0..10)
+            .map(|i| Message::user(format!("Request {i}")))
+            .collect();
+        let recent = recent_user_messages(&msgs, 3);
+        assert_eq!(recent.len(), 3);
+        assert!(recent[0].contains("Request 7"));
+        assert!(recent[2].contains("Request 9"));
+    }
+
+    #[test]
+    fn recent_user_messages_empty_on_no_user() {
+        let msgs = vec![Message::assistant("hello")];
+        let recent = recent_user_messages(&msgs, 5);
+        assert!(recent.is_empty());
+    }
+
+    // ── tail_aware_reminder ────────────────────────────────────────
+
+    #[test]
+    fn tail_aware_reminder_for_assistant_with_tools() {
+        use rusty_core::ContentBlock;
+        let msgs = vec![Message::assistant_blocks(vec![
+            ContentBlock::Text {
+                text: "Let me check".into(),
+            },
+            ContentBlock::ToolUse {
+                id: "1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"command": "ls"}),
+            },
+        ])];
+        let reminder = tail_aware_reminder(&msgs);
+        assert!(reminder.contains("tool calls"));
+        assert!(reminder.contains("continue your work loop"));
+    }
+
+    #[test]
+    fn tail_aware_reminder_for_assistant_without_tools() {
+        let msgs = vec![Message::assistant("Done with the task.")];
+        let reminder = tail_aware_reminder(&msgs);
+        assert!(reminder.contains("task list"));
+    }
+
+    #[test]
+    fn tail_aware_reminder_for_user_message() {
+        let msgs = vec![Message::user("Do this")];
+        let reminder = tail_aware_reminder(&msgs);
+        assert_eq!(reminder, "");
+    }
+
+    #[test]
+    fn tail_aware_reminder_empty_messages() {
+        let msgs: Vec<Message> = vec![];
+        let reminder = tail_aware_reminder(&msgs);
+        assert_eq!(reminder, "");
+    }
+
+    // ── render_rebuild_context ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn render_rebuild_context_with_checkpoint_and_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cp_path = dir.path().join("checkpoint.md");
+        let notes_path = dir.path().join("notes.md");
+
+        tokio::fs::write(
+            &cp_path,
+            "# Session checkpoint\n\n## §1 Active intent\n> Transfer site files\n\n## §2 Next concrete action\nRead the HTML files.\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(&notes_path, "# Notes\n\n## [turn 1]\nFound template in rusty-website.\n")
+            .await
+            .unwrap();
+
+        let msgs = vec![
+            Message::user("Take a look at the site folder"),
+            Message::assistant("I'll read the files."),
+        ];
+
+        let result = render_rebuild_context(Some(&cp_path), Some(&notes_path), &msgs).await;
+
+        // Should contain the continuation framing
+        assert!(result.contains("continued from a previous conversation"));
+        // Should contain checkpoint content
+        assert!(result.contains("## Session checkpoint"));
+        assert!(result.contains("Transfer site files"));
+        assert!(result.contains("Read the HTML files"));
+        // Should contain notes
+        assert!(result.contains("## Session notes"));
+        assert!(result.contains("Found template"));
+        // Should contain recent user messages
+        assert!(result.contains("## Recent user input"));
+        assert!(result.contains("Take a look at the site folder"));
+        // Should contain seam framing
+        assert!(result.contains("Resume directly"));
+        assert!(result.contains("Do not acknowledge this memory dump"));
+    }
+
+    #[tokio::test]
+    async fn render_rebuild_context_no_files() {
+        let msgs = vec![Message::user("Hello"), Message::assistant("Hi there")];
+
+        let result = render_rebuild_context(None, None, &msgs).await;
+
+        // Should still have framing and recent messages
+        assert!(result.contains("continued from a previous conversation"));
+        assert!(result.contains("## Recent user input"));
+        assert!(result.contains("Hello"));
+        assert!(result.contains("Resume directly"));
+        // Should NOT have checkpoint or notes sections
+        assert!(!result.contains("## Session checkpoint"));
+        assert!(!result.contains("## Session notes"));
+    }
+
+    #[tokio::test]
+    async fn render_rebuild_context_empty_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let cp_path = dir.path().join("checkpoint.md");
+        tokio::fs::write(&cp_path, "").await.unwrap();
+
+        let msgs = vec![Message::user("Test")];
+        let result = render_rebuild_context(Some(&cp_path), None, &msgs).await;
+
+        // Empty checkpoint should be skipped
+        assert!(!result.contains("## Session checkpoint"));
+        assert!(result.contains("Resume directly"));
+    }
+
+    #[tokio::test]
+    async fn render_rebuild_context_no_user_messages() {
+        let msgs = vec![Message::assistant("Working on it...")];
+
+        let result = render_rebuild_context(None, None, &msgs).await;
+
+        // No user messages → no "Recent user input" section
+        assert!(!result.contains("## Recent user input"));
+        // But should still have framing
+        assert!(result.contains("Resume directly"));
+    }
+
+    #[tokio::test]
+    async fn render_rebuild_context_includes_tail_reminder() {
+        let dir = tempfile::tempdir().unwrap();
+        let cp_path = dir.path().join("checkpoint.md");
+        tokio::fs::write(
+            &cp_path,
+            "## §1 Active intent\n> Do the thing\n",
+        )
+        .await
+        .unwrap();
+
+        // Last message is assistant with tool use → should get "continue your work loop"
+        use rusty_core::ContentBlock;
+        let msgs = vec![Message::assistant_blocks(vec![
+            ContentBlock::Text {
+                text: "Let me check".into(),
+            },
+            ContentBlock::ToolUse {
+                id: "1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"command": "ls"}),
+            },
+        ])];
+
+        let result = render_rebuild_context(Some(&cp_path), None, &msgs).await;
+        assert!(result.contains("tool calls"));
+        assert!(result.contains("continue your work loop"));
+    }
+
+    #[tokio::test]
+    async fn render_rebuild_context_truncates_long_messages() {
+        let msgs = vec![Message::user("a".repeat(3000))];
+
+        let result = render_rebuild_context(None, None, &msgs).await;
+        // Should be truncated at 2000 chars + "(truncated)"
+        assert!(result.contains("(truncated)"));
+        assert!(result.len() < 3500); // not the full 3000 chars
     }
 }

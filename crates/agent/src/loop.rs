@@ -7,7 +7,6 @@ use rusty_core::permissions::{
     classify_bash_command, make_allow_key, BashClassification, PermissionDecision,
     PermissionLevel, PermissionRequest,
 };
-use rusty_core::plan::Plan;
 use rusty_core::{
     CancelToken, Config, ContentBlock, Message, PermissionMode, Role, RustyError, UsageInfo,
 };
@@ -96,8 +95,10 @@ pub struct Agent {
     permission_callback: Option<PermissionCallback>,
     session_allowlist: HashSet<String>,
     permanent_allowlist: HashSet<String>,
-    /// Persistent plan, injected into system prompt each turn.
-    plan: Option<Arc<tokio::sync::Mutex<Plan>>>,
+    /// Task registry (SQLite-backed). Replaces the old Plan system.
+    task_registry: Option<Arc<rusty_core::task::TaskRegistry>>,
+    /// Session ID for task registry queries.
+    session_id: String,
     /// When true, the agent is in explicit plan mode (no Write/Execute tools allowed).
     pub plan_mode: bool,
     /// When true, the model called exit_plan_mode this turn, so we should not
@@ -125,7 +126,14 @@ pub struct Agent {
     checkpoint_path: Option<PathBuf>,
     /// Background checkpoint writer state.
     writer_state: crate::checkpoint_writer::CheckpointWriterState,
+    /// Number of times the task gate has forced a re-entry this run.
+    /// Capped at MAX_TASK_GATE_REENTRIES to prevent infinite loops.
+    task_gate_reentries: u32,
 }
+
+/// Maximum times the task gate can force a re-entry before allowing the agent
+/// to stop with incomplete tasks. Matches MiMo's MAX_TASK_GATE_MAIN_REACT.
+const MAX_TASK_GATE_REENTRIES: u32 = 3;
 
 #[derive(Default)]
 pub struct AgentCallbacks<'a> {
@@ -167,7 +175,8 @@ impl Agent {
             permission_callback: None,
             session_allowlist: HashSet::new(),
             permanent_allowlist: HashSet::new(),
-            plan: None,
+            task_registry: None,
+            session_id: String::new(),
             plan_mode: false,
             exited_plan_mode_this_turn: false,
             consecutive_read_turns: 0,
@@ -178,6 +187,7 @@ impl Agent {
             notes_path: None,
             checkpoint_path: None,
             writer_state: crate::checkpoint_writer::CheckpointWriterState::new(),
+            task_gate_reentries: 0,
         }
     }
 
@@ -205,9 +215,10 @@ impl Agent {
         self.permanent_allowlist = allowlist;
     }
 
-    /// Set the persistent plan for this agent.
-    pub fn set_plan(&mut self, plan: Arc<tokio::sync::Mutex<Plan>>) {
-        self.plan = Some(plan);
+    /// Set the task registry for this agent.
+    pub fn set_task_registry(&mut self, registry: Arc<rusty_core::task::TaskRegistry>, session_id: String) {
+        self.task_registry = Some(registry);
+        self.session_id = session_id;
     }
 
     /// Set the path to the session-scoped notes scratchpad file.
@@ -234,15 +245,10 @@ impl Agent {
             prompt.push_str(mode_text);
         }
 
-        // Inject checkpoint context if available (for rebuild after compaction)
-        if let Some(cp_path) = &self.checkpoint_path {
-            if let Some(checkpoint) = crate::compact::read_file_content(cp_path).await {
-                prompt.push_str("\n\n## Session Checkpoint\n\n");
-                prompt.push_str("The following checkpoint preserves key context from earlier in this session. ");
-                prompt.push_str("Use it to understand what has been done and what needs to happen next.\n\n");
-                prompt.push_str(&checkpoint);
-            }
-        }
+        // Checkpoint context is injected as a synthetic user message at the
+        // rebuild boundary (in the compaction block of `run()`), not here.
+        // This matches MiMo Code's architecture where rebuild context is a
+        // user message, not part of the system prompt.
 
         self.system_prompt = prompt;
     }
@@ -270,11 +276,7 @@ impl Agent {
         self.messages.clear();
         self.plan_mode = false;
         self.file_reads_this_run = 0;
-        if let Some(plan) = &self.plan {
-            let mut p = plan.lock().await;
-            p.items.clear();
-            let _ = p.save();
-        }
+        // Task registry persists across clears — tasks are not wiped on /clear.
     }
 
     /// Force-compact the conversation history, summarizing older messages.
@@ -282,10 +284,9 @@ impl Agent {
     pub async fn compact(&mut self) -> Result<bool, RustyError> {
         // Take messages out to avoid borrow conflicts with provider
         let mut msgs = std::mem::take(&mut self.messages);
-        let plan_text = if let Some(plan) = &self.plan {
-            let plan = plan.lock().await;
-            let text = plan.render_for_tool_output();
-            if text.is_empty() || text == "Todo list is empty." {
+        let plan_text = if let Some(registry) = &self.task_registry {
+            let text = registry.render_for_tool_output(&self.session_id);
+            if text.is_empty() || text == "No tasks." {
                 None
             } else {
                 Some(text)
@@ -401,53 +402,60 @@ impl Agent {
         Ok(text)
     }
 
-    /// Generate a short, contextual follow-up suggestion based on the recent
-    /// conversation. Makes a single non-streaming LLM call with a minimal
-    /// system prompt and the last few messages of history. Returns `None` if
-    /// the model produces nothing usable, the call fails, or there is too
-    /// little conversation to suggest from.
+    /// Predict the user's most likely next message based on the last turn.
+    /// Makes a lightweight non-streaming LLM call with only the last user +
+    /// assistant pair. Returns `None` if the call fails, times out, or produces
+    /// nothing usable. Matches MiMo Code's predict() architecture.
     pub async fn generate_followup_suggestion(&self) -> Option<String> {
         debug!("[suggest] generate_followup_suggestion called, messages={}", self.messages.len());
-        // Need at least one user turn and one assistant response.
-        if self.messages.len() < 2 {
-            debug!("[suggest] too few messages, returning None");
-            return None;
-        }
 
-        // Trim to the most recent few messages to keep the call cheap.
-        let recent: Vec<Message> = self.messages.iter().rev().take(6).rev().cloned().collect();
+        // Find the last user message and its answering assistant message.
+        let last_user_idx = self.messages.iter().rposition(|m| m.role == Role::User)?;
+        let last_user = &self.messages[last_user_idx];
+        // The assistant response is the message right after the last user message.
+        let last_assistant = self.messages.get(last_user_idx + 1).filter(|m| m.role == Role::Assistant)?;
 
-        let system = "You suggest the next thing the user might ask. Given the conversation, \
-            reply with ONE short, natural follow-up question or request the user could send. \
-            Rules:\n\
-            - Output only the suggestion, nothing else. No quotes, no prefixes, no explanation.\n\
-            - Keep it under 12 words. Write as if you are the user.\n\
-            - Ask about a concrete next step (e.g. running tests, a related change, an edge case).\n\
-            - If the assistant just asked a clarifying question, do not repeat it; suggest \
-            something the user would want next.\n\
-            - If no suggestion is appropriate, reply with the single word: NONE";
+        let system = "You predict the single most likely next message a user will send to a \
+            coding assistant, based on the conversation so far. Output only that next message \
+            as one short, natural first-person request (what the user would type). \
+            No preamble, no quotes, no explanation, no markdown. Keep it under 100 characters.";
+
+        let nudge = Message::user(
+            "Based on the conversation above, write the user's most likely next message:",
+        );
 
         let request = MessageRequest {
             model: self.config.model.clone(),
             system: Some(system.to_string()),
-            messages: recent,
+            messages: vec![last_user.clone(), last_assistant.clone(), nudge],
             tools: vec![],
-            max_tokens: 48,
+            max_tokens: 80,
             temperature: Some(0.4),
             thinking_budget: None,
         };
 
-        debug!("[suggest] calling LLM for suggestion...");
-        let response = match self.provider.create_message(request).await {
-            Ok(r) => {
+        debug!("[suggest] calling LLM for prediction...");
+        // Wrap in a timeout to prevent blocking the UI.
+        let response = match tokio::time::timeout(
+            Duration::from_secs(15),
+            self.provider.create_message(request),
+        )
+        .await
+        {
+            Ok(Ok(r)) => {
                 debug!("[suggest] LLM response received");
                 r
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 debug!("[suggest] LLM call failed: {e}");
                 return None;
             }
+            Err(_) => {
+                debug!("[suggest] LLM call timed out after 15s");
+                return None;
+            }
         };
+
         let mut text = response
             .content
             .iter()
@@ -457,14 +465,31 @@ impl Agent {
             })
             .collect::<Vec<_>>()
             .join("");
-        text = text.trim().to_string();
-        debug!("[suggest] raw response: '{}'", text);
+
+        // Strip thinking blocks (some models wrap reasoning in <think> tags).
+        if let Some(start) = text.find("<think>") {
+            if let Some(end) = text.find("</think>") {
+                let after = &text[end + 7..];
+                text = after.trim().to_string();
+            } else {
+                // No closing tag — strip everything from <think> onward.
+                text = text[..start].trim().to_string();
+            }
+        }
+
+        // Take only the first non-empty line (MiMo pattern).
+        let first_line = text
+            .lines()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty())
+            .unwrap_or("")
+            .to_string();
+        text = first_line;
 
         if text.is_empty() || text.eq_ignore_ascii_case("NONE") {
             debug!("[suggest] empty or NONE, returning None");
             return None;
         }
-        debug!("[suggest] returning suggestion: {}", text);
 
         // Strip surrounding quotes if the model added them.
         if (text.starts_with('"') && text.ends_with('"'))
@@ -485,6 +510,7 @@ impl Agent {
             text = format!("{truncated}\u{2026}");
         }
 
+        debug!("[suggest] returning prediction: {}", text);
         if text.is_empty() {
             None
         } else {
@@ -494,6 +520,7 @@ impl Agent {
 
     /// Extract details of incomplete tasks from the most recent `todowrite` call.
     /// Returns a vec of (status, content) pairs for tasks that are not completed/cancelled.
+    #[allow(dead_code)] // replaced by task_gate_check; kept for future use
     fn incomplete_task_details(&self) -> Vec<(String, String)> {
         for msg in self.messages.iter().rev().take(10) {
             if msg.role != Role::Assistant {
@@ -531,14 +558,51 @@ impl Agent {
         vec![]
     }
 
-    /// Finalise any `InProgress` plan items to `Completed` and log.
-    /// Called on every exit path from the agent loop.
-    async fn finalize_plan(&self) {
-        if let Some(plan) = &self.plan {
-            let mut plan = plan.lock().await;
-            let count = plan.finalize_in_progress();
-            if count > 0 {
-                debug!("Finalised {count} in-progress task(s) to completed");
+    /// Task gate check: reads incomplete tasks directly from the registry and decides
+    /// whether to force a re-entry. Returns `Some(reentry_message)` if the agent
+    /// should continue, or `None` if it's allowed to stop.
+    ///
+    /// This is the Rusty equivalent of MiMo's TaskGate.decide(). It reads from
+    /// the authoritative registry (not message history), lists specific
+    /// incomplete tasks, and enforces a re-entry cap.
+    async fn task_gate_check(&mut self) -> Option<String> {
+        let incomplete = if let Some(registry) = &self.task_registry {
+            registry.incomplete_details(&self.session_id)
+        } else {
+            return None;
+        };
+
+        if self.task_gate_reentries >= MAX_TASK_GATE_REENTRIES {
+            warn!(
+                "Task gate: cap exceeded ({}), allowing stop with {} incomplete tasks",
+                MAX_TASK_GATE_REENTRIES,
+                incomplete.len(),
+            );
+            return None;
+        }
+
+        let result = task_gate_decide(&incomplete);
+        if result.is_some() {
+            self.task_gate_reentries += 1;
+        }
+        result
+    }
+
+    /// Log incomplete tasks on exit. Tasks persist in the registry across sessions
+    /// and are NOT auto-completed — the agent or user can resume them later.
+    fn finalize_plan(&self) {
+        if let Some(registry) = &self.task_registry {
+            let incomplete = registry.incomplete_details(&self.session_id);
+            if !incomplete.is_empty() {
+                debug!(
+                    "Agent exiting with {} incomplete task(s): {}",
+                    incomplete.len(),
+                    incomplete
+                        .iter()
+                        .map(|(s, c)| format!("[{}] {}", s, c))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
         }
     }
@@ -563,6 +627,7 @@ impl Agent {
         }
         self.exited_plan_mode_this_turn = false;
         self.consecutive_read_turns = 0;
+        self.task_gate_reentries = 0;
         self.messages.push(Message::user_blocks(content));
 
         // Track whether any turn in this run had write/execute tools.
@@ -590,7 +655,7 @@ impl Agent {
             plan_mode_blocked_this_turn = false;
             if let Some(c) = cancel {
                 if c.is_cancelled() {
-                    self.finalize_plan().await;
+                    self.finalize_plan();
                     return Ok("Turn cancelled by user.".to_string());
                 }
             }
@@ -606,19 +671,17 @@ impl Agent {
             // nudge it to consider using todowrite. This mirrors kimi-code's
             // TodoListReminderInjector behaviour.
             if self.turns_since_todowrite >= 10 {
-                if let Some(plan) = &self.plan {
-                    let plan = plan.lock().await;
-                    let incomplete = plan.incomplete_count();
-                    if incomplete > 0 {
+                if let Some(registry) = &self.task_registry {
+                    let incomplete = registry.incomplete_details(&self.session_id);
+                    if !incomplete.is_empty() {
                         let reminder = format!(
                             "\n\nThe todo list has not been updated recently. \
                              If you are working on tasks that benefit from progress tracking, \
                              consider using todowrite to update task status. \
-                             Also consider clearing or rewriting the todo list if it has become stale \
-                             and no longer matches the current work. \
+                             Also consider clearing or renaming tasks if they have become stale. \
                              This is a gentle reminder; ignore it if not applicable. \
                              Make sure that you NEVER mention this reminder to the user.\n\n{}",
-                            plan.render_for_tool_output()
+                            registry.render_for_tool_output(&self.session_id)
                         );
                         self.system_prompt.push_str(&reminder);
                     }
@@ -632,10 +695,9 @@ impl Agent {
 
             // Maybe compact before sending
             let context_window = self.config.effective_context_window();
-            let plan_text = if let Some(plan) = &self.plan {
-                let plan = plan.lock().await;
-                let text = plan.render_for_tool_output();
-                if text.is_empty() || text == "Todo list is empty." {
+            let plan_text = if let Some(registry) = &self.task_registry {
+                let text = registry.render_for_tool_output(&self.session_id);
+                if text.is_empty() || text == "No tasks." {
                     None
                 } else {
                     Some(text)
@@ -718,10 +780,17 @@ impl Agent {
                     }
                 }
                 if new_tier == crate::compact::CheckpointTier::Compacted {
-                    self.messages.push(Message::user(
-                        "[System: Conversation history was automatically compacted to save context space. \
-                         Key decisions and code changes are preserved in the summary above.]"
-                    ));
+                    // Insert a rich rebuild boundary message — the single source
+                    // of truth for post-compaction recovery. Matches MiMo Code's
+                    // insertRebuildBoundary pattern: checkpoint + notes + recent
+                    // user messages + seam framing + tail-aware reminder.
+                    let rebuild_ctx = crate::compact::render_rebuild_context(
+                        self.checkpoint_path.as_deref(),
+                        self.notes_path.as_deref(),
+                        &self.messages,
+                    )
+                    .await;
+                    self.messages.push(Message::user(rebuild_ctx));
                 }
             }
 
@@ -763,7 +832,7 @@ impl Agent {
                 Ok(s) => s,
                 Err(e) => {
                     warn!("LLM API call failed after retries: {e}");
-                    self.finalize_plan().await;
+                    self.finalize_plan();
                     return Err(e);
                 }
             };
@@ -790,7 +859,7 @@ impl Agent {
                 let per_event_timeout = Duration::from_secs(120).min(remaining);
                 if per_event_timeout.is_zero() {
                     warn!("LLM stream exceeded maximum turn duration of 5 minutes; aborting turn");
-                    self.finalize_plan().await;
+                    self.finalize_plan();
                     return Ok("Turn timed out — maximum duration exceeded.".to_string());
                 }
 
@@ -798,7 +867,7 @@ impl Agent {
                     tokio::select! {
                         event = timeout(per_event_timeout, stream.next()) => event,
                         _ = c.cancelled() => {
-                            self.finalize_plan().await;
+                            self.finalize_plan();
                             return Ok("Turn cancelled by user.".to_string());
                         }
                     }
@@ -860,7 +929,7 @@ impl Agent {
                             }
                             StreamEvent::Done { stop_reason } => break stop_reason,
                             StreamEvent::Error(msg) => {
-                                self.finalize_plan().await;
+                                self.finalize_plan();
                                 return Err(RustyError::Api(msg));
                             }
                         }
@@ -873,7 +942,7 @@ impl Agent {
                     Err(_) => {
                         warn!("LLM stream timed out after {}s with no events; aborting turn", per_event_timeout.as_secs());
                         trace!("Agent stream timed out after {}s", per_event_timeout.as_secs());
-                        self.finalize_plan().await;
+                        self.finalize_plan();
                         return Ok("Turn timed out — no response from model.".to_string());
                     }
                 }
@@ -938,7 +1007,7 @@ impl Agent {
             if !tool_calls.is_empty() {
                 if let Some(c) = cancel {
                     if c.is_cancelled() {
-                        self.finalize_plan().await;
+                        self.finalize_plan();
                         return Ok("Turn cancelled by user.".to_string());
                     }
                 }
@@ -1228,8 +1297,6 @@ impl Agent {
             // Check stop reason
             match stop_reason.as_deref() {
                 Some("end_turn") | None => {
-                    let incomplete = self.incomplete_task_details();
-
                     if had_write_or_execute_this_run {
                         self.consecutive_read_turns = 0;
                         had_write_or_execute_this_run = false;
@@ -1237,31 +1304,15 @@ impl Agent {
                         self.consecutive_read_turns += 1;
                     }
 
-                    // Gentle continuation: if there are incomplete tasks and the model
-                    // didn't explicitly hand control back via exit_plan_mode, give it
-                    // another turn to keep working. No scolding — just encourage progress.
-                    if !incomplete.is_empty() && !self.exited_plan_mode_this_turn {
-                        warn!(
-                            "Model stopped with {} incomplete tasks; continuing",
-                            incomplete.len(),
-                        );
-
-                        let continue_msg = if self.consecutive_read_turns >= 3 {
-                            format!(
-                                "Continue working toward the task. You have {} incomplete step(s) remaining. \
-                                 Use the context you already have from previous turns — do not re-read files. \
-                                 Make progress on the next pending step now.",
-                                incomplete.len(),
-                            )
-                        } else {
-                            format!(
-                                "Continue working toward the task. You have {} incomplete step(s) remaining. \
-                                 Make progress on the next pending step.",
-                                incomplete.len(),
-                            )
-                        };
-                        self.messages.push(Message::user(continue_msg));
-                        continue;
+                    // Task gate: if there are incomplete tasks in the Plan and the model
+                    // didn't explicitly exit plan mode, inject a re-entry message listing
+                    // the specific tasks. Capped at MAX_TASK_GATE_REENTRIES to prevent
+                    // infinite loops. Modeled after MiMo's TaskGate.decide().
+                    if !self.exited_plan_mode_this_turn {
+                        if let Some(gate_msg) = self.task_gate_check().await {
+                            self.messages.push(Message::user(gate_msg));
+                            continue;
+                        }
                     }
 
                     // Fallback continuation: the model used tools this run but stopped
@@ -1283,7 +1334,7 @@ impl Agent {
                         continue;
                     }
 
-                    self.finalize_plan().await;
+                    self.finalize_plan();
                     return Ok(assistant_text);
                 }
                 Some("max_tokens") => {
@@ -1292,12 +1343,12 @@ impl Agent {
                         "{}\n\n[Response truncated: hit max_tokens limit. Consider using /compact if context is full.]",
                         assistant_text
                     );
-                    self.finalize_plan().await;
+                    self.finalize_plan();
                     return Ok(warning);
                 }
                 Some(other) => {
                     debug!("Unexpected stop reason: {other}");
-                    self.finalize_plan().await;
+                    self.finalize_plan();
                     return Ok(assistant_text);
                 }
             }
@@ -1325,7 +1376,7 @@ impl Agent {
         let mut stream = match self.provider.create_message_stream(summary_request).await {
             Ok(s) => s,
             Err(e) => {
-                self.finalize_plan().await;
+                self.finalize_plan();
                 return Err(e);
             }
         };
@@ -1336,7 +1387,7 @@ impl Agent {
                 tokio::select! {
                     event = stream.next() => event,
                     _ = c.cancelled() => {
-                        self.finalize_plan().await;
+                        self.finalize_plan();
                         return Ok("Turn cancelled by user.".to_string());
                     }
                 }
@@ -1359,7 +1410,7 @@ impl Agent {
         if !summary.is_empty() {
             self.messages.push(Message::assistant(&summary));
         }
-        self.finalize_plan().await;
+        self.finalize_plan();
         Ok(summary)
     }
 
@@ -1554,6 +1605,28 @@ fn extract_path_from_tool_args(tool_name: &str, arguments: &str) -> Option<Strin
     }
 }
 
+/// Pure decision function: given a list of incomplete tasks (status, content),
+/// returns `Some(reentry_message)` if the gate should fire, or `None` if the
+/// agent is allowed to stop.  Extracted from Agent for testability.
+fn task_gate_decide(incomplete: &[(String, String)]) -> Option<String> {
+    if incomplete.is_empty() {
+        return None;
+    }
+
+    let mut msg = String::from(
+        "You are about to finish, but these tasks are still unfinished:\n",
+    );
+    for (status, content) in incomplete {
+        msg.push_str(&format!("- [{}] {}\n", status, content));
+    }
+    msg.push_str(
+        "For EACH: complete the work then mark it completed via todowrite, \
+         or cancel it if it is genuinely not needed. \
+         Then continue or respond.",
+    );
+    Some(msg)
+}
+
 /// Normalize a tool name from the model to match our registered tools.
 /// Handles case differences and common aliases (e.g. Claude-style `read` → `file_read`).
 fn normalize_tool_name(name: &str) -> String {
@@ -1640,5 +1713,50 @@ mod tests {
     fn truncate_empty_text() {
         let result = smart_truncate_output("", 100);
         assert_eq!(result, "");
+    }
+
+    // ── task_gate_decide ───────────────────────────────────────────
+
+    #[test]
+    fn task_gate_decide_empty_list() {
+        let incomplete: Vec<(String, String)> = vec![];
+        assert!(task_gate_decide(&incomplete).is_none());
+    }
+
+    #[test]
+    fn task_gate_decide_with_incomplete_tasks() {
+        let incomplete = vec![
+            ("open".to_string(), "Implement auth".to_string()),
+            ("in_progress".to_string(), "Add tests".to_string()),
+        ];
+        let msg = task_gate_decide(&incomplete).unwrap();
+        assert!(msg.contains("still unfinished"));
+        assert!(msg.contains("[open] Implement auth"));
+        assert!(msg.contains("[in_progress] Add tests"));
+        assert!(msg.contains("todowrite"));
+    }
+
+    #[test]
+    fn task_gate_decide_single_task() {
+        let incomplete = vec![("open".to_string(), "Fix bug".to_string())];
+        let msg = task_gate_decide(&incomplete).unwrap();
+        assert!(msg.contains("[open] Fix bug"));
+        assert!(msg.contains("complete the work"));
+    }
+
+    #[test]
+    fn task_gate_decide_message_format() {
+        let incomplete = vec![
+            ("open".to_string(), "Task A".to_string()),
+            ("blocked".to_string(), "Task B".to_string()),
+        ];
+        let msg = task_gate_decide(&incomplete).unwrap();
+        // Should have one line per task + header + footer
+        let lines: Vec<&str> = msg.lines().collect();
+        assert_eq!(lines.len(), 4); // header + 2 tasks + footer
+        assert!(lines[0].contains("You are about to finish"));
+        assert!(lines[1].starts_with("- "));
+        assert!(lines[2].starts_with("- "));
+        assert!(lines[3].contains("For EACH"));
     }
 }

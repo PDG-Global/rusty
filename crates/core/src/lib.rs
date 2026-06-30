@@ -13,6 +13,7 @@ pub mod permissions;
 pub mod session_memory;
 pub mod update;
 pub mod plan;
+pub mod task;
 pub mod setup_wizard;
 pub mod types;
 
