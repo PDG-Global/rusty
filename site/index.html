@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rusty - Lightweight, Statically Compiled Terminal AI Agent</title>
+    <title>Rusty — A coding agent that never leaves your terminal</title>
+    <meta name="description" content="Rusty is a single 12 MB binary that pairs with you right where you work — fast, private, and entirely yours. No telemetry. No cloud lock-in. No bloat.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -14,1263 +16,324 @@
                         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
                         mono: ['JetBrains Mono', 'Fira Code', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
                     },
+                    colors: {
+                        rusty: {
+                            50: '#fef7ee',
+                            100: '#fdedd3',
+                            200: '#f9d7a5',
+                            300: '#f5b96d',
+                            400: '#f09332',
+                            500: '#ec7a12',
+                            600: '#d35f08',
+                            700: '#af470a',
+                            800: '#8d390f',
+                            900: '#733110',
+                            950: '#3e1706',
+                        }
+                    }
                 }
             }
         }
     </script>
-    <!-- Premium Google Fonts (Inter & JetBrains Mono) -->
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
-    
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-        }
-        .mono-font {
-            font-family: 'JetBrains Mono', monospace;
-        }
-        /* Custom subtle animations */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(4px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fade-in {
-            animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
+        body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+        .float { animation: float 4s ease-in-out infinite; }
     </style>
 </head>
-<body class="bg-white text-zinc-900 selection:bg-orange-100 min-h-screen flex flex-col">
+<body class="bg-white text-zinc-900 selection:bg-orange-100 min-h-screen">
 
-    <!-- HEADER -->
-    <header class="sticky top-0 z-50 border-b border-zinc-200/60 bg-white/90 backdrop-blur-md">
-        <div class="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <div class="w-6 h-6 rounded bg-orange-600 flex items-center justify-center shadow-sm">
-                    <span class="font-mono font-black text-white text-xs">R</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <span class="font-bold tracking-tight text-sm text-zinc-900">rusty</span>
-                    <span class="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border border-zinc-200 bg-zinc-50 text-zinc-500">
-                        alpha
-                    </span>
-                </div>
-            </div>
-
-            <nav class="hidden md:flex items-center gap-8 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-                <a href="#why" class="hover:text-zinc-950 transition-colors">Philosophy</a>
-                <a href="#quickstart" class="hover:text-zinc-950 transition-colors">Quick Start</a>
-                <a href="#specs" class="hover:text-zinc-950 transition-colors">Specifications</a>
-                <a href="#features" class="hover:text-zinc-950 transition-colors">Features</a>
-                <a href="#security" class="hover:text-zinc-950 transition-colors">Security</a>
-                <a href="#reference" class="hover:text-zinc-950 transition-colors">Reference</a>
-            </nav>
-
-            <div class="flex items-center gap-4">
-                <a 
-                    href="https://github.com/PDG-Global/rusty" 
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="text-zinc-500 hover:text-zinc-950 transition-colors flex items-center gap-1.5 text-xs font-semibold"
-                    title="View source on GitHub"
-                >
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+    <!-- NAV -->
+    <nav class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-zinc-200/60">
+        <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+            <a href="#top" class="flex items-center gap-2.5 text-zinc-900 no-underline">
+                <div class="w-8 h-8 rounded-lg bg-rusty-600 flex items-center justify-center">
+                    <svg class="w-5 h-5 text-white" viewBox="0 0 120 116" fill="none">
+                        <rect x="12" y="8" width="96" height="90" rx="18" fill="currentColor"/>
+                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
+                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+                        <circle cx="92" cy="89" r="3.2" fill="#6FCF7A"/>
                     </svg>
-                    <span class="hidden sm:inline text-[11px] uppercase tracking-wider font-semibold">GitHub</span>
+                </div>
+                <span class="font-bold text-lg tracking-tight">rusty</span>
+            </a>
+            <div class="hidden md:flex items-center gap-8">
+                <a href="#terminal" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">See it work</a>
+                <a href="#features" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">Why Rusty</a>
+                <a href="#models" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">Models</a>
+                <a href="#install" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">Install</a>
+            </div>
+            <div class="flex items-center gap-3">
+                <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener" class="text-zinc-500 hover:text-zinc-900 transition-colors">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
                 </a>
-
-                <button 
-                    id="mobile-menu-btn"
-                    class="p-2 md:hidden rounded border border-zinc-200 hover:bg-zinc-50 text-zinc-600"
-                    aria-label="Toggle Menu"
-                >
-                    <svg id="menu-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-                    <svg id="close-icon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
+                <a href="#install" class="hidden sm:inline-flex items-center gap-2 px-4 py-2 bg-rusty-600 text-white text-sm font-semibold rounded-lg hover:bg-rusty-700 transition-colors">
+                    Get Rusty
+                </a>
             </div>
         </div>
+    </nav>
 
-        <!-- Mobile Nav -->
-        <div 
-            id="mobile-nav" 
-            class="hidden md:hidden border-b border-zinc-200 bg-white px-6 py-4 flex flex-col gap-4 text-xs font-semibold uppercase tracking-wider text-zinc-500"
-        >
-            <a href="#why" class="mobile-link py-1">Philosophy</a>
-            <a href="#quickstart" class="mobile-link py-1">Quick Start</a>
-            <a href="#specs" class="mobile-link py-1">Specifications</a>
-            <a href="#features" class="mobile-link py-1">Features</a>
-            <a href="#security" class="mobile-link py-1">Security</a>
-            <a href="#reference" class="mobile-link py-1">Reference</a>
-            <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener noreferrer" class="mobile-link py-1 flex items-center gap-1.5">
-                GitHub ↗
-            </a>
+    <!-- HERO -->
+    <header id="top" class="max-w-6xl mx-auto px-6 pt-24 pb-20">
+        <div class="grid md:grid-cols-2 gap-16 items-center">
+            <div>
+                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-500 mb-6">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                    Open-source terminal coding agent
+                </div>
+                <h1 class="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[0.95] mb-6">
+                    A coding agent<br>that never leaves<br>your terminal.
+                </h1>
+                <p class="text-lg text-zinc-500 leading-relaxed max-w-md mb-8">
+                    Rusty is a single 12 MB binary that pairs with you right where you work — fast, private, and entirely yours. No telemetry. No cloud lock-in. No bloat.
+                </p>
+                <div class="flex flex-wrap items-center gap-3 mb-8">
+                    <div class="flex items-center gap-3 px-4 py-3 bg-white border border-zinc-200 rounded-xl font-mono text-sm">
+                        <span class="text-rusty-600">$</span>
+                        <span>curl -fsSL rustycli.com/install | sh</span>
+                        <button onclick="navigator.clipboard.writeText('curl -fsSL rustycli.com/install | sh')" class="ml-2 px-2.5 py-1 bg-zinc-100 text-zinc-500 border border-zinc-200 rounded-md text-xs font-semibold hover:bg-zinc-200 transition-colors">Copy</button>
+                    </div>
+                    <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener" class="inline-flex items-center gap-2 px-4 py-3 border border-zinc-200 rounded-xl text-sm font-semibold hover:bg-zinc-50 transition-colors">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                        Star on GitHub
+                    </a>
+                </div>
+                <div class="flex flex-wrap gap-6 text-sm text-zinc-500">
+                    <span class="flex items-center gap-2"><span class="text-rusty-600">●</span> 12 MB static binary</span>
+                    <span class="flex items-center gap-2"><span class="text-rusty-600">●</span> Zero telemetry</span>
+                    <span class="flex items-center gap-2"><span class="text-rusty-600">●</span> Bring your own model</span>
+                </div>
+            </div>
+            <div class="hidden md:flex justify-center">
+                <div class="float">
+                    <svg class="w-72 h-72" viewBox="0 0 120 116" fill="none">
+                        <ellipse cx="60" cy="105" rx="38" ry="6" fill="#1A1410" opacity="0.16"/>
+                        <rect x="12" y="8" width="96" height="90" rx="18" fill="#B8501F"/>
+                        <path d="M16 80 C 16 90, 24 98, 34 98 L 86 98 C 96 98, 104 90, 104 80 L 104 74 L 16 74 Z" fill="#8E3D17" opacity="0.45"/>
+                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
+                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+                        <circle cx="92" cy="89" r="3.2" fill="#6FCF7A"/>
+                    </svg>
+                </div>
+            </div>
         </div>
     </header>
 
-    <!-- HERO SECTION -->
-    <section class="relative py-20 sm:py-28 px-6 bg-white overflow-hidden">
-        <div class="max-w-4xl mx-auto text-left relative z-10">
-            <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-mono mb-8 bg-zinc-50 text-zinc-600 border-zinc-200/80">
-                <span>v0.1.9</span>
-                <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-                <span>Portable Static Binary</span>
-            </div>
-
-            <h1 class="text-4xl sm:text-6xl font-light tracking-tight text-zinc-900 leading-[1.08] mb-8 max-w-3xl">
-                Lightweight terminal coding agent <span class="font-normal italic text-orange-600">built in Rust.</span>
-            </h1>
-
-            <p class="text-base sm:text-lg max-w-2xl mb-10 leading-relaxed font-light text-zinc-500">
-                Statically compiled to run natively with zero dependencies. Rusty safeguards your development environment using local directory sandboxing, OS keychain integration, and absolute privacy. No runtime, no telemetry, no backdoors.
-            </p>
-
-            <!-- Clean execution instruction box (Perfect aligned height of h-11) -->
-            <div class="flex flex-col sm:flex-row items-stretch gap-3 max-w-xl">
-                <div class="w-full sm:w-80 flex items-center justify-between font-mono text-xs px-4 h-11 rounded border bg-zinc-50 border-zinc-200 text-zinc-800 shadow-sm">
-                    <span id="install-cmd">cargo build --release</span>
-                    <button 
-                        onclick="copyText('cargo build --release', 'install-cmd-btn')" 
-                        id="install-cmd-btn"
-                        class="p-1 rounded text-zinc-400 hover:text-zinc-900 transition-colors"
-                        title="Copy installation instruction"
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-                    </button>
-                </div>
-                <a 
-                    href="https://github.com/PDG-Global/rusty" 
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="w-full sm:w-auto px-5 h-11 rounded text-[11px] font-bold uppercase tracking-wider bg-zinc-900 hover:bg-zinc-800 text-white transition-all text-center shrink-0 shadow-sm flex items-center justify-center gap-2"
-                >
-                    Get Source Code on GitHub
-                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
-                </a>
-            </div>
+    <!-- TRUST STRIP -->
+    <div class="border-y border-zinc-200 bg-zinc-50">
+        <div class="max-w-6xl mx-auto px-6 py-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-3 text-sm text-zinc-500 font-medium">
+            <span class="font-semibold text-zinc-900">Bring your own model</span>
+            <span>Open weights</span>
+            <span>Anthropic</span>
+            <span>OpenAI</span>
+            <span>Ollama</span>
+            <span>Any OpenAI-compatible endpoint</span>
         </div>
-    </section>
+    </div>
 
-    <!-- PHILOSOPHY SECTION (FOCUS ON PRIVACY & SECURITY) -->
-    <section id="why" class="py-20 border-y border-zinc-200 bg-zinc-50/50">
-        <div class="max-w-4xl mx-auto px-6">
-            <div class="grid grid-cols-1 md:grid-cols-12 gap-12 items-start">
-                <div class="md:col-span-4 space-y-4">
-                    <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Manifesto</span>
-                    <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900 leading-tight">Hardened local boundaries. Verified trust.</h2>
-                    <p class="text-xs leading-relaxed text-zinc-500 font-light">
-                        Most coding tools require bloated Node/Python packages, continuous background sync processes, and loose telemetry streams. Rusty operates under an absolute privacy model.
-                    </p>
+    <!-- TERMINAL DEMO -->
+    <section id="terminal" class="max-w-6xl mx-auto px-6 py-24">
+        <div class="grid md:grid-cols-2 gap-14 items-center">
+            <div>
+                <div class="text-xs font-bold uppercase tracking-widest text-rusty-600 mb-4">See it work</div>
+                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight leading-tight mb-5">Ask in plain English.<br>Watch it ship.</h2>
+                <p class="text-lg text-zinc-500 leading-relaxed max-w-md mb-8">Rusty reads your repo, plans the change, edits the files, and runs your tests — narrating every step. It asks before it touches anything it shouldn't.</p>
+                <ul class="space-y-4">
+                    <li class="flex gap-3 items-start text-base"><span class="text-rusty-600 font-bold mt-0.5">→</span> Context-aware edits across your whole tree</li>
+                    <li class="flex gap-3 items-start text-base"><span class="text-rusty-600 font-bold mt-0.5">→</span> Runs commands in a sandbox, with approvals</li>
+                    <li class="flex gap-3 items-start text-base"><span class="text-rusty-600 font-bold mt-0.5">→</span> Diffs you can read before anything lands</li>
+                </ul>
+            </div>
+            <div class="rounded-2xl overflow-hidden border border-zinc-200 bg-[#140E0A] shadow-2xl">
+                <div class="flex items-center gap-2 px-4 py-3 bg-[#1B1510] border-b border-[#2A2018]">
+                    <span class="w-3 h-3 rounded-full bg-[#E05A4F]"></span>
+                    <span class="w-3 h-3 rounded-full bg-[#E0B23A]"></span>
+                    <span class="w-3 h-3 rounded-full bg-[#5FB87A]"></span>
+                    <span class="ml-3 font-mono text-xs text-[#9A8C7A]">rusty — ~/projects/api</span>
                 </div>
-
-                <div class="md:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-10">
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">No Telemetry callbacks</h3>
-                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
-                            Rusty features absolutely zero analytic instrumentation, tracing pipelines, or outbound metrics checks. Chat payloads transit strictly between your host and the verified LLM endpoint you configure.
-                        </p>
-                    </div>
-
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Zero-Backdoor blueprints</h3>
-                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
-                            Licensed entirely under AGPL-3.0-or-later copyleft protections. Every crate is distributed as open, verifiable source code. No compiled node packages, binary blobs, or obfuscated execution scripts.
-                        </p>
-                    </div>
-
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Surgical path sandboxing</h3>
-                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
-                            Every single file write, read, and edit is checked recursively. System structures, configurations, and parent directories (`~/.ssh`, `/etc`) are isolated and blocked before any agent action is allowed.
-                        </p>
-                    </div>
-
-                    <div class="space-y-2">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Native Keyring Secrets</h3>
-                        <p class="text-xs leading-relaxed text-zinc-500 font-light">
-                            Your API keys are stored in secure native hardware OS keychains (macOS Keychain, Linux Secret Service, Windows Credential Manager) instead of vulnerable plaintext `.env` configurations.
-                        </p>
-                    </div>
+                <div class="p-6 font-mono text-sm leading-relaxed text-[#E8DDCF]">
+                    <div class="text-[#9A8C7A] mb-1"><span class="text-[#F4B860]">rusty</span> v0.2.0 · ready</div>
+                    <div><span class="text-[#E0703A]">›</span> add rate limiting to the /api/login route</div>
+                    <div class="text-[#9A8C7A]">&nbsp;&nbsp;⠿ reading <span class="text-[#E8DDCF]">src/routes/auth.rs</span></div>
+                    <div class="text-[#9A8C7A]">&nbsp;&nbsp;⠿ planning middleware…</div>
+                    <div class="text-[#6FCF7A]">&nbsp;&nbsp;✔ created <span class="text-[#E8DDCF]">src/middleware/ratelimit.rs</span> <span class="text-[#6FCF7A]">+38</span></div>
+                    <div class="text-[#6FCF7A]">&nbsp;&nbsp;✔ edited&nbsp;&nbsp;<span class="text-[#E8DDCF]">src/routes/auth.rs</span> <span class="text-[#6FCF7A]">+4</span></div>
+                    <div class="text-[#6FCF7A]">&nbsp;&nbsp;✔ cargo test — <span class="text-[#6FCF7A]">31 passed</span></div>
+                    <div class="mt-2 text-[#9A8C7A]">Rate limiter added. 31 tests pass.</div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- SECTION: TERMINAL QUICK START -->
-    <section id="quickstart" class="py-20 max-w-4xl mx-auto px-6 bg-white">
-        <div class="text-left mb-12 space-y-3">
-            <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Quick Start</span>
-            <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Up and running natively</h2>
-            <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
-                Compile Rusty instantly, then launch a session. On first run, the interactive offline configuration guide secures your credentials, maps presets, and mounts directories immediately.
-            </p>
-        </div>
-
-        <!-- Fake Terminal Window container -->
-        <div class="rounded border border-zinc-200 bg-[#fbfbfb] text-[#18181b] shadow-sm flex flex-col h-[480px] overflow-hidden">
-            <!-- Terminal Header Bar -->
-            <div class="px-4 py-2.5 border-b border-zinc-200 bg-zinc-100 flex items-center justify-between">
-                <div class="flex items-center gap-1.5">
-                    <span class="w-2.5 h-2.5 rounded-full bg-zinc-300"></span>
-                    <span class="w-2.5 h-2.5 rounded-full bg-zinc-300"></span>
-                    <span class="w-2.5 h-2.5 rounded-full bg-zinc-300"></span>
-                    <span class="text-[10px] font-mono text-zinc-450 ml-2">rusty --setup</span>
-                </div>
-                <span class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">Console Session</span>
+    <!-- FEATURES -->
+    <section id="features" class="bg-zinc-50 border-y border-zinc-200">
+        <div class="max-w-6xl mx-auto px-6 py-24">
+            <div class="text-center mb-16">
+                <div class="text-xs font-bold uppercase tracking-widest text-rusty-600 mb-4">Why Rusty</div>
+                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight">Everything you need.<br>Nothing you don't.</h2>
             </div>
-
-            <!-- Terminal Contents Area (Pure scroll with plenty of whitespace) -->
-            <div class="flex-1 p-6 font-mono text-xs overflow-y-auto leading-relaxed space-y-4 text-zinc-800">
-                <div class="flex items-center gap-2 text-zinc-400">
-                    <span>$</span>
-                    <span class="text-zinc-950 font-semibold">cargo build --release && ./target/release/rusty</span>
+            <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
+                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    </div>
+                    <h3 class="font-semibold text-lg mb-2">Single binary</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">12 MB static binary. No runtime, no dependencies, no container. Just download and run.</p>
                 </div>
-                
-                <div class="text-zinc-400 font-light">// Environment audit complete. Launching Setup Wizard...</div>
-                
-                <div class="text-orange-600 font-semibold tracking-wide">▲ Rusty Setup Wizard v0.1.9</div>
-                <div class="text-zinc-500">Settings database `~/.rusty/settings.json` not found. Entering safe first-run sequence.</div>
-                
-                <div class="space-y-1">
-                    <div class="text-zinc-900 font-semibold font-mono"><span class="text-orange-600">?</span> Select LLM Provider Preset:</div>
-                    <div class="text-zinc-500 pl-4 leading-normal">
-                        Xiaomi MiMo (token-plan-cn.xiaomimimo.com)<br />
-                        Kimi (api.kimi.com)<br />
-                        OpenAI (api.openai.com)<br />
-                        Ollama (localhost:11434)<br />
-                        ▸ <span class="text-zinc-900 underline font-semibold">DeepSeek (api.deepseek.com)</span>
+                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
+                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
                     </div>
+                    <h3 class="font-semibold text-lg mb-2">Local-first privacy</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">Zero telemetry. Your code never touches our servers. You choose where your requests go.</p>
                 </div>
-
-                <div class="text-emerald-700 font-medium">✓ Selected Preset: DeepSeek (deepseek-v4-pro)</div>
-
-                <div class="space-y-1">
-                    <div class="text-zinc-900 font-semibold font-mono"><span class="text-orange-600">?</span> Choose API Key Credential Store:</div>
-                    <div class="text-zinc-500 pl-4 leading-normal">
-                        ▸ <span class="text-zinc-900 underline font-semibold">OS Keyring (Keychain / Credential Manager)</span><br />
-                        Settings File (~/.rusty/settings.json)
+                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
+                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
                     </div>
+                    <h3 class="font-semibold text-lg mb-2">Sandboxed execution</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">Commands run in a sandbox. Rusty asks before editing, deleting, or executing anything risky.</p>
                 </div>
-
-                <div class="space-y-1">
-                    <div class="text-zinc-900 font-semibold font-mono"><span class="text-orange-600">?</span> Enter your API Key: <span class="text-zinc-400 font-normal">********************************</span></div>
-                    <div class="text-emerald-700 font-medium">🔒 Securely stored API Key in OS Keyring.</div>
+                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
+                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+                    </div>
+                    <h3 class="font-semibold text-lg mb-2">Bring your own model</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">Works with OpenAI, Anthropic, Ollama, and any OpenAI-compatible endpoint. Your choice.</p>
                 </div>
-
-                <div class="text-zinc-500 border-l border-zinc-200 pl-3">
-                    ✓ Configurations written to <code class="bg-zinc-100 px-1 py-0.5 rounded text-zinc-855">~/.rusty/settings.json</code><br />
-                    🎉 Setup complete. Run `rusty` to start coding in plan, bypass, or default modes.
+                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
+                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                    </div>
+                    <h3 class="font-semibold text-lg mb-2">Terminal-native</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">Lives where you work. No context-switching to a browser or IDE. Just type and go.</p>
                 </div>
-
-                <div class="border-t border-zinc-200 pt-4 mt-2 space-y-2">
-                    <div class="text-zinc-400 font-light">// Session active. Useful commands:</div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/resume</span>
-                        <span class="text-zinc-400 text-[10px]">// resume a previous session</span>
+                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
+                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/sessions</span>
-                        <span class="text-zinc-400 text-[10px]">// list saved sessions</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/model</span>
-                        <span class="text-zinc-400 text-[10px]">// show current model</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/compact</span>
-                        <span class="text-zinc-400 text-[10px]">// force compaction</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/version</span>
-                        <span class="text-zinc-400 text-[10px]">// show version and check for updates</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/cost</span>
-                        <span class="text-zinc-400 text-[10px]">// show token usage and estimated cost</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="text-zinc-400">></span>
-                        <span class="text-zinc-700">/quit</span>
-                        <span class="text-zinc-400 text-[10px]">// save and exit</span>
-                    </div>
-                </div>
-
-                <div class="border-t border-zinc-200 pt-4 mt-2 space-y-2">
-                    <div class="flex items-center gap-2 text-zinc-400">
-                        <span>$</span>
-                        <span class="text-zinc-950 font-semibold">rusty --resume SESSION_ID</span>
-                    </div>
-                    <div class="text-zinc-400 font-light">// Resume from CLI with full message history.</div>
-                    <div class="flex items-center gap-2 text-zinc-400">
-                        <span>$</span>
-                        <span class="text-zinc-950 font-semibold">rusty --list-sessions</span>
-                    </div>
-                    <div class="text-zinc-400 font-light">// List all saved sessions.</div>
-                </div>
-
-            </div>
-
-            <!-- Terminal footer info -->
-            <div class="px-5 py-2 border-t border-zinc-200 bg-zinc-50 flex items-center justify-between text-[10px] text-zinc-400">
-                <span class="flex items-center gap-1.5 font-mono">
-                    <span class="w-1.5 h-3 bg-orange-500"></span>
-                    <span>Offline Setup Pipeline Ready</span>
-                </span>
-                <span>Active Target</span>
-            </div>
-        </div>
-    </section>
-
-    <!-- SPECIFICATIONS SECTION (TECHNICAL AUDIT COMPREHENSIVE REBUILD) -->
-    <section id="specs" class="py-20 border-t border-zinc-200 bg-zinc-50/50">
-        <div class="max-w-4xl mx-auto px-6 space-y-16">
-            
-            <!-- Header Text -->
-            <div class="text-left space-y-3">
-                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Technical Audit</span>
-                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Performance and resource profile</h2>
-                <p class="text-xs max-w-lg text-zinc-500 font-light">
-                    Verified diagnostics derived directly from static compilation targets. Pure, zero-overhead execution metrics.
-                </p>
-            </div>
-
-            <!-- Highly Clean, Column-Ruled Specs Grid -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 border-t border-b border-zinc-200 divide-y sm:divide-y-0 sm:divide-x divide-zinc-200 py-6">
-                <!-- Stat 1 -->
-                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
-                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">Binary footprint</span>
-                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">~12 MB</div>
-                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
-                        Statically compiled inside Rust. Zero dynamically linked dependencies or bloated container nodes.
-                    </p>
-                </div>
-                
-                <!-- Stat 2 -->
-                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
-                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">Startup overhead</span>
-                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">&lt; 15ms</div>
-                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
-                        Instant start latency. Avoids interpreters, background runtime boots, or virtual environment parsing.
-                    </p>
-                </div>
-
-                <!-- Stat 3 -->
-                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
-                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">macOS WindowServer CPU</span>
-                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">~0.0%</div>
-                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
-                        Eliminates compositor overhead. Zero rendering lag even with multiple workspace sessions active.
-                    </p>
-                </div>
-
-                <!-- Stat 4 -->
-                <div class="py-4 sm:py-2 sm:px-6 first:pl-0 last:pr-0">
-                    <span class="text-[9px] uppercase tracking-widest font-bold text-zinc-400 block mb-2">Idle memory usage</span>
-                    <div class="text-2xl font-light tracking-tight text-zinc-900 font-mono mb-1">~4.8 MB</div>
-                    <p class="text-[11px] leading-relaxed text-zinc-500 font-light">
-                        Runs on ultra-low memory footprints. No background Node engines or Python runtime leakages.
-                    </p>
-                </div>
-            </div>
-
-            <!-- Comparison Table -->
-            <div class="space-y-6">
-                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
-                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50 flex items-center justify-between">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Harness Architecture Comparison</h3>
-                        <span class="text-[9px] uppercase tracking-wider font-semibold text-zinc-400 font-mono">Platform Profiles</span>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-xs font-light">
-                            <thead>
-                                <tr class="border-b border-zinc-200 font-semibold uppercase tracking-wider text-[10px] text-zinc-400 bg-zinc-50/50">
-                                    <th class="p-4 w-1/4">Operational Aspect</th>
-                                    <th class="p-4 w-1/4 text-zinc-900 font-bold bg-zinc-50/50">Rusty (Static Crate)</th>
-                                    <th class="p-4 w-1/4 text-zinc-500">Node/TS Harnesses</th>
-                                    <th class="p-4 w-1/4 text-zinc-500">Python Frameworks</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-zinc-100 text-zinc-650 font-light">
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-medium text-zinc-800">Primary Dependency</td>
-                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Statically linked bin</td>
-                                    <td class="p-4 text-zinc-500">Node runtime + 100MB+ node_modules</td>
-                                    <td class="p-4 text-zinc-500">Python + Pip packages dependency trees</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-medium text-zinc-800">Memory Footprint (Idle)</td>
-                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~4.8 MB</td>
-                                    <td class="p-4 text-zinc-500">~60 MB - 120 MB</td>
-                                    <td class="p-4 text-zinc-500">~45 MB - 90 MB</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-medium text-zinc-800">macOS WindowServer Load</td>
-                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">~0.0% (99% Saved)</td>
-                                    <td class="p-4 text-zinc-500">25% - 50% CPU spikes (2+ sessions)</td>
-                                    <td class="p-4 text-zinc-500">Variable (High on Tcl/Tk or Electron GUI)</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-medium text-zinc-800">API Key Encryption</td>
-                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Native hardware keyring</td>
-                                    <td class="p-4 text-zinc-500">Plaintext environment logs</td>
-                                    <td class="p-4 text-zinc-500">Plaintext .env configs on host disks</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-medium text-zinc-800">Path Boundary Locks</td>
-                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Strict workspace bounds</td>
-                                    <td class="p-4 text-zinc-500">Full parent disk access</td>
-                                    <td class="p-4 text-zinc-500">Arbitrary host access defaults</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-medium text-zinc-800">Third-Party Risk</td>
-                                    <td class="p-4 font-mono font-medium text-zinc-900 bg-zinc-50/50">Statically audited crates</td>
-                                    <td class="p-4 text-zinc-500">Deep, shifting npm dependency trees</td>
-                                    <td class="p-4 text-zinc-500">Nested pip supply chain packages</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- WindowServer Explanation (Perfect Alignment, High-Fidelity Styling) -->
-                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">The macOS WindowServer Composite Bottleneck</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Modern web-tech developer tools offload code visualization and rendering loops to local Electron or Chrome layers, forcing macOS <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">WindowServer</code> processes to continuously recompute compositing arrays. Opening just two Node/TS agent sessions often captures up to 50% of system CPU purely to draw the interface. 
-                    </p>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Rusty is architected directly around a hardware-supported console-driven <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">ioctl</code> buffer pipeline. Because it writes raw terminal character arrays natively to the active shell viewport, WindowServer rendering overhead is reduced by **99%**, leaving absolute CPU power available for local compilations and model token operations.
-                    </p>
+                    <h3 class="font-semibold text-lg mb-2">Open source</h3>
+                    <p class="text-zinc-500 text-sm leading-relaxed">AGPL-3.0 licensed. Read every line, audit every claim. Build it yourself if you want.</p>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- SECURITY & WORKSPACE MAP SECTION -->
-    <section id="security" class="py-20 border-y border-zinc-200 bg-white">
-        <div class="max-w-4xl mx-auto px-6">
-            <div class="grid grid-cols-1 md:grid-cols-12 gap-12 items-center">
-                <!-- Folder Layout Codeblock -->
-                <div class="md:col-span-6 space-y-4">
-                    <span class="text-[10px] uppercase tracking-widest font-bold text-orange-655 block">Architecture</span>
-                    <h3 class="text-xl font-light tracking-tight text-zinc-900">Workspace Map</h3>
-                    <p class="text-xs leading-relaxed text-zinc-500 font-light">
-                        Rusty contains no obfuscated packages. Review every single source directory, crate boundary, and utility module cleanly.
-                    </p>
-
-                    <div class="p-4 rounded font-mono text-[11px] leading-relaxed border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm">
-                        <div class="text-zinc-400">// crates/</div>
-                        <div class="space-y-1.5 mt-2">
-                            <div>├── <span class="font-semibold text-zinc-900">core/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Foundation: config, permissions, OS credential store integrations, setup wizard.</span></div>
-                            <div>├── <span class="font-semibold text-zinc-900">provider/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Engine: OpenAI-compatible HTTP endpoints & SSE stream clients.</span></div>
-                            <div>├── <span class="font-semibold text-zinc-900">tools/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Sandboxes: file I/O operations, bash command evaluators, search & patch parsers.</span></div>
-                            <div>├── <span class="font-semibold text-zinc-900">agent/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Loop: core orchestration, sub-agents spawning, session compaction.</span></div>
-                            <div>├── <span class="font-semibold text-zinc-900">tui/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Viewports: low-latency, ratatui-based terminal system drawings.</span></div>
-                            <div>└── <span class="font-semibold text-zinc-900">cli/</span><br /><span class="text-[10px] text-zinc-500 pl-4 block">Entry point: parameters bindings, parsing routines, run modes selector.</span></div>
-                        </div>
-                    </div>
-
-                    <!-- Dependency Graph -->
-                    <div class="space-y-2 pt-2">
-                        <h4 class="text-[10px] uppercase tracking-widest font-bold text-zinc-600 block">Dependency Graph</h4>
-                        <div class="p-4 rounded font-mono text-[11px] leading-relaxed border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm">
-                            <div class="space-y-0.5">
-                                <div><span class="font-semibold text-orange-600">cli</span> <span class="text-zinc-400">→</span> <span class="font-semibold text-orange-600">agent</span> <span class="text-zinc-400">→</span> <span class="font-semibold text-orange-600">provider</span></div>
-                                <div><span class="text-zinc-400">  │</span>       <span class="text-zinc-400">↘</span> <span class="font-semibold text-orange-600">tools</span> <span class="text-zinc-400">→</span> <span class="font-semibold text-orange-600">core</span></div>
-                                <div><span class="text-zinc-400">  ├→</span> <span class="font-semibold text-orange-600">tui</span> <span class="text-zinc-400">──────→</span> <span class="font-semibold text-orange-600">core</span></div>
-                                <div><span class="text-zinc-400">  └→</span> <span class="font-semibold text-orange-600">core</span></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Explanation items -->
-                <div class="md:col-span-6 space-y-8">
-                    <div class="space-y-2">
-                        <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Operational Logic</span>
-                        <h2 class="text-2xl font-light tracking-tight text-zinc-900">Hardened Local Logic</h2>
-                    </div>
-
-                    <div class="space-y-6">
-                        <div class="flex items-start gap-3">
-                            <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
-                                <span class="w-2 h-2 rounded-full bg-orange-650"></span>
-                            </div>
-                            <div>
-                                <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">Path Range Isolation</h4>
-                                <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
-                                    Before performing file operations or searches, Rusty verifies that targeted directories map cleanly underneath your current workspace context. Access beyond designated boundaries is aborted instantly.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div class="flex items-start gap-3">
-                            <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
-                                <span class="w-2 h-2 rounded-full bg-orange-650"></span>
-                            </div>
-                            <div>
-                                <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">Interactive Command Checks</h4>
-                                <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
-                                    Commands map recursively to offline classifications. Low-risk actions (such as checking `git status` or running `cargo test`) process smoothly, while modifications to workspace packages demand an explicit confirmation.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div class="flex items-start gap-3">
-                            <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5">
-                                <span class="w-2 h-2 rounded-full bg-orange-650"></span>
-                            </div>
-                            <div>
-                                <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800 mb-1">Open Copyleft Licensing</h4>
-                                <p class="text-xs leading-relaxed text-zinc-500 font-light font-sans">
-                                    Every module operates transparently under copyleft AGPL-3.0-or-later conditions. No proprietary tracking middleware, background phone-homes, or telemetry is permitted in the compilation stream.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+    <!-- MODELS -->
+    <section id="models" class="max-w-6xl mx-auto px-6 py-24">
+        <div class="grid md:grid-cols-2 gap-16 items-center">
+            <div>
+                <div class="text-xs font-bold uppercase tracking-widest text-rusty-600 mb-4">Models</div>
+                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight leading-tight mb-5">Your model.<br>Your rules.</h2>
+                <p class="text-lg text-zinc-500 leading-relaxed max-w-md mb-8">Rusty works with any model you choose. Run an open-weights model locally for maximum privacy, or point it at a hosted API for maximum capability.</p>
+                <ul class="space-y-3 text-zinc-500">
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Xiaomi MiMo</li>
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Kimi</li>
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> GLM</li>
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> DeepSeek</li>
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> MiniMax</li>
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> OpenAI</li>
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Anthropic</li>
+                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Ollama (local)</li>
+                </ul>
             </div>
-
-            <!-- HARDENED PRIVACY OATH BANNER -->
-            <div class="mt-16 p-8 border border-zinc-200 bg-zinc-50/50 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm">
-                <div class="space-y-1.5 max-w-2xl">
-                    <span class="text-[9px] uppercase tracking-widest font-bold text-orange-650 block">Privacy Guarantee</span>
-                    <h4 class="text-sm font-bold tracking-tight text-zinc-900">Zero Analytics Callbacks, Middleware, or Backdoors.</h4>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Rusty does not establish network handshakes to any central telemetry servers. The codebase contains no trackers, telemetry instrumentation libraries, or telemetry toggles. Requests stream strictly and directly between your terminal and the endpoint you specify.
-                    </p>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
+                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                    <span class="font-semibold">Xiaomi MiMo</span>
                 </div>
-                <div class="w-10 h-10 rounded-full border border-orange-200 bg-orange-50/30 flex items-center justify-center shrink-0 text-orange-600">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
+                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                    <span class="font-semibold">Kimi</span>
+                </div>
+                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
+                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                    <span class="font-semibold">GLM</span>
+                </div>
+                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
+                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                    <span class="font-semibold">DeepSeek</span>
+                </div>
+                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
+                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                    <span class="font-semibold">MiniMax</span>
+                </div>
+                <div class="p-5 bg-zinc-900 rounded-xl border border-zinc-200 flex flex-col justify-center gap-1">
+                    <span class="font-mono text-xs text-zinc-400">+ OpenAI</span>
+                    <span class="font-mono text-xs text-zinc-400">+ Anthropic</span>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- FEATURES SECTION (v0.1.9) -->
-    <section id="features" class="py-20 border-y border-zinc-200 bg-white">
-        <div class="max-w-4xl mx-auto px-6">
-            <div class="text-left mb-12 space-y-3">
-                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Capabilities</span>
-                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Built for complex, multi-step work</h2>
-                <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
-                    Rusty coordinates multiple tools, manages task plans, and adapts its reasoning budget dynamically to context pressure.
-                </p>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                <!-- Feature 1: Auto-Plan with Task Tracking -->
-                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Auto-Plan with Task Tracking</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Launch with <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--plan-with-tasks</code> and the agent creates a structured task list before executing. Tasks move through pending, in-progress, and completed states. Plan mode (<code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--permissions plan</code>) restricts to read-only operations for safe exploration.
-                    </p>
+    <!-- INSTALL -->
+    <section id="install" class="max-w-6xl mx-auto px-6 py-24">
+        <div class="relative overflow-hidden rounded-3xl border border-zinc-200 bg-white p-12 text-center">
+            <div class="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-rusty-100/40 to-transparent"></div>
+            <div class="relative">
+                <div class="float inline-block mb-4">
+                    <svg class="w-20 h-20" viewBox="0 0 120 116" fill="none">
+                        <rect x="12" y="8" width="96" height="90" rx="18" fill="#B8501F"/>
+                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
+                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+                        <circle cx="92" cy="89" r="3.2" fill="#6FCF7A"/>
+                    </svg>
                 </div>
-
-                <!-- Feature 2: Concurrent Tool Execution -->
-                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Concurrent Tool Execution</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        When the model issues multiple independent tool calls in a single response, Rusty executes them in parallel via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">tokio::JoinSet</code>. Results are collected in call-order once all complete. Reduces wall-clock time for multi-file edits and batch searches.
-                    </p>
+                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight mb-4">Get Rusty in one line.</h2>
+                <p class="text-lg text-zinc-500 max-w-md mx-auto mb-8">macOS, Linux, and Windows. No account required to start.</p>
+                <div class="inline-flex items-center gap-4 px-5 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl font-mono text-base">
+                    <span class="text-rusty-600">$</span>
+                    <span>curl -fsSL rustycli.com/install | sh</span>
+                    <button onclick="navigator.clipboard.writeText('curl -fsSL rustycli.com/install | sh')" class="px-3 py-2 bg-rusty-600 text-white rounded-lg text-sm font-semibold hover:bg-rusty-700 transition-colors">Copy</button>
                 </div>
-
-                <!-- Feature 3: Multimodal Image Support -->
-                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Multimodal Image Support</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Paste images directly into the TUI input field. Screenshots and diagrams are sanitised (ANSI, control characters, bidi overrides stripped), encoded as base64, and sent as <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">ContentBlock::Image</code> to vision-capable models. Paste length capped at 100KB.
-                    </p>
-                </div>
-
-                <!-- Feature 4: Model Registry & Picker -->
-                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Model Registry & Picker</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Define multiple models in <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">settings.json</code> with per-model API keys, endpoints, and context windows. Switch models mid-session via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">/settings</code> in the TUI sidebar or <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--model</code> from the CLI.
-                    </p>
-                </div>
-
-                <!-- Feature 5: Dynamic Thinking Budget -->
-                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Dynamic Thinking Budget</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Three levels (minimal/normal/deep) control reasoning token allocation. The agent adjusts automatically: multi-step tasks are boosted to normal, and high context usage (>70%) triggers step-downs to preserve output space. Set via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">--thinking-budget</code> or <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">/settings</code>.
-                    </p>
-                </div>
-
-                <!-- Feature 6: Per-Project Memory -->
-                <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Per-Project Memory</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Store project-specific notes, decisions, and preferences in <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">~/.rusty/memory/</code>. Supports save, search, list, and delete actions. Capped at 100 entries per project with FIFO eviction and multi-layer content sanitisation.
-                    </p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- DOCUMENTATION EXPLORER SECTION -->
-    <section id="reference" class="py-20 max-w-4xl mx-auto px-6 bg-zinc-50/50 border-b border-zinc-200">
-        <div class="text-left mb-16 space-y-3">
-            <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Documentation Directory</span>
-            <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">CLI flags, tools, and custom interfaces</h2>
-            <p class="text-xs max-w-lg text-zinc-500 font-light">
-                Inspect CLI parameters, sandbox agent capabilities, or TUI commands verified inside alpha builds.
-            </p>
-        </div>
-
-        <!-- Tab Selector & Search -->
-        <div class="flex flex-col sm:flex-row items-center justify-between gap-6 pb-6 border-b border-zinc-200 mb-8">
-            <div class="flex items-center p-0.5 rounded border border-zinc-200 bg-white">
-                <button
-                    onclick="switchRefTab('tools')"
-                    id="ref-tab-tools"
-                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all bg-zinc-900 text-white shadow-sm"
-                >
-                    Agent Tools
-                </button>
-                <button
-                    onclick="switchRefTab('commands')"
-                    id="ref-tab-commands"
-                    class="ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all text-zinc-500 hover:text-zinc-900"
-                >
-                    Slash Commands
-                </button>
-            </div>
-
-            <!-- Search box -->
-            <div class="relative w-full sm:w-64">
-                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <input
-                    type="text"
-                    id="ref-search-input"
-                    oninput="filterRefItems()"
-                    placeholder="Search parameters..."
-                    class="w-full pl-9 pr-4 py-2 rounded text-xs focus:outline-none focus:ring-1 focus:ring-zinc-800 border border-zinc-200 bg-white text-zinc-900 placeholder-zinc-400 font-mono transition-all"
-                />
-            </div>
-        </div>
-
-        <!-- Dynamic Reference Container -->
-        <div id="ref-cards-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <!-- Content will be injected dynamically via JS -->
-        </div>
-    </section>
-
-    <!-- INSTALLATION SECTION -->
-    <section id="install" class="py-20 max-w-4xl mx-auto px-6 bg-white">
-        <div class="text-left mb-16 space-y-3">
-            <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Compilation & Deployment</span>
-            <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Deploy Rusty locally</h2>
-            <p class="text-xs max-w-lg text-zinc-500 font-light">
-                Secure binary builds directly on any architecture with normal Cargo toolchains.
-            </p>
-        </div>
-
-        <div class="space-y-4">
-            <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50 animate-fade-in">
-                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-                    <div class="flex items-center gap-3">
-                        <span class="w-6 h-6 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center font-mono text-xs font-bold">1</span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Global Installation with Cargo</h4>
-                    </div>
-                    <span class="text-[9px] font-mono bg-emerald-50 border border-emerald-200 text-emerald-600 px-2 py-0.5 rounded uppercase font-semibold">
-                        Standard Deployment
-                    </span>
-                </div>
-                <p class="text-xs mb-4 text-zinc-500 font-light">
-                    Download and assemble target sources from crates.io directly into standard cargo paths.
-                </p>
-                <div class="flex items-center justify-between font-mono text-xs p-3.5 rounded border border-zinc-200 bg-white text-zinc-800 shadow-sm">
-                    <span id="install-route-1">cargo install --path crates/cli</span>
-                    <button 
-                        onclick="copyText('cargo install --path crates/cli', 'install-route-1-btn')"
-                        id="install-route-1-btn"
-                        class="text-zinc-400 hover:text-zinc-900 transition-colors"
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-                    </button>
-                </div>
-            </div>
-
-            <div class="p-6 rounded border border-zinc-200 bg-zinc-50/50">
-                <div class="flex items-center gap-3 mb-4">
-                    <span class="w-6 h-6 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center font-mono text-xs font-bold">2</span>
-                    <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Build from local repository checkout</h4>
-                </div>
-                <p class="text-xs mb-4 text-zinc-500 font-light">
-                    Perform a manual security audit of workspace source files, then assemble release binaries.
-                </p>
-                <div class="space-y-3 font-mono text-xs p-4 rounded border border-zinc-200 bg-white text-zinc-800 shadow-sm">
-                    <div class="flex items-center justify-between">
-                        <span>git clone https://github.com/PDG-Global/rusty.git</span>
-                    </div>
-                    <div class="text-zinc-400 select-none">// Execute fully optimized local compiler build</div>
-                    <div class="flex items-center justify-between">
-                        <span id="install-route-2">cd rusty && cargo build --release</span>
-                        <button 
-                            onclick="copyText('git clone https://github.com/PDG-Global/rusty.git && cd rusty && cargo build --release', 'install-route-2-btn')"
-                            id="install-route-2-btn"
-                            class="text-zinc-400 hover:text-zinc-900 transition-colors"
-                        >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- SESSION MANAGEMENT SECTION -->
-    <section id="sessions" class="py-20 border-y border-zinc-200 bg-zinc-50/50">
-        <div class="max-w-4xl mx-auto px-6">
-            <div class="text-left mb-12 space-y-3">
-                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Sessions</span>
-                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Persistent conversation history</h2>
-                <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
-                    Every conversation is automatically saved to <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">~/.rusty/sessions/&lt;project&gt;/</code> as JSON, including the full message history, model name, and timestamps. Sessions are isolated per-project (derived from your working directory), so different codebases never share conversation history. Sessions resume from where you left off.
-                </p>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Auto-Save on Exit</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Sessions save automatically when you exit via <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/quit</code>, <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/exit</code>, or <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">Ctrl+C</code>. No manual save step required.
-                    </p>
-                </div>
-
-                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Resume from CLI</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Pass <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">--resume SESSION_ID</code> to pick up a conversation directly. Use <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">--list-sessions</code> to see all available session IDs.
-                    </p>
-                </div>
-
-                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Interactive Picker (TUI)</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        Type <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/resume</code> inside a session to browse saved conversations with an interactive list. <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/sessions</code> lists all saved sessions without entering the picker.
-                    </p>
-                </div>
-
-                <div class="p-6 rounded border border-zinc-200 bg-white shadow-sm space-y-3">
-                    <div class="flex items-center gap-2">
-                        <span class="w-1.5 h-1.5 rounded-full bg-orange-600"></span>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-800">Auto-Compaction</h4>
-                    </div>
-                    <p class="text-xs text-zinc-500 font-light leading-relaxed">
-                        When messages exceed approximately 80k tokens or 40 messages, Rusty summarises older messages automatically (keeping the last 10). Trigger manually with <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">/compact</code>.
-                    </p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- CONFIGURATION SECTION -->
-    <section id="configuration" class="py-20 border-y border-zinc-200 bg-white">
-        <div class="max-w-4xl mx-auto px-6">
-            <div class="text-left mb-12 space-y-3">
-                <span class="text-[10px] uppercase tracking-widest font-bold text-orange-650 block">Configuration</span>
-                <h2 class="text-2xl sm:text-3xl font-light tracking-tight text-zinc-900">Settings, credentials, and presets</h2>
-                <p class="text-xs max-w-2xl text-zinc-500 font-light leading-relaxed">
-                    Rusty resolves configuration through a layered chain: environment variables take highest precedence, followed by CLI flags, then the settings file. The setup wizard populates <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">~/.rusty/settings.json</code> on first run.
-                </p>
-            </div>
-
-            <!-- Settings File -->
-            <div class="space-y-10">
-                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
-                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Settings File (<code class="font-mono text-[11px]">~/.rusty/settings.json</code>)</h3>
-                    </div>
-                    <div class="p-6 space-y-4 text-xs text-zinc-650 font-light leading-relaxed">
-                        <div class="font-mono text-[11px] p-4 rounded border border-zinc-200 bg-zinc-50 text-zinc-800 shadow-sm overflow-x-auto">
-<pre>{
-  "api_key": "sk-...",
-  "api_base": "https://api.xiaomimimo.com/v1",
-  "default_model": "mimo-v2.5-pro",
-  "models": [
-    {
-      "group": "Xiaomi",
-      "name": "MiMo Pro",
-      "provider": "OpenAI",
-      "api_base": "https://api.xiaomimimo.com/v1",
-      "model": "mimo-v2.5-pro",
-      "available_models": ["mimo-v2.5-pro", "mimo-v2-flash"],
-      "context_window": 131072,
-      "thinking_budget": 4096
-    }
-  ],
-  "active_model": "mimo-v2.5-pro",
-  "allowed_tools": [
-    "bash:git status",
-    "bash:cargo check"
-  ],
-  "credential_store": "keyring",
-  "thinking_level": "normal",
-  "permission_mode": "default"
-}</pre>
-                        </div>
-                        <p>
-                            The <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1.5 py-0.5 rounded text-[11px]">allowed_tools</code> array is populated by permanent permission grants during the session. Once you approve a tool and choose "always allow", it is written here and persists across sessions.
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Credential Resolution Chain -->
-                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
-                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">API Key Resolution Chain</h3>
-                    </div>
-                    <div class="p-6 space-y-6 text-xs text-zinc-650 font-light leading-relaxed">
-                        <p>
-                            Credentials are resolved in this priority order. The first non-empty value found is used:
-                        </p>
-                        <div class="space-y-3">
-                            <div class="flex items-start gap-3">
-                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">1</span>
-                                <div>
-                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">RUSTY_API_KEY</div>
-                                    <div class="text-zinc-500">Environment variable. Highest priority. Empty strings treated as absent.</div>
-                                </div>
-                            </div>
-                            <div class="flex items-start gap-3">
-                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">2</span>
-                                <div>
-                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">OPENAI_API_KEY</div>
-                                    <div class="text-zinc-500">Environment variable. Standard OpenAI-compatible key. Empty strings treated as absent.</div>
-                                </div>
-                            </div>
-                            <div class="flex items-start gap-3">
-                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">3</span>
-                                <div>
-                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">OS Keyring</div>
-                                    <div class="text-zinc-500">macOS Keychain, Linux Secret Service, or Windows Credential Manager. Used when <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">credential_store</code> is set to <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">keyring</code>.</div>
-                                </div>
-                            </div>
-                            <div class="flex items-start gap-3">
-                                <span class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold text-orange-700">4</span>
-                                <div>
-                                    <div class="font-mono text-zinc-900 font-semibold text-[11px] mb-1">Settings File</div>
-                                    <div class="text-zinc-500">The <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">api_key</code> field in <code class="font-mono text-zinc-750 bg-zinc-100/80 px-1 py-0.5 rounded text-[10px]">~/.rusty/settings.json</code>. Fallback when no other source is available.</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Presets Table -->
-                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
-                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Provider Presets</h3>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-xs font-light">
-                            <thead>
-                                <tr class="border-b border-zinc-200 font-semibold uppercase tracking-wider text-[10px] text-zinc-400 bg-zinc-50/50">
-                                    <th class="p-4">Preset</th>
-                                    <th class="p-4">API Base URL</th>
-                                    <th class="p-4">Default Model</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-zinc-100 text-zinc-650 font-light">
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">xiaomi</td>
-                                    <td class="p-4 font-mono text-[11px]">token-plan-cn.xiaomimimo.com/v1</td>
-                                    <td class="p-4 font-mono text-[11px]">mimo-v2.5-pro</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">kimi</td>
-                                    <td class="p-4 font-mono text-[11px]">api.kimi.com/coding/v1/</td>
-                                    <td class="p-4 font-mono text-[11px]">kimi-k2.6</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">openai</td>
-                                    <td class="p-4 font-mono text-[11px]">api.openai.com/v1</td>
-                                    <td class="p-4 font-mono text-[11px]">gpt-4o</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">deepseek</td>
-                                    <td class="p-4 font-mono text-[11px]">api.deepseek.com</td>
-                                    <td class="p-4 font-mono text-[11px]">deepseek-v4-pro</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">ollama</td>
-                                    <td class="p-4 font-mono text-[11px]">localhost:11434/v1</td>
-                                    <td class="p-4 font-mono text-[11px]">llama3</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Environment Variables -->
-                <div class="rounded border border-zinc-200 overflow-hidden bg-white shadow-sm">
-                    <div class="px-6 py-4 border-b border-zinc-200 bg-zinc-50/50">
-                        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-700">Environment Variables</h3>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-xs font-light">
-                            <thead>
-                                <tr class="border-b border-zinc-200 font-semibold uppercase tracking-wider text-[10px] text-zinc-400 bg-zinc-50/50">
-                                    <th class="p-4 w-1/3">Variable</th>
-                                    <th class="p-4">Purpose</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-zinc-100 text-zinc-650 font-light">
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">RUSTY_API_KEY</td>
-                                    <td class="p-4">API key. Highest credential priority.</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">OPENAI_API_KEY</td>
-                                    <td class="p-4">API key. Standard OpenAI-compatible key.</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">OPENAI_BASE_URL</td>
-                                    <td class="p-4">API base URL override.</td>
-                                </tr>
-                                <tr class="hover:bg-zinc-50/30 transition-colors">
-                                    <td class="p-4 font-mono font-medium text-zinc-900">RUST_LOG</td>
-                                    <td class="p-4">Logging verbosity (debug, info, warn).</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 mt-6 text-sm text-zinc-500">
+                    <span>brew install rusty</span>
+                    <span class="text-zinc-300">·</span>
+                    <span>cargo install rusty-cli</span>
+                    <span class="text-zinc-300">·</span>
+                    <span>scoop install rusty</span>
                 </div>
             </div>
         </div>
     </section>
 
     <!-- FOOTER -->
-    <footer class="border-t border-zinc-200 py-16 px-6 bg-zinc-50 text-zinc-500">
-        <div class="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8 text-xs">
+    <footer class="border-t border-zinc-200 bg-zinc-50">
+        <div class="max-w-6xl mx-auto px-6 py-12 flex flex-wrap items-center justify-between gap-6">
             <div class="flex items-center gap-3">
-                <div class="w-5 h-5 rounded bg-orange-600 flex items-center justify-center">
-                    <span class="font-mono font-bold text-white text-[11px]">R</span>
-                </div>
-                <span class="font-mono font-bold text-zinc-800">
-                    rusty terminal AI agent
-                </span>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-center gap-6">
-                <a 
-                    href="https://github.com/PDG-Global/rusty" 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
-                    class="hover:text-zinc-800 transition-colors inline-flex items-center gap-1.5 font-medium text-zinc-500"
-                >
-                    <svg class="w-4 h-4 text-zinc-400 hover:text-zinc-800 transition-colors" fill="currentColor" viewBox="0 0 24 24">
-                        <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" stroke="none" />
+                <div class="w-7 h-7 rounded-lg bg-rusty-600 flex items-center justify-center">
+                    <svg class="w-4 h-4 text-white" viewBox="0 0 120 116" fill="none">
+                        <rect x="12" y="8" width="96" height="90" rx="18" fill="currentColor"/>
+                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
+                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
                     </svg>
-                    <span>View Repository</span>
-                </a>
-                <span class="text-zinc-300">•</span>
-                <span>Licensed under <strong class="text-zinc-800 font-medium">AGPL-3.0-or-later</strong></span>
-                <span class="text-zinc-300">•</span>
-                <span>© 2026 PDG Global Limited</span>
+                </div>
+                <span class="font-bold text-sm">rusty</span>
             </div>
+            <div class="flex flex-wrap gap-6 text-sm">
+                <a href="https://docs.rustycli.com" class="text-zinc-500 hover:text-zinc-900 transition-colors">Docs</a>
+                <a href="https://github.com/PDG-Global/rusty" class="text-zinc-500 hover:text-zinc-900 transition-colors">GitHub</a>
+                <a href="https://github.com/PDG-Global/rusty/releases" class="text-zinc-500 hover:text-zinc-900 transition-colors">Changelog</a>
+                <a href="privacy.html" class="text-zinc-500 hover:text-zinc-900 transition-colors">Privacy</a>
+                <a href="https://github.com/PDG-Global/rusty/blob/main/LICENSE" class="text-zinc-500 hover:text-zinc-900 transition-colors">License (AGPL-3.0)</a>
+            </div>
+            <div class="text-xs text-zinc-400">© 2026 PDG Global Limited · Made in the terminal</div>
         </div>
     </footer>
 
-    <!-- Dynamic Copy Notification Toast -->
-    <div id="copy-toast" class="fixed bottom-6 right-6 px-4 py-2.5 rounded bg-zinc-900 text-white text-xs font-mono shadow-lg border border-zinc-850 transform translate-y-12 opacity-0 transition-all duration-300 pointer-events-none z-50 flex items-center gap-2">
-        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        <span>Content copied to clipboard</span>
-    </div>
-
-    <!-- MAIN JAVASCRIPT LOGIC -->
-    <script>
-        // ==========================================
-        // LOCAL ARCHITECTURE DATA DIRECTORY
-        // ==========================================
-        const REFERENCE_DATA = {
-            tools: [
-                { name: "file_read", params: "path, offset?, limit?", perm: "ReadOnly", desc: "Reads file contents with optional line offset and limit. Sandboxed to working directory." },
-                { name: "file_write", params: "path, content", perm: "Write", desc: "Creates or overwrites files. Auto-creates parent directories. Sandboxed to working directory." },
-                { name: "file_edit", params: "path, old_text, new_text", perm: "Write", desc: "Exact string match-and-replace editing. Avoids full file rewrites for surgical changes." },
-                { name: "apply_patch", params: "patch", perm: "Write", desc: "Applies unified diff patches with fuzzy context matching. Supports Add/Update/Delete File operations." },
-                { name: "bash", params: "command", perm: "Classified", desc: "Executes shell commands. Read-only commands (ls, git status, cargo check) bypass write permissions automatically." },
-                { name: "grep", params: "pattern, path?, include?", perm: "ReadOnly", desc: "Regex search across files with optional glob filtering. Caps at 200 results. Skips binary files." },
-                { name: "glob", params: "pattern", perm: "ReadOnly", desc: "File pattern matching to discover files by extension, name, or path structure." },
-                { name: "web_fetch", params: "url, max_length?", perm: "ReadOnly", desc: "Fetches URL content via HTTP (30s timeout). Configurable max length, default 10000 chars. Full SSRF protection: blocks localhost, private IPs, link-local, DNS rebinding, and validates all redirects." },
-                { name: "todowrite", params: "tasks[]", perm: "None", desc: "Structured task list management. Accepts items with content, status, and priority. Persists across conversation." },
-                { name: "agent", params: "task, context?", perm: "None", desc: "Spawns a sub-agent in a separate tokio task with BypassPermissions. Sub-agents get all tools except agent (prevents recursion)." },
-                { name: "memory", params: "action, content?, id?, query?", perm: "None", desc: "Per-project persistent memory. Actions: save, search, list, delete. Stored in ~/.rusty/memory/ with 100-entry cap and FIFO eviction. Content sanitised on input and output." }
-            ],
-            commands: [
-                { name: "/help", alias: "/h, /?", desc: "Displays the list of available slash commands and their descriptions." },
-                { name: "/init", alias: "None", desc: "Scans the project codebase and generates an AGENTS.md file with structural context." },
-                { name: "/resume", alias: "/r", desc: "Restores a previously saved conversation session. Interactive picker in TUI mode." },
-                { name: "/sessions", alias: "/s", desc: "Lists all saved sessions with ID, message count, model, and timestamp." },
-                { name: "/compact", alias: "None", desc: "Forces conversation compaction. Summarises older messages to stay within context limits." },
-                { name: "/clear", alias: "None", desc: "Clears the terminal display while preserving the active conversation state." },
-                { name: "/copy", alias: "/c", desc: "Copies the most recent assistant response to the system clipboard." },
-                { name: "/model", alias: "/m", desc: "Displays the currently active model identifier for the session." },
-                { name: "/version", alias: "None", desc: "Displays the current Rusty version and checks for available updates." },
-                { name: "/cost", alias: "None", desc: "Displays cumulative token usage and estimated cost for the current session." },
-                { name: "/permissions", alias: "/perms", desc: "View or revoke always-approved tool permissions granted during the session." },
-                { name: "/settings", alias: "None", desc: "Opens the model registry and general settings overlay. TUI only." },
-                { name: "/rename", alias: "None", desc: "Assigns a human-readable label to the current conversation session." },
-                { name: "/quit", alias: "/q, /exit", desc: "Saves the current session and cleanly exits the agent." }
-            ]
-        };
-
-        let activeRefTab = 'tools';
-
-        // ==========================================
-        // INITIALIZATION
-        // ==========================================
-        window.onload = function() {
-            // Render default references
-            switchRefTab('tools');
-
-            // Set up mobile menu interactions
-            const menuBtn = document.getElementById('mobile-menu-btn');
-            const mobileNav = document.getElementById('mobile-nav');
-            const menuIcon = document.getElementById('menu-icon');
-            const closeIcon = document.getElementById('close-icon');
-
-            if (menuBtn && mobileNav) {
-                menuBtn.addEventListener('click', () => {
-                    const isHidden = mobileNav.classList.contains('hidden');
-                    if (isHidden) {
-                        mobileNav.classList.remove('hidden');
-                        menuIcon.classList.add('hidden');
-                        closeIcon.classList.remove('hidden');
-                    } else {
-                        mobileNav.classList.add('hidden');
-                        menuIcon.classList.remove('hidden');
-                        closeIcon.classList.add('hidden');
-                    }
-                });
-            }
-
-            // Close mobile menu on links clicks
-            const mobileLinks = document.querySelectorAll('.mobile-link');
-            mobileLinks.forEach(link => {
-                link.addEventListener('click', () => {
-                    mobileNav.classList.add('hidden');
-                    menuIcon.classList.remove('hidden');
-                    closeIcon.classList.add('hidden');
-                });
-            });
-        };
-
-        // ==========================================
-        // TERMINAL WIZARD STEP SWITCHER
-        // ==========================================
-        function switchTerminalStep(stepNumber) {
-            // Reset button active classes
-            const stepButtons = document.querySelectorAll('.term-step-btn');
-            stepButtons.forEach((btn, idx) => {
-                const stepIdx = idx + 1;
-                const numSpan = btn.querySelector('span');
-                const titleHeading = btn.querySelector('h4');
-                const pTag = btn.querySelector('p');
-
-                if (stepIdx === stepNumber) {
-                    btn.className = "term-step-btn w-full text-left p-4 rounded-lg border border-orange-500/30 bg-orange-50/50 transition-all flex items-start gap-3.5";
-                    if (numSpan) numSpan.className = "font-mono text-xs font-bold text-orange-600 mt-0.5";
-                    if (titleHeading) titleHeading.className = "text-xs font-bold uppercase tracking-wider text-zinc-800";
-                    if (pTag) pTag.className = "text-[11px] text-zinc-500 mt-1 font-light leading-snug";
-                } else {
-                    btn.className = "term-step-btn w-full text-left p-4 rounded-lg border border-zinc-200 hover:bg-zinc-50/50 transition-all flex items-start gap-3.5";
-                    if (numSpan) numSpan.className = "font-mono text-xs font-bold text-zinc-400 mt-0.5";
-                    if (titleHeading) titleHeading.className = "text-xs font-bold uppercase tracking-wider text-zinc-700";
-                    if (pTag) pTag.className = "text-[11px] text-zinc-400 mt-1 font-light leading-snug";
-                }
-            });
-
-            // Toggle contents display
-            const contentBlocks = document.querySelectorAll('.term-content-block');
-            contentBlocks.forEach((block, idx) => {
-                const blockStep = idx + 1;
-                if (blockStep === stepNumber) {
-                    block.classList.remove('hidden');
-                } else {
-                    block.classList.add('hidden');
-                }
-            });
-        }
-
-        // ==========================================
-        // REFERENCE TAB SWITCHER & FILTERING
-        // ==========================================
-        function switchRefTab(tabName) {
-            activeRefTab = tabName;
-
-            // Highlight chosen buttons
-            const tabButtons = document.querySelectorAll('.ref-tab-btn');
-            tabButtons.forEach(btn => {
-                if (btn.id === `ref-tab-${tabName}`) {
-                    btn.className = "ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all bg-zinc-900 text-white shadow-sm";
-                } else {
-                    btn.className = "ref-tab-btn px-4 py-2 rounded text-[10px] uppercase font-bold tracking-wider transition-all text-zinc-500 hover:text-zinc-900";
-                }
-            });
-
-            // Adjust search placeholder dynamically
-            const inputField = document.getElementById('ref-search-input');
-            if (inputField) {
-                inputField.value = '';
-                inputField.placeholder = `Search ${tabName.toUpperCase()} references...`;
-            }
-
-            renderRefCards(REFERENCE_DATA[tabName]);
-        }
-
-        function filterRefItems() {
-            const inputField = document.getElementById('ref-search-input');
-            if (!inputField) return;
-
-            const query = inputField.value.trim().toLowerCase();
-            const sourceDataset = REFERENCE_DATA[activeRefTab];
-
-            if (!query) {
-                renderRefCards(sourceDataset);
-                return;
-            }
-
-            const filtered = sourceDataset.filter(item => 
-                item.name.toLowerCase().includes(query) || 
-                item.desc.toLowerCase().includes(query)
-            );
-
-            renderRefCards(filtered);
-        }
-
-        function renderRefCards(dataset) {
-            const cardsGrid = document.getElementById('ref-cards-grid');
-            if (!cardsGrid) return;
-
-            if (dataset.length === 0) {
-                cardsGrid.innerHTML = `
-                    <div class="col-span-full text-center py-16 border border-dashed border-zinc-200 rounded bg-white">
-                        <p class="text-zinc-400 font-mono text-xs">No records correspond to the criteria.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            let htmlString = '';
-            dataset.forEach(item => {
-                let badgeContent = '';
-                if (item.type) {
-                    badgeContent = `Type: <code class="text-zinc-600 font-medium">${item.type}</code>`;
-                } else if (item.params) {
-                    badgeContent = `Params: <code class="text-zinc-600 font-medium">${item.params}</code>`;
-                    if (item.perm) {
-                        const permColors = { 'ReadOnly': 'text-green-600 bg-green-50', 'Write': 'text-amber-600 bg-amber-50', 'Classified': 'text-orange-600 bg-orange-50', 'None': 'text-zinc-500 bg-zinc-100' };
-                        const pc = permColors[item.perm] || 'text-zinc-500 bg-zinc-100';
-                        badgeContent += ` <span class="text-[10px] font-mono font-bold ${pc} px-1.5 py-0.5 rounded ml-2">${item.perm}</span>`;
-                    }
-                } else if (item.alias) {
-                    badgeContent = `Alias: <code class="text-zinc-600 font-medium">${item.alias}</code>`;
-                }
-
-                htmlString += `
-                    <div class="p-5 rounded border border-zinc-200 bg-white flex flex-col justify-between transition-all hover:bg-zinc-50/30 hover:shadow-sm">
-                        <div>
-                            <div class="flex items-center justify-between gap-4 mb-3">
-                                <span class="font-mono text-xs font-bold text-orange-600 px-2 py-0.5 rounded bg-orange-50">
-                                    ${item.name}
-                                </span>
-                                <span class="text-[10px] font-mono text-zinc-400">
-                                    ${badgeContent}
-                                </span>
-                            </div>
-                            <p class="text-xs leading-relaxed text-zinc-600 font-light font-sans">
-                                ${item.desc}
-                            </p>
-                        </div>
-                    </div>
-                `;
-            });
-
-            cardsGrid.innerHTML = htmlString;
-        }
-
-        // ==========================================
-        // CLIPBOARD COPY UTILITY
-        // ==========================================
-        function copyText(payload, buttonId) {
-            try {
-                navigator.clipboard.writeText(payload);
-            } catch (e) {
-                // Secure iframe context fallback logic
-                const tempTextarea = document.createElement('textarea');
-                tempTextarea.value = payload;
-                document.body.appendChild(tempTextarea);
-                tempTextarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(tempTextarea);
-            }
-
-            // Animate check icon state swap inside button
-            const btn = document.getElementById(buttonId);
-            if (btn) {
-                const originalHTML = btn.innerHTML;
-                btn.innerHTML = `
-                    <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                `;
-                setTimeout(() => {
-                    btn.innerHTML = originalHTML;
-                }, 2000);
-            }
-
-            // Show custom toast notification
-            const toast = document.getElementById('copy-toast');
-            if (toast) {
-                toast.classList.remove('translate-y-12', 'opacity-0');
-                toast.classList.add('translate-y-0', 'opacity-100');
-                setTimeout(() => {
-                    toast.classList.add('translate-y-12', 'opacity-0');
-                    toast.classList.remove('translate-y-0', 'opacity-100');
-                }, 2500);
-            }
-        }
-    </script>
 </body>
 </html>

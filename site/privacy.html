@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy & Terms — Rusty</title>
+    <meta name="description" content="Rusty doesn't collect anything. The app runs entirely on your machine, sends no telemetry, and the full source is open.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Fira Code', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+                    },
+                    colors: {
+                        rusty: {
+                            50: '#fef7ee',
+                            100: '#fdedd3',
+                            200: '#f9d7a5',
+                            300: '#f5b96d',
+                            400: '#f09332',
+                            500: '#ec7a12',
+                            600: '#d35f08',
+                            700: '#af470a',
+                            800: '#8d390f',
+                            900: '#733110',
+                            950: '#3e1706',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .prose h3 { font-weight: 600; font-size: 1.125rem; margin-bottom: 0.75rem; }
+        .prose p { color: #52525b; line-height: 1.75; margin-bottom: 1rem; }
+        .prose strong { color: #18181b; font-weight: 600; }
+        .prose ul { list-style: disc; padding-left: 1.5rem; margin-bottom: 1rem; }
+        .prose li { color: #52525b; line-height: 1.75; margin-bottom: 0.5rem; }
+        .prose a { color: #d35f08; text-decoration: underline; text-underline-offset: 2px; }
+        .prose a:hover { color: #af470a; }
+    </style>
+</head>
+<body class="bg-white text-zinc-900 selection:bg-orange-100 min-h-screen">
+
+    <!-- NAV -->
+    <nav class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-zinc-200/60">
+        <div class="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
+            <a href="index.html" class="flex items-center gap-2.5 text-zinc-900 no-underline">
+                <div class="w-8 h-8 rounded-lg bg-rusty-600 flex items-center justify-center">
+                    <svg class="w-5 h-5 text-white" viewBox="0 0 120 116" fill="none">
+                        <rect x="12" y="8" width="96" height="90" rx="18" fill="currentColor"/>
+                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
+                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+                        <circle cx="92" cy="89" r="3.2" fill="#6FCF7A"/>
+                    </svg>
+                </div>
+                <span class="font-bold text-lg tracking-tight">rusty</span>
+            </a>
+            <a href="index.html" class="inline-flex items-center gap-2 px-4 py-2 border border-zinc-200 rounded-lg text-sm font-semibold hover:bg-zinc-50 transition-colors">
+                ← Back to site
+            </a>
+        </div>
+    </nav>
+
+    <!-- HEADER -->
+    <header class="max-w-5xl mx-auto px-6 pt-16 pb-10">
+        <div class="mono text-xs font-bold uppercase tracking-widest text-rusty-600 mb-4">Legal</div>
+        <h1 class="text-5xl sm:text-6xl font-bold tracking-tight mb-5">Privacy & Terms</h1>
+        <p class="text-xl text-zinc-500 leading-relaxed max-w-2xl mb-6">The short version: <strong class="text-zinc-900 font-semibold">Rusty doesn't collect anything.</strong> The app runs entirely on your machine, sends no telemetry, and the full source is open for you to read. The details are below.</p>
+        <div class="flex flex-wrap gap-3 mono text-xs text-zinc-500">
+            <span class="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-full">Last updated: June 30, 2026</span>
+            <span class="px-3 py-1.5 bg-zinc-50 border border-zinc-200 rounded-full">PDG Global Limited</span>
+        </div>
+    </header>
+
+    <!-- BODY -->
+    <div class="max-w-5xl mx-auto px-6 pb-24 grid md:grid-cols-[180px_1fr] gap-14 items-start">
+
+        <!-- TOC -->
+        <nav class="md:sticky md:top-24 flex flex-col gap-1">
+            <div class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-3">Contents</div>
+            <a href="#summary" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">At a glance</a>
+            <a href="#collect" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">Data we collect</a>
+            <a href="#app" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">How the app works</a>
+            <a href="#models" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">Third-party models</a>
+            <a href="#website" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">This website</a>
+            <a href="#terms" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">Terms of use</a>
+            <a href="#license" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">License</a>
+            <a href="#contact" class="px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 border-l-2 border-transparent hover:border-rusty-600 transition-colors">Contact</a>
+        </nav>
+
+        <!-- CONTENT -->
+        <main class="prose min-w-0">
+
+            <section id="summary" class="scroll-mt-24 mb-12">
+                <div class="p-6 bg-zinc-900 rounded-2xl">
+                    <div class="flex items-center gap-2.5 mb-4">
+                        <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                        <span class="mono text-xs uppercase tracking-widest text-zinc-400">No telemetry · No accounts · Open source</span>
+                    </div>
+                    <p class="!text-zinc-300 !mb-0">Rusty is a local-first command-line tool. It does not phone home, create user profiles, or transmit your code, prompts, or usage to us or anyone else. We — PDG Global Limited — operate the website and publish the software, but we never receive your data from the app.</p>
+                </div>
+            </section>
+
+            <section id="collect" class="scroll-mt-24">
+                <h3>1. Data we collect</h3>
+                <p><strong>From the Rusty app: none.</strong> The application collects no analytics, no telemetry, no crash reports, and no personal information. There are no accounts to create and no logins. Nothing about how you use Rusty is sent to us.</p>
+                <p>Because there is no collection, there is correspondingly nothing for us to store, sell, share, or lose. Your code and your prompts stay on your own machine.</p>
+            </section>
+
+            <section id="app" class="scroll-mt-24">
+                <h3>2. How the app works</h3>
+                <p>Rusty runs as a single binary on your computer. When you ask it to do something, it reads the files in your project locally and prepares a request for the AI model <strong>you</strong> have configured. The only outbound network connection Rusty makes for normal operation is to that model endpoint of your choosing.</p>
+                <ul>
+                    <li>Your code is read locally and only the context needed for your request is sent to your chosen model.</li>
+                    <li>Commands run in a sandbox, and Rusty asks for your approval before it edits, deletes, or executes anything.</li>
+                    <li>Configuration and history are stored locally on your machine, under your control.</li>
+                </ul>
+            </section>
+
+            <section id="models" class="scroll-mt-24">
+                <h3>3. Third-party model providers</h3>
+                <p>When you point Rusty at a model provider — whether a local runtime or a hosted API such as OpenAI, Anthropic, or an open-weights model you run yourself — your requests are subject to <strong>that provider's</strong> privacy policy and terms, not ours. You choose the provider and hold the credentials. We have no visibility into, and no responsibility for, what a third-party provider does with the requests you send it.</p>
+                <p>If privacy is paramount, run an open-weights model locally so nothing leaves your network at all.</p>
+            </section>
+
+            <section id="website" class="scroll-mt-24">
+                <h3>4. This website</h3>
+                <p>This marketing site is intentionally lightweight. It does not set advertising cookies or build a profile of you. Your browser may store a single local preference (your chosen color theme) on your own device; that value never leaves your browser. Standard server logs may be retained transiently by our hosting provider for security and reliability, and are not used to identify you.</p>
+            </section>
+
+            <section id="terms" class="scroll-mt-24">
+                <h3>5. Terms of use</h3>
+                <p>Rusty is provided <strong>"as is," without warranty of any kind</strong>, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. To the maximum extent permitted by law, PDG Global Limited shall not be liable for any claim, damages, or other liability arising from the use of the software.</p>
+                <p>Rusty can edit files and run commands on your machine. You are responsible for reviewing its proposed actions before approving them and for keeping backups of your work. You agree to use the software in compliance with all applicable laws and with the terms of any model provider you connect.</p>
+            </section>
+
+            <section id="license" class="scroll-mt-24">
+                <h3>6. License & source code</h3>
+                <p>Rusty is free and open-source software, licensed under the <strong>GNU Affero General Public License v3.0 (AGPL-3.0)</strong>. The complete source code is available on <a href="https://github.com/PDG-Global/rusty">GitHub</a>, where you are welcome to read it, audit it, build it yourself, and verify every claim on this page. Your use, modification, and distribution of Rusty are governed by the terms of the AGPL-3.0.</p>
+            </section>
+
+            <section id="contact" class="scroll-mt-24">
+                <h3>7. Contact</h3>
+                <p>Questions about privacy, these terms, or the software? Get in touch:</p>
+                <div class="grid sm:grid-cols-2 gap-4 not-prose mt-4">
+                    <div class="p-5 bg-white border border-zinc-200 rounded-2xl">
+                        <div class="text-[10px] font-bold uppercase tracking-widest text-rusty-600 mb-3">Email</div>
+                        <a href="mailto:privacy@pdg-global.com" class="mono text-sm text-rusty-600 hover:text-rusty-700">privacy@pdg-global.com</a>
+                    </div>
+                    <div class="p-5 bg-white border border-zinc-200 rounded-2xl">
+                        <div class="text-[10px] font-bold uppercase tracking-widest text-rusty-600 mb-3">Mailing address</div>
+                        <div class="text-sm text-zinc-600 leading-relaxed">PDG Global Limited<br>Level 23, 99 Hennessy Road<br>Wan Chai, Hong Kong</div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="border-t border-zinc-200 bg-zinc-50">
+        <div class="max-w-5xl mx-auto px-6 py-10 flex flex-wrap items-center justify-between gap-6">
+            <div class="flex items-center gap-3">
+                <div class="w-7 h-7 rounded-lg bg-rusty-600 flex items-center justify-center">
+                    <svg class="w-4 h-4 text-white" viewBox="0 0 120 116" fill="none">
+                        <rect x="12" y="8" width="96" height="90" rx="18" fill="currentColor"/>
+                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
+                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
+                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+                    </svg>
+                </div>
+                <span class="font-bold text-sm">rusty</span>
+            </div>
+            <div class="flex flex-wrap gap-6 text-sm">
+                <a href="index.html" class="text-zinc-500 hover:text-zinc-900 transition-colors">Home</a>
+                <a href="https://docs.rustycli.com" class="text-zinc-500 hover:text-zinc-900 transition-colors">Docs</a>
+                <a href="https://github.com/PDG-Global/rusty" class="text-zinc-500 hover:text-zinc-900 transition-colors">GitHub</a>
+            </div>
+            <div class="text-xs text-zinc-400">© 2026 PDG Global Limited</div>
+        </div>
+    </footer>
+
+</body>
+</html>

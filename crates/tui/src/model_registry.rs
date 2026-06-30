@@ -207,28 +207,33 @@ pub fn default_model_list() -> Vec<ModelEntry> {
     ]
 }
 
-/// Tabular display widths used by the settings overlay.
-pub const NAME_WIDTH: usize = 12;
-pub const MODEL_WIDTH: usize = 18;
-pub const BASE_URL_WIDTH: usize = 20;
-
-/// Format a model entry as a single summary line for display.
+/// Extract the host portion of `api_base` for compact display.
 ///
-/// Example: `mimo          mimo-v2.5-pro        https://api.mimo…`
-pub fn format_entry_line(entry: &ModelEntry, is_active: bool) -> String {
-    let marker = if is_active { "●" } else { " " };
-    let name = truncate_str(&entry.name, NAME_WIDTH);
-    let model = truncate_str(&entry.model, MODEL_WIDTH);
-    let base = truncate_str(&entry.api_base, BASE_URL_WIDTH);
-    format!(
-        "{marker} {:<name_w$}  {:<model_w$}  {:<base_w$}",
-        name,
-        model,
-        base,
-        name_w = NAME_WIDTH,
-        model_w = MODEL_WIDTH,
-        base_w = BASE_URL_WIDTH,
-    )
+/// `"https://token-plan-cn.xiaomimimo.com/v1"` -> `"token-plan-cn.xiaomimimo.com"`
+/// Returns the raw string unchanged if it has no scheme prefix.
+pub fn host_of(api_base: &str) -> &str {
+    let rest = api_base
+        .strip_prefix("https://")
+        .or_else(|| api_base.strip_prefix("http://"))
+        .unwrap_or(api_base);
+    match rest.find('/') {
+        Some(i) => &rest[..i],
+        None => rest,
+    }
+}
+
+/// Human-readable token count: `32K`, `1M`, or `"-"` when zero.
+pub fn format_tokens(count: u32) -> String {
+    if count == 0 {
+        return "-".to_string();
+    }
+    if count >= 1_000_000 {
+        format!("{}M", count / 1_000_000)
+    } else if count >= 1000 {
+        format!("{}K", count / 1000)
+    } else {
+        count.to_string()
+    }
 }
 
 /// Cycle to the next thinking level: off → minimal → normal → deep → extended → off.
@@ -253,28 +258,10 @@ pub fn thinking_level_label(level: Option<ThinkingLevel>) -> &'static str {
     }
 }
 
-/// Truncate a string to `max_len` characters, appending `…` if truncated.
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(max_len.saturating_sub(1)).collect::<String>())
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_truncate_short() {
-        assert_eq!(truncate_str("hello", 10), "hello");
-    }
-
-    #[test]
-    fn test_truncate_long() {
-        assert_eq!(truncate_str("abcdefghijklmnop", 8), "abcdefg…");
-    }
 
     #[test]
     fn test_thinking_cycle() {
@@ -295,22 +282,23 @@ mod tests {
     }
 
     #[test]
-    fn test_format_entry_line() {
-        let entry = ModelEntry {
-            group: "Test".into(),
-            name: "test".into(),
-            provider: rusty_core::ProviderType::OpenAI,
-            api_base: "https://api.example.com/v1".into(),
-            model: "gpt-4o".into(),
-            available_models: vec![],
-            max_tokens: 4096,
-            temperature: None,
-            thinking_budget: None,
-            extra_headers: None,
-            context_window: None,
-        };
-        let line = format_entry_line(&entry, true);
-        assert!(line.starts_with('●'));
-        assert!(line.contains("test"));
+    fn test_host_of() {
+        assert_eq!(
+            host_of("https://token-plan-cn.xiaomimimo.com/v1"),
+            "token-plan-cn.xiaomimimo.com"
+        );
+        assert_eq!(host_of("http://localhost:11434/v1"), "localhost:11434");
+        assert_eq!(host_of("https://api.deepseek.com"), "api.deepseek.com");
+        assert_eq!(host_of("not-a-url"), "not-a-url");
+    }
+
+    #[test]
+    fn test_format_tokens() {
+        assert_eq!(format_tokens(0), "-");
+        assert_eq!(format_tokens(512), "512");
+        assert_eq!(format_tokens(4096), "4K");
+        assert_eq!(format_tokens(32_768), "32K");
+        assert_eq!(format_tokens(1_048_576), "1M");
+        assert_eq!(format_tokens(2_000_000), "2M");
     }
 }

@@ -1978,7 +1978,7 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
         None => return,
     };
 
-    let popup = centered_rect(70, 22, area);
+    let popup = centered_rect(80, area.height * 75 / 100, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -2031,13 +2031,19 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
 
             for row in &display_rows[start..end] {
                 match row {
-                    crate::app::DisplayRow::GroupHeader { name, count: _ } => {
-                        lines.push(Line::from(Span::styled(
-                            format!("  {name}"),
-                            Style::default()
-                                .fg(Color::DarkGray)
-                                .add_modifier(Modifier::BOLD),
-                        )));
+                    crate::app::DisplayRow::GroupHeader { name, count } => {
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("  {name}"),
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!(" ({count})"),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ]));
                     }
                     crate::app::DisplayRow::ModelEntry(idx) => {
                         let entry = &settings.models[*idx];
@@ -2045,14 +2051,16 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                         let is_active = entry.name == settings.active_model_name;
                         let is_expanded = settings.expanded == Some(*idx);
                         let cursor = if is_selected { ">" } else { " " };
-                        let active_marker = if is_active { "●" } else { " " };
-                        let style = if is_selected {
+                        let active_marker = if is_active { "\u{25CF}" } else { " " };
+
+                        let row_style = if is_selected {
                             Style::default().fg(Color::Black).bg(Color::Cyan)
                         } else {
-                            Style::default().fg(Color::White)
+                            Style::default()
                         };
+
                         let marker_style = if is_selected {
-                            style
+                            row_style
                         } else if is_active {
                             Style::default()
                                 .fg(Color::Green)
@@ -2060,8 +2068,9 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                         } else {
                             Style::default().fg(Color::DarkGray)
                         };
-                        let name_style = if is_selected {
-                            style
+
+                        let model_style = if is_selected {
+                            row_style
                         } else if is_active {
                             Style::default()
                                 .fg(Color::White)
@@ -2069,27 +2078,27 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                         } else {
                             Style::default().fg(Color::White)
                         };
-                        let expand_indicator = if is_expanded { "\u{25BC} " } else { "  " };
+
+                        let secondary_style = if is_selected {
+                            row_style
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+
+                        let expand_indicator = if is_expanded { "\u{25BC} " } else { "\u{25B6} " };
+                        let host = crate::model_registry::host_of(&entry.api_base);
+
                         lines.push(Line::from(vec![
-                            Span::styled(format!(" {cursor}"), style),
+                            Span::styled(format!(" {cursor} "), row_style),
                             Span::styled(format!("{active_marker} "), marker_style),
-                            Span::styled(expand_indicator.to_string(), style),
-                            Span::styled(format!("{:<22}", entry.name), name_style),
+                            Span::styled(expand_indicator.to_string(), secondary_style),
+                            // Primary text: model id (the meaningful name).
+                            Span::styled(entry.model.clone(), model_style),
+                            Span::styled("  ", row_style),
+                            // Secondary: user label + host (dim disambiguator).
                             Span::styled(
-                                format!("{:<16}", entry.provider),
-                                if is_selected {
-                                    style
-                                } else {
-                                    Style::default().fg(Color::Gray)
-                                },
-                            ),
-                            Span::styled(
-                                format!("{} · {}", entry.model, entry.api_base),
-                                if is_selected {
-                                    style
-                                } else {
-                                    Style::default().fg(Color::DarkGray)
-                                },
+                                format!("{} \u{00B7} {}", entry.name, host),
+                                secondary_style,
                             ),
                         ]));
                     }
@@ -2098,7 +2107,7 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                         model,
                         is_active,
                     } => {
-                        let sub_marker = if *is_active { "●" } else { " " };
+                        let sub_marker = if *is_active { "\u{25CF}" } else { " " };
                         let sub_style = if *is_active {
                             Style::default()
                                 .fg(Color::Green)
@@ -2107,12 +2116,55 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
                             Style::default().fg(Color::DarkGray)
                         };
                         lines.push(Line::from(vec![
-                            Span::raw("     "),
+                            Span::raw("        "),
                             Span::styled(format!("{sub_marker} "), sub_style),
-                            Span::styled(format!("{model}"), sub_style),
+                            Span::styled(model.clone(), sub_style),
                         ]));
                     }
                 }
+            }
+
+            // Selected-model detail strip (always visible while on Models tab).
+            if let Some(entry) = settings.selected_model() {
+                let host = crate::model_registry::host_of(&entry.api_base);
+                let ctx = entry
+                    .context_window
+                    .map(crate::model_registry::format_tokens)
+                    .unwrap_or_else(|| "-".to_string());
+                let max = crate::model_registry::format_tokens(entry.max_tokens);
+                let thinking = entry
+                    .thinking_budget
+                    .map(crate::model_registry::format_tokens)
+                    .unwrap_or_else(|| "-".to_string());
+
+                lines.push(Line::from(Span::styled(
+                    "\u{2500}".repeat(inner.width as usize),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {} ", entry.provider),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(entry.model.clone(), Style::default().fg(Color::White)),
+                    Span::raw("  "),
+                    Span::styled(host.to_string(), Style::default().fg(Color::Gray)),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled("ctx ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(ctx, Style::default().fg(Color::White)),
+                    Span::raw("   "),
+                    Span::styled("max ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(max, Style::default().fg(Color::White)),
+                    Span::raw("   "),
+                    Span::styled("think ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(thinking, Style::default().fg(Color::White)),
+                ]));
             }
         }
         crate::app::SettingsTab::General => {
@@ -2153,36 +2205,59 @@ fn draw_settings(app: &AppState, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    lines.push(Line::from(vec![
-        Span::styled(
-            "[Enter]",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" Select  "),
-        Span::styled(
+    let mut footer_spans: Vec<Span> = Vec::new();
+    footer_spans.push(Span::styled(
+        "[Enter]",
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ));
+    footer_spans.push(Span::raw(" Select  "));
+    if settings.active_tab == crate::app::SettingsTab::Models {
+        footer_spans.push(Span::styled(
             "[Space]",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" Expand  "),
-        Span::styled(
-            "[Tab]",
+        ));
+        footer_spans.push(Span::raw(" Expand  "));
+        footer_spans.push(Span::styled(
+            "[A]dd",
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" Switch Tab  "),
-        Span::styled(
-            "[Esc]",
+        ));
+        footer_spans.push(Span::raw("  "));
+        footer_spans.push(Span::styled(
+            "[E]dit",
             Style::default()
-                .fg(Color::White)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" Close"),
-    ]));
+        ));
+        footer_spans.push(Span::raw("  "));
+        footer_spans.push(Span::styled(
+            "[D]elete",
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ));
+        footer_spans.push(Span::raw("  "));
+    }
+    footer_spans.push(Span::styled(
+        "[Tab]",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    ));
+    footer_spans.push(Span::raw(" Switch Tab  "));
+    footer_spans.push(Span::styled(
+        "[Esc]",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    ));
+    footer_spans.push(Span::raw(" Close"));
+    lines.push(Line::from(footer_spans));
 
     let paragraph = Paragraph::new(lines);
     Widget::render(&paragraph, inner, buf);
