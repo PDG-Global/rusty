@@ -1,339 +1,503 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rusty — A coding agent that never leaves your terminal</title>
-    <meta name="description" content="Rusty is a single 12 MB binary that pairs with you right where you work — fast, private, and entirely yours. No telemetry. No cloud lock-in. No bloat.">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'Fira Code', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
-                    },
-                    colors: {
-                        rusty: {
-                            50: '#fef7ee',
-                            100: '#fdedd3',
-                            200: '#f9d7a5',
-                            300: '#f5b96d',
-                            400: '#f09332',
-                            500: '#ec7a12',
-                            600: '#d35f08',
-                            700: '#af470a',
-                            800: '#8d390f',
-                            900: '#733110',
-                            950: '#3e1706',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-        .mono { font-family: 'JetBrains Mono', monospace; }
-        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-        .float { animation: float 4s ease-in-out infinite; }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rusty — A coding agent that never leaves your terminal</title>
+<meta name="description" content="Rusty is a single 12 MB binary that pairs with you right where you work — fast, private, and entirely yours. No telemetry. No cloud lock-in. No bloat.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 116'><rect x='12' y='8' width='96' height='90' rx='18' fill='%23B8501F'/><rect x='22' y='17' width='76' height='56' rx='12' fill='%23140E0A'/><rect x='44.5' y='32' width='9' height='16' rx='4.5' fill='%23F4B860'/><rect x='66.5' y='32' width='9' height='16' rx='4.5' fill='%23F4B860'/><path d='M47 55 C 53 62, 67 62, 73 55' stroke='%23F4B860' stroke-width='3.4' stroke-linecap='round' fill='none'/><circle cx='92' cy='89' r='3.2' fill='%236FCF7A'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; }
+::selection { background: var(--accent, #E0703A); color: #fff; }
+@keyframes rusty-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@keyframes rusty-cursor { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.rusty-cursor { animation: rusty-cursor 1.1s step-end infinite; }
+.rusty-float { animation: rusty-float 6s ease-in-out infinite; }
+.rusty-link { transition: color .15s ease; }
+.rusty-link:hover { color: var(--text) !important; }
+.rusty-btn { transition: transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.rusty-btn:hover { transform: translateY(-2px); }
+.rusty-card { transition: transform .2s ease, border-color .2s ease, background .2s ease; }
+.rusty-card:hover { transform: translateY(-4px); border-color: var(--accent) !important; }
+.rusty-swatch { transition: transform .15s ease; }
+.rusty-swatch:hover { transform: scale(1.05); }
+@keyframes rusty-blink { 0%, 90%, 100% { transform: scaleY(1); } 94%, 96% { transform: scaleY(0.1); } }
+.rusty-eyes { transform-origin: center; transform-box: fill-box; animation: rusty-blink 5.2s ease-in-out infinite; }
+@keyframes rusty-flicker { 0%, 100% { opacity: 1; } 50% { opacity: 0.97; } 53% { opacity: 0.9; } 56% { opacity: 0.99; } }
+.rusty-face { animation: rusty-flicker 7s ease-in-out infinite; }
+@keyframes vault-dial { 0%, 70%, 100% { transform: rotate(0deg); } 80%, 90% { transform: rotate(-32deg); } }
+.vault-dial { transform-origin: center; transform-box: fill-box; animation: vault-dial 6s ease-in-out infinite; }
+@keyframes reel-spin { to { transform: rotate(360deg); } }
+.reel { transform-origin: center; transform-box: fill-box; animation: reel-spin 9s linear infinite; }
+</style>
 </head>
-<body class="bg-white text-zinc-900 selection:bg-orange-100 min-h-screen">
+<body>
 
-    <!-- NAV -->
-    <nav class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-zinc-200/60">
-        <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-            <a href="#top" class="flex items-center gap-2.5 text-zinc-900 no-underline">
-                <div class="w-8 h-8 rounded-lg bg-rusty-600 flex items-center justify-center">
-                    <svg class="w-5 h-5 text-white" viewBox="0 0 120 116" fill="none">
-                        <rect x="12" y="8" width="96" height="90" rx="18" fill="currentColor"/>
-                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
-                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
-                        <circle cx="92" cy="89" r="3.2" fill="#6FCF7A"/>
-                    </svg>
-                </div>
-                <span class="font-bold text-lg tracking-tight">rusty</span>
-            </a>
-            <div class="hidden md:flex items-center gap-8">
-                <a href="#terminal" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">See it work</a>
-                <a href="#features" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">Why Rusty</a>
-                <a href="#models" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">Models</a>
-                <a href="#install" class="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">Install</a>
-            </div>
-            <div class="flex items-center gap-3">
-                <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener" class="text-zinc-500 hover:text-zinc-900 transition-colors">
-                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-                </a>
-                <a href="#install" class="hidden sm:inline-flex items-center gap-2 px-4 py-2 bg-rusty-600 text-white text-sm font-semibold rounded-lg hover:bg-rusty-700 transition-colors">
-                    Get Rusty
-                </a>
-            </div>
-        </div>
-    </nav>
+<div id="root" style="--metal:#B8501F; --metal-deep:#8E3D17; --metal-light:#E0703A; --screen:#140E0A; --glow:#F4B860; --led:#4FAE6F; --ink:#1A1410; --bg:#FCFAF6; --bg-2:#F4EEE4; --surface:#FFFFFF; --text:#211A13; --muted:#7C6F5D; --border:#EBE3D5; --accent:#C2541C; --accent-2:#E0703A; background:var(--bg); color:var(--text); font-family:'Hanken Grotesk',system-ui,sans-serif; -webkit-font-smoothing:antialiased; min-height:100%; overflow-x:hidden;">
 
-    <!-- HERO -->
-    <header id="top" class="max-w-6xl mx-auto px-6 pt-24 pb-20">
-        <div class="grid md:grid-cols-2 gap-16 items-center">
-            <div>
-                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-500 mb-6">
-                    <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                    Open-source terminal coding agent
-                </div>
-                <h1 class="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[0.95] mb-6">
-                    A coding agent<br>that never leaves<br>your terminal.
-                </h1>
-                <p class="text-lg text-zinc-500 leading-relaxed max-w-md mb-8">
-                    Rusty is a single 12 MB binary that pairs with you right where you work — fast, private, and entirely yours. No telemetry. No cloud lock-in. No bloat.
-                </p>
-                <div class="flex flex-wrap items-center gap-3 mb-8">
-                    <div class="flex items-center gap-3 px-4 py-3 bg-white border border-zinc-200 rounded-xl font-mono text-sm">
-                        <span class="text-rusty-600">$</span>
-                        <span>curl -fsSL rustycli.com/install | sh</span>
-                        <button onclick="navigator.clipboard.writeText('curl -fsSL rustycli.com/install | sh')" class="ml-2 px-2.5 py-1 bg-zinc-100 text-zinc-500 border border-zinc-200 rounded-md text-xs font-semibold hover:bg-zinc-200 transition-colors">Copy</button>
-                    </div>
-                    <a href="https://github.com/PDG-Global/rusty" target="_blank" rel="noopener" class="inline-flex items-center gap-2 px-4 py-3 border border-zinc-200 rounded-xl text-sm font-semibold hover:bg-zinc-50 transition-colors">
-                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-                        Star on GitHub
-                    </a>
-                </div>
-                <div class="flex flex-wrap gap-6 text-sm text-zinc-500">
-                    <span class="flex items-center gap-2"><span class="text-rusty-600">●</span> 12 MB static binary</span>
-                    <span class="flex items-center gap-2"><span class="text-rusty-600">●</span> Zero telemetry</span>
-                    <span class="flex items-center gap-2"><span class="text-rusty-600">●</span> Bring your own model</span>
-                </div>
-            </div>
-            <div class="hidden md:flex justify-center">
-                <div class="float">
-                    <svg class="w-72 h-72" viewBox="0 0 120 116" fill="none">
-                        <ellipse cx="60" cy="105" rx="38" ry="6" fill="#1A1410" opacity="0.16"/>
-                        <rect x="12" y="8" width="96" height="90" rx="18" fill="#B8501F"/>
-                        <path d="M16 80 C 16 90, 24 98, 34 98 L 86 98 C 96 98, 104 90, 104 80 L 104 74 L 16 74 Z" fill="#8E3D17" opacity="0.45"/>
-                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
-                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
-                        <circle cx="92" cy="89" r="3.2" fill="#6FCF7A"/>
-                    </svg>
-                </div>
-            </div>
-        </div>
-    </header>
+  <!-- NAV -->
+  <nav style="position:sticky; top:0; z-index:50; display:flex; align-items:center; justify-content:space-between; gap:24px; padding:16px 32px; background:color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter:blur(12px); border-bottom:1px solid var(--border);">
+    <a href="#top" style="display:flex; align-items:center; gap:10px; text-decoration:none; color:var(--text);">
+      <span style="display:inline-flex; transform:translateY(3px);"><span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;line-height:0"><svg viewBox="0 0 120 116" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+<ellipse cx="60" cy="105" rx="38" ry="6" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+<rect x="12" y="8" width="96" height="90" rx="18" fill="var(--metal, #B8501F)"></rect>
+<path d="M16 80 C 16 90, 24 98, 34 98 L 86 98 C 96 98, 104 90, 104 80 L 104 74 L 16 74 Z" fill="var(--metal-deep, #8E3D17)" opacity="0.45"></path>
+<path d="M26 16 C 48 12, 72 12, 94 16" stroke="var(--metal-light, #E0703A)" stroke-width="3" stroke-linecap="round" opacity="0.85"></path>
+<rect x="22" y="17" width="76" height="56" rx="12" fill="var(--screen, #140E0A)"></rect>
+<line x1="27" y1="30" x2="93" y2="30" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="45" x2="93" y2="45" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="60" x2="93" y2="60" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<g class="rusty-face"><g class="rusty-eyes"><rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect><rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect></g><path d="M47 55 C 53 62, 67 62, 73 55" stroke="var(--glow, #F4B860)" stroke-width="3.4" stroke-linecap="round" fill="none"></path></g>
+<line x1="24" y1="86" x2="40" y2="86" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<line x1="24" y1="92" x2="36" y2="92" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<circle cx="92" cy="89" r="3.2" fill="var(--led, #6FCF7A)"></circle>
+</svg></span></span>
+      <span style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:22px; letter-spacing:-0.02em; line-height:1; display:block;">rusty</span>
+    </a>
+    <div style="display:flex; align-items:center; gap:28px;">
+      <a href="#terminal" class="rusty-link" style="color:var(--muted); text-decoration:none; font-size:15px; font-weight:500;">See it work</a>
+      <a href="#features" class="rusty-link" style="color:var(--muted); text-decoration:none; font-size:15px; font-weight:500;">Why Rusty</a>
+      <a href="#models" class="rusty-link" style="color:var(--muted); text-decoration:none; font-size:15px; font-weight:500;">Models</a>
+      <a href="#install" class="rusty-link" style="color:var(--muted); text-decoration:none; font-size:15px; font-weight:500;">Install</a>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div style="display:flex; align-items:center; gap:7px; padding:5px; border:1px solid var(--border); border-radius:999px;">
+        <button onclick="applyTheme('daylight')" title="Daylight" class="rusty-swatch" style="width:18px; height:18px; border-radius:50%; border:2px solid var(--bg); cursor:pointer; background:linear-gradient(135deg,#FFFFFF,#C2541C); box-shadow:0 0 0 2px var(--accent);"></button>
+        <button onclick="applyTheme('ember')" title="Ember" class="rusty-swatch" style="width:18px; height:18px; border-radius:50%; border:2px solid var(--bg); cursor:pointer; background:linear-gradient(135deg,#E0703A,#F4B860); box-shadow:0 0 0 0px var(--accent);"></button>
+        <button onclick="applyTheme('patina')" title="Patina" class="rusty-swatch" style="width:18px; height:18px; border-radius:50%; border:2px solid var(--bg); cursor:pointer; background:linear-gradient(135deg,#B8501F,#5FB89A); box-shadow:0 0 0 0px var(--accent);"></button>
+      </div>
+      <a href="#install" class="rusty-btn" style="display:inline-flex; align-items:center; gap:8px; padding:9px 18px; background:var(--accent); color:#fff; text-decoration:none; font-weight:600; font-size:15px; border-radius:10px;">Get Rusty</a>
+    </div>
+  </nav>
 
-    <!-- TRUST STRIP -->
-    <div class="border-y border-zinc-200 bg-zinc-50">
-        <div class="max-w-6xl mx-auto px-6 py-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-3 text-sm text-zinc-500 font-medium">
-            <span class="font-semibold text-zinc-900">Bring your own model</span>
-            <span>Open weights</span>
-            <span>Anthropic</span>
-            <span>OpenAI</span>
-            <span>Ollama</span>
-            <span>Any OpenAI-compatible endpoint</span>
+  <!-- HERO -->
+  <header id="top" style="position:relative; max-width:1200px; margin:0 auto; padding:104px 32px 88px; display:grid; grid-template-columns:1.15fr 0.85fr; gap:64px; align-items:center;">
+    <div>
+      <div style="display:inline-flex; align-items:center; gap:8px; padding:6px 14px; border:1px solid var(--border); border-radius:999px; background:var(--surface); font-size:13px; font-weight:600; color:var(--muted); letter-spacing:0.01em; margin-bottom:22px;">
+        <span style="width:7px; height:7px; border-radius:50%; background:var(--led);"></span>
+        Open-source terminal coding agent
+      </div>
+      <h1 style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(42px,5.6vw,80px); line-height:0.98; letter-spacing:-0.035em; margin:0 0 24px;">
+        A coding agent<br>that never leaves<br>your terminal.
+      </h1>
+      <p style="font-size:clamp(17px,1.4vw,20px); line-height:1.55; color:var(--muted); max-width:480px; margin:0 0 32px;">
+        Rusty is a single 12&nbsp;MB binary that pairs with you right where you work — fast, private, and entirely yours. No telemetry. No cloud lock-in. No bloat.
+      </p>
+      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-bottom:30px;">
+        <div style="display:flex; align-items:center; gap:14px; padding:13px 18px; background:var(--surface); border:1px solid var(--border); border-radius:12px; font-family:'JetBrains Mono',monospace; font-size:15px;">
+          <span style="color:var(--accent);">$</span>
+          <span style="color:var(--text);">curl -fsSL rustycli.com/install | sh</span>
+          <button onclick="copyInstall()" class="rusty-btn" id="hero-copy" style="margin-left:6px; padding:5px 11px; background:var(--bg-2); color:var(--muted); border:1px solid var(--border); border-radius:7px; font-family:'Hanken Grotesk',sans-serif; font-size:13px; font-weight:600; cursor:pointer;">Copy</button>
         </div>
+        <a href="https://github.com/PDG-Global/rusty" class="rusty-btn" style="display:inline-flex; align-items:center; gap:9px; padding:13px 20px; background:transparent; color:var(--text); border:1px solid var(--border); border-radius:12px; font-weight:600; font-size:15px; text-decoration:none;">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+          Star on GitHub
+        </a>
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:22px; font-size:14px; color:var(--muted);">
+        <span style="display:flex; align-items:center; gap:7px;"><span style="color:var(--accent);">●</span> 12 MB static binary</span>
+        <span style="display:flex; align-items:center; gap:7px;"><span style="color:var(--accent);">●</span> Zero telemetry</span>
+        <span style="display:flex; align-items:center; gap:7px;"><span style="color:var(--accent);">●</span> Bring your own model</span>
+      </div>
     </div>
 
-    <!-- TERMINAL DEMO -->
-    <section id="terminal" class="max-w-6xl mx-auto px-6 py-24">
-        <div class="grid md:grid-cols-2 gap-14 items-center">
-            <div>
-                <div class="text-xs font-bold uppercase tracking-widest text-rusty-600 mb-4">See it work</div>
-                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight leading-tight mb-5">Ask in plain English.<br>Watch it ship.</h2>
-                <p class="text-lg text-zinc-500 leading-relaxed max-w-md mb-8">Rusty reads your repo, plans the change, edits the files, and runs your tests — narrating every step. It asks before it touches anything it shouldn't.</p>
-                <ul class="space-y-4">
-                    <li class="flex gap-3 items-start text-base"><span class="text-rusty-600 font-bold mt-0.5">→</span> Context-aware edits across your whole tree</li>
-                    <li class="flex gap-3 items-start text-base"><span class="text-rusty-600 font-bold mt-0.5">→</span> Runs commands in a sandbox, with approvals</li>
-                    <li class="flex gap-3 items-start text-base"><span class="text-rusty-600 font-bold mt-0.5">→</span> Diffs you can read before anything lands</li>
-                </ul>
-            </div>
-            <div class="rounded-2xl overflow-hidden border border-zinc-200 bg-[#140E0A] shadow-2xl">
-                <div class="flex items-center gap-2 px-4 py-3 bg-[#1B1510] border-b border-[#2A2018]">
-                    <span class="w-3 h-3 rounded-full bg-[#E05A4F]"></span>
-                    <span class="w-3 h-3 rounded-full bg-[#E0B23A]"></span>
-                    <span class="w-3 h-3 rounded-full bg-[#5FB87A]"></span>
-                    <span class="ml-3 font-mono text-xs text-[#9A8C7A]">rusty — ~/projects/api</span>
-                </div>
-                <div class="p-6 font-mono text-sm leading-relaxed text-[#E8DDCF]">
-                    <div class="text-[#9A8C7A] mb-1"><span class="text-[#F4B860]">rusty</span> v0.2.0 · ready</div>
-                    <div><span class="text-[#E0703A]">›</span> add rate limiting to the /api/login route</div>
-                    <div class="text-[#9A8C7A]">&nbsp;&nbsp;⠿ reading <span class="text-[#E8DDCF]">src/routes/auth.rs</span></div>
-                    <div class="text-[#9A8C7A]">&nbsp;&nbsp;⠿ planning middleware…</div>
-                    <div class="text-[#6FCF7A]">&nbsp;&nbsp;✔ created <span class="text-[#E8DDCF]">src/middleware/ratelimit.rs</span> <span class="text-[#6FCF7A]">+38</span></div>
-                    <div class="text-[#6FCF7A]">&nbsp;&nbsp;✔ edited&nbsp;&nbsp;<span class="text-[#E8DDCF]">src/routes/auth.rs</span> <span class="text-[#6FCF7A]">+4</span></div>
-                    <div class="text-[#6FCF7A]">&nbsp;&nbsp;✔ cargo test — <span class="text-[#6FCF7A]">31 passed</span></div>
-                    <div class="mt-2 text-[#9A8C7A]">Rate limiter added. 31 tests pass.</div>
-                </div>
-            </div>
+    <div style="display:flex; justify-content:center; align-items:center;">
+      <div style="position:relative;">
+        <div style="position:absolute; inset:-12% -12% -12% -12%; background:radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 65%); filter:blur(12px);"></div>
+        <div class="rusty-float" style="position:relative;">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:min(340px,42vw);height:min(340px,42vw);line-height:0"><svg viewBox="0 0 120 116" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+<ellipse cx="60" cy="105" rx="38" ry="6" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+<rect x="12" y="8" width="96" height="90" rx="18" fill="var(--metal, #B8501F)"></rect>
+<path d="M16 80 C 16 90, 24 98, 34 98 L 86 98 C 96 98, 104 90, 104 80 L 104 74 L 16 74 Z" fill="var(--metal-deep, #8E3D17)" opacity="0.45"></path>
+<path d="M26 16 C 48 12, 72 12, 94 16" stroke="var(--metal-light, #E0703A)" stroke-width="3" stroke-linecap="round" opacity="0.85"></path>
+<rect x="22" y="17" width="76" height="56" rx="12" fill="var(--screen, #140E0A)"></rect>
+<line x1="27" y1="30" x2="93" y2="30" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="45" x2="93" y2="45" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="60" x2="93" y2="60" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<g class="rusty-face"><g class="rusty-eyes"><rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect><rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect></g><path d="M47 55 C 53 62, 67 62, 73 55" stroke="var(--glow, #F4B860)" stroke-width="3.4" stroke-linecap="round" fill="none"></path></g>
+<line x1="24" y1="86" x2="40" y2="86" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<line x1="24" y1="92" x2="36" y2="92" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<circle cx="92" cy="89" r="3.2" fill="var(--led, #6FCF7A)"></circle>
+</svg></span>
         </div>
-    </section>
+      </div>
+    </div>
+  </header>
 
-    <!-- FEATURES -->
-    <section id="features" class="bg-zinc-50 border-y border-zinc-200">
-        <div class="max-w-6xl mx-auto px-6 py-24">
-            <div class="text-center mb-16">
-                <div class="text-xs font-bold uppercase tracking-widest text-rusty-600 mb-4">Why Rusty</div>
-                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight">Everything you need.<br>Nothing you don't.</h2>
-            </div>
-            <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
-                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Single binary</h3>
-                    <p class="text-zinc-500 text-sm leading-relaxed">12 MB static binary. No runtime, no dependencies, no container. Just download and run.</p>
-                </div>
-                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
-                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Local-first privacy</h3>
-                    <p class="text-zinc-500 text-sm leading-relaxed">Zero telemetry. Your code never touches our servers. You choose where your requests go.</p>
-                </div>
-                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
-                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Sandboxed execution</h3>
-                    <p class="text-zinc-500 text-sm leading-relaxed">Commands run in a sandbox. Rusty asks before editing, deleting, or executing anything risky.</p>
-                </div>
-                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
-                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Bring your own model</h3>
-                    <p class="text-zinc-500 text-sm leading-relaxed">Works with OpenAI, Anthropic, Ollama, and any OpenAI-compatible endpoint. Your choice.</p>
-                </div>
-                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
-                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Terminal-native</h3>
-                    <p class="text-zinc-500 text-sm leading-relaxed">Lives where you work. No context-switching to a browser or IDE. Just type and go.</p>
-                </div>
-                <div class="p-6 bg-white rounded-2xl border border-zinc-200">
-                    <div class="w-10 h-10 rounded-xl bg-rusty-100 flex items-center justify-center mb-4">
-                        <svg class="w-5 h-5 text-rusty-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                    </div>
-                    <h3 class="font-semibold text-lg mb-2">Open source</h3>
-                    <p class="text-zinc-500 text-sm leading-relaxed">AGPL-3.0 licensed. Read every line, audit every claim. Build it yourself if you want.</p>
-                </div>
-            </div>
-        </div>
-    </section>
+  <!-- TRUST STRIP -->
+  <div style="border-top:1px solid var(--border); border-bottom:1px solid var(--border); background:var(--bg-2);">
+    <div style="max-width:1200px; margin:0 auto; padding:26px 32px; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:14px 40px; font-size:14px; color:var(--muted); font-weight:500;">
+      <span style="font-weight:600; color:var(--text);">Bring your own model</span>
+      <span>open weights</span><span style="opacity:.4;">·</span>
+      <span>Anthropic</span><span style="opacity:.4;">·</span>
+      <span>OpenAI</span><span style="opacity:.4;">·</span>
+      <span>Ollama</span><span style="opacity:.4;">·</span>
+      <span>any OpenAI-compatible endpoint</span>
+    </div>
+  </div>
 
-    <!-- MODELS -->
-    <section id="models" class="max-w-6xl mx-auto px-6 py-24">
-        <div class="grid md:grid-cols-2 gap-16 items-center">
-            <div>
-                <div class="text-xs font-bold uppercase tracking-widest text-rusty-600 mb-4">Models</div>
-                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight leading-tight mb-5">Your model.<br>Your rules.</h2>
-                <p class="text-lg text-zinc-500 leading-relaxed max-w-md mb-8">Rusty works with any model you choose. Run an open-weights model locally for maximum privacy, or point it at a hosted API for maximum capability.</p>
-                <ul class="space-y-3 text-zinc-500">
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Xiaomi MiMo</li>
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Kimi</li>
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> GLM</li>
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> DeepSeek</li>
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> MiniMax</li>
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> OpenAI</li>
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Anthropic</li>
-                    <li class="flex items-center gap-3"><span class="w-2 h-2 rounded-full bg-green-500"></span> Ollama (local)</li>
-                </ul>
-            </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
-                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                    <span class="font-semibold">Xiaomi MiMo</span>
-                </div>
-                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
-                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                    <span class="font-semibold">Kimi</span>
-                </div>
-                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
-                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                    <span class="font-semibold">GLM</span>
-                </div>
-                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
-                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                    <span class="font-semibold">DeepSeek</span>
-                </div>
-                <div class="p-5 bg-white rounded-xl border border-zinc-200 flex flex-col gap-2">
-                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                    <span class="font-semibold">MiniMax</span>
-                </div>
-                <div class="p-5 bg-zinc-900 rounded-xl border border-zinc-200 flex flex-col justify-center gap-1">
-                    <span class="font-mono text-xs text-zinc-400">+ OpenAI</span>
-                    <span class="font-mono text-xs text-zinc-400">+ Anthropic</span>
-                </div>
-            </div>
-        </div>
-    </section>
+  <!-- TERMINAL DEMO -->
+  <section id="terminal" style="max-width:1200px; margin:0 auto; padding:120px 32px;">
+    <div style="display:grid; grid-template-columns:0.9fr 1.1fr; gap:56px; align-items:center;">
+      <div>
+        <div style="font-size:13px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); margin-bottom:16px;">See it work</div>
+        <h2 style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(30px,3.4vw,46px); line-height:1.05; letter-spacing:-0.025em; margin:0 0 20px;">Ask in plain English.<br>Watch it ship.</h2>
+        <p style="font-size:18px; line-height:1.6; color:var(--muted); max-width:440px; margin:0 0 28px;">Rusty reads your repo, plans the change, edits the files, and runs your tests — narrating every step. It asks before it touches anything it shouldn't.</p>
+        <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:14px;">
+          <li style="display:flex; gap:12px; align-items:flex-start; font-size:16px; color:var(--text);"><span style="color:var(--accent); font-weight:700;">→</span> Context-aware edits across your whole tree</li>
+          <li style="display:flex; gap:12px; align-items:flex-start; font-size:16px; color:var(--text);"><span style="color:var(--accent); font-weight:700;">→</span> Runs commands in a sandbox, with approvals</li>
+          <li style="display:flex; gap:12px; align-items:flex-start; font-size:16px; color:var(--text);"><span style="color:var(--accent); font-weight:700;">→</span> Diffs you can read before anything lands</li>
+        </ul>
+      </div>
 
-    <!-- INSTALL -->
-    <section id="install" class="max-w-6xl mx-auto px-6 py-24">
-        <div class="relative overflow-hidden rounded-3xl border border-zinc-200 bg-white p-12 text-center">
-            <div class="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-rusty-100/40 to-transparent"></div>
-            <div class="relative">
-                <div class="float inline-block mb-4">
-                    <svg class="w-20 h-20" viewBox="0 0 120 116" fill="none">
-                        <rect x="12" y="8" width="96" height="90" rx="18" fill="#B8501F"/>
-                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
-                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
-                        <circle cx="92" cy="89" r="3.2" fill="#6FCF7A"/>
-                    </svg>
-                </div>
-                <h2 class="text-4xl sm:text-5xl font-bold tracking-tight mb-4">Get Rusty in one line.</h2>
-                <p class="text-lg text-zinc-500 max-w-md mx-auto mb-8">macOS, Linux, and Windows. No account required to start.</p>
-                <div class="inline-flex items-center gap-4 px-5 py-4 bg-zinc-50 border border-zinc-200 rounded-2xl font-mono text-base">
-                    <span class="text-rusty-600">$</span>
-                    <span>curl -fsSL rustycli.com/install | sh</span>
-                    <button onclick="navigator.clipboard.writeText('curl -fsSL rustycli.com/install | sh')" class="px-3 py-2 bg-rusty-600 text-white rounded-lg text-sm font-semibold hover:bg-rusty-700 transition-colors">Copy</button>
-                </div>
-                <div class="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 mt-6 text-sm text-zinc-500">
-                    <span>brew install rusty</span>
-                    <span class="text-zinc-300">·</span>
-                    <span>cargo install rusty-cli</span>
-                    <span class="text-zinc-300">·</span>
-                    <span>scoop install rusty</span>
-                </div>
-            </div>
+      <div style="border-radius:16px; overflow:hidden; border:1px solid var(--border); background:#140E0A; box-shadow:0 24px 50px -24px rgba(40,25,12,0.35);">
+        <div style="display:flex; align-items:center; gap:8px; padding:13px 16px; background:#1B1510; border-bottom:1px solid #2A2018;">
+          <span style="width:12px; height:12px; border-radius:50%; background:#E05A4F;"></span>
+          <span style="width:12px; height:12px; border-radius:50%; background:#E0B23A;"></span>
+          <span style="width:12px; height:12px; border-radius:50%; background:#5FB87A;"></span>
+          <span style="margin-left:10px; font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#9A8C7A;">rusty — ~/projects/api</span>
         </div>
-    </section>
+        <div style="padding:24px; font-family:'JetBrains Mono',monospace; font-size:14px; line-height:1.85; color:#E8DDCF;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px; color:#9A8C7A;">
+            <span style="color:var(--glow);">rusty</span> v0.2.0 · ready
+          </div>
+          <div><span style="color:var(--accent-2);">›</span> add rate limiting to the /api/login route</div>
+          <div style="color:#9A8C7A;">&nbsp;&nbsp;⠿ reading <span style="color:#E8DDCF;">src/routes/auth.rs</span></div>
+          <div style="color:#9A8C7A;">&nbsp;&nbsp;⠿ planning middleware…</div>
+          <div style="color:var(--led);">&nbsp;&nbsp;✔ created <span style="color:#E8DDCF;">src/middleware/ratelimit.rs</span> <span style="color:var(--led);">+38</span></div>
+          <div style="color:var(--led);">&nbsp;&nbsp;✔ edited&nbsp;&nbsp;<span style="color:#E8DDCF;">src/routes/auth.rs</span> <span style="color:var(--led);">+4</span> <span style="color:#E05A4F;">-1</span></div>
+          <div style="color:var(--led);">&nbsp;&nbsp;✔ cargo test — <span style="color:#E8DDCF;">28 passed</span></div>
+          <div style="margin-top:8px; color:var(--accent-2);">&nbsp;&nbsp;apply changes? <span style="color:#9A8C7A;">[y/N]</span> <span class="rusty-cursor" style="color:var(--glow);">▋</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-    <!-- FOOTER -->
-    <footer class="border-t border-zinc-200 bg-zinc-50">
-        <div class="max-w-6xl mx-auto px-6 py-12 flex flex-wrap items-center justify-between gap-6">
-            <div class="flex items-center gap-3">
-                <div class="w-7 h-7 rounded-lg bg-rusty-600 flex items-center justify-center">
-                    <svg class="w-4 h-4 text-white" viewBox="0 0 120 116" fill="none">
-                        <rect x="12" y="8" width="96" height="90" rx="18" fill="currentColor"/>
-                        <rect x="22" y="17" width="76" height="56" rx="12" fill="#140E0A"/>
-                        <rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="#F4B860"/>
-                        <path d="M47 55 C 53 62, 67 62, 73 55" stroke="#F4B860" stroke-width="3.4" stroke-linecap="round" fill="none"/>
-                    </svg>
-                </div>
-                <span class="font-bold text-sm">rusty</span>
-            </div>
-            <div class="flex flex-wrap gap-6 text-sm">
-                <a href="https://docs.rustycli.com" class="text-zinc-500 hover:text-zinc-900 transition-colors">Docs</a>
-                <a href="https://github.com/PDG-Global/rusty" class="text-zinc-500 hover:text-zinc-900 transition-colors">GitHub</a>
-                <a href="https://github.com/PDG-Global/rusty/releases" class="text-zinc-500 hover:text-zinc-900 transition-colors">Changelog</a>
-                <a href="privacy.html" class="text-zinc-500 hover:text-zinc-900 transition-colors">Privacy</a>
-                <a href="https://github.com/PDG-Global/rusty/blob/main/LICENSE" class="text-zinc-500 hover:text-zinc-900 transition-colors">License (AGPL-3.0)</a>
-            </div>
-            <div class="text-xs text-zinc-400">© 2026 PDG Global Limited · Made in the terminal</div>
+  <!-- STATS BAND -->
+  <section style="background:#15110E;">
+    <div style="max-width:1200px; margin:0 auto; padding:60px 32px; display:grid; grid-template-columns:repeat(4,1fr); text-align:center;">
+      <div style="padding:4px 20px;">
+        <div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(36px,4.2vw,56px); letter-spacing:-0.03em; color:var(--glow);">12<span style="font-size:0.46em; color:var(--led); margin-left:2px;">MB</span></div>
+        <div style="font-size:12.5px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:#9A8C7A; margin-top:10px;">Single static binary</div>
+      </div>
+      <div style="padding:4px 20px; border-left:1px solid rgba(244,184,96,0.14);">
+        <div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(36px,4.2vw,56px); letter-spacing:-0.03em; color:var(--glow);">&lt;20<span style="font-size:0.46em; color:var(--led); margin-left:2px;">ms</span></div>
+        <div style="font-size:12.5px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:#9A8C7A; margin-top:10px;">Cold start</div>
+      </div>
+      <div style="padding:4px 20px; border-left:1px solid rgba(244,184,96,0.14);">
+        <div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(36px,4.2vw,56px); letter-spacing:-0.03em; color:var(--led);">0</div>
+        <div style="font-size:12.5px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:#9A8C7A; margin-top:10px;">Telemetry events</div>
+      </div>
+      <div style="padding:4px 20px; border-left:1px solid rgba(244,184,96,0.14);">
+        <div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(36px,4.2vw,56px); letter-spacing:-0.03em; color:var(--glow);">AGPL</div>
+        <div style="font-size:12.5px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:#9A8C7A; margin-top:10px;">Open source license</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES / CREW -->
+  <section id="features" style="max-width:1200px; margin:0 auto; padding:120px 32px;">
+    <div style="max-width:640px; margin-bottom:52px;">
+      <div style="font-size:13px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); margin-bottom:16px;">Meet the crew</div>
+      <h2 style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(30px,3.6vw,48px); line-height:1.04; letter-spacing:-0.025em; margin:0 0 18px;">Rusty doesn't work alone.</h2>
+      <p style="font-size:18px; line-height:1.6; color:var(--muted); margin:0;">One agent you actually talk to, backed by a tiny crew of retro helpers. Here's how they split the work.</p>
+    </div>
+
+    <div style="position:relative; border-radius:24px; overflow:hidden; background:var(--ink); box-shadow:0 36px 70px -38px rgba(40,25,12,0.5); max-width:1040px; margin:0 auto;">
+      <div style="position:absolute; inset:0; background:radial-gradient(120% 90% at 50% 16%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);"></div>
+      <div style="position:absolute; inset:0; background:repeating-linear-gradient(0deg, rgba(244,184,96,0.045) 0 1px, transparent 1px 5px);"></div>
+
+      <div style="position:relative; display:flex; justify-content:center; padding:28px 24px 0;">
+        <div style="display:inline-flex; align-items:center; gap:8px; padding:8px 16px; border-radius:999px; background:rgba(255,255,255,0.04); box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08); font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#C9BBA8;">
+          <span style="color:var(--glow);">you</span> ▸ rusty plans ▸ <span style="color:var(--glow);">vault</span> approves ▸ shipped
         </div>
-    </footer>
+      </div>
+
+      <div style="position:relative; padding:30px 28px 40px; display:flex; align-items:flex-start; justify-content:center; gap:clamp(10px,3vw,40px); flex-wrap:wrap;">
+        <!-- Rusty -->
+        <div style="display:flex; flex-direction:column; align-items:center; width:148px;">
+          <div style="height:160px; display:flex; align-items:center; justify-content:center;"><div style="transform:translateY(6px);"><span style="display:inline-flex;align-items:center;justify-content:center;width:130px;height:130px;line-height:0"><svg viewBox="0 0 120 116" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+<ellipse cx="60" cy="105" rx="38" ry="6" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+<rect x="12" y="8" width="96" height="90" rx="18" fill="var(--metal, #B8501F)"></rect>
+<path d="M16 80 C 16 90, 24 98, 34 98 L 86 98 C 96 98, 104 90, 104 80 L 104 74 L 16 74 Z" fill="var(--metal-deep, #8E3D17)" opacity="0.45"></path>
+<path d="M26 16 C 48 12, 72 12, 94 16" stroke="var(--metal-light, #E0703A)" stroke-width="3" stroke-linecap="round" opacity="0.85"></path>
+<rect x="22" y="17" width="76" height="56" rx="12" fill="var(--screen, #140E0A)"></rect>
+<line x1="27" y1="30" x2="93" y2="30" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="45" x2="93" y2="45" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="60" x2="93" y2="60" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<g class="rusty-face"><g class="rusty-eyes"><rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect><rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect></g><path d="M47 55 C 53 62, 67 62, 73 55" stroke="var(--glow, #F4B860)" stroke-width="3.4" stroke-linecap="round" fill="none"></path></g>
+<line x1="24" y1="86" x2="40" y2="86" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<line x1="24" y1="92" x2="36" y2="92" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<circle cx="92" cy="89" r="3.2" fill="var(--led, #6FCF7A)"></circle>
+</svg></span></div></div>
+          <div style="margin-top:10px; text-align:center;"><div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:17px; color:#F5EDE3;">Rusty</div><div style="font-size:12.5px; color:#B3A493; margin-top:3px;">Reads, plans &amp; writes</div></div>
+        </div>
+        <span style="align-self:flex-start; height:160px; display:flex; align-items:center; color:var(--glow); opacity:0.55; font-size:18px;">▸</span>
+        <!-- Vault -->
+        <div style="display:flex; flex-direction:column; align-items:center; width:148px;">
+          <div style="height:160px; display:flex; align-items:center; justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;width:118px;height:118px;line-height:0"><svg viewBox="0 0 120 120" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+    <ellipse cx="60" cy="113" rx="40" ry="5" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+    <rect x="12" y="10" width="96" height="100" rx="16" fill="var(--metal, #B8501F)"></rect>
+    <path d="M16 88 C 16 98, 24 104, 34 104 L 86 104 C 96 104, 104 98, 104 88 L 104 82 L 16 82 Z" fill="var(--metal-deep, #8E3D17)" opacity="0.4"></path>
+    <path d="M24 18 C 48 14, 72 14, 96 18" stroke="var(--metal-light, #E0703A)" stroke-width="2.6" stroke-linecap="round" opacity="0.8"></path>
+    <circle cx="22" cy="20" r="2.6" fill="var(--metal-deep, #8E3D17)"></circle>
+    <circle cx="98" cy="20" r="2.6" fill="var(--metal-deep, #8E3D17)"></circle>
+    <circle cx="22" cy="100" r="2.6" fill="var(--metal-deep, #8E3D17)"></circle>
+    <circle cx="98" cy="100" r="2.6" fill="var(--metal-deep, #8E3D17)"></circle>
+    <rect x="26" y="26" width="68" height="70" rx="12" fill="var(--metal-deep, #8E3D17)"></rect>
+    <rect x="26" y="26" width="68" height="70" rx="12" fill="none" stroke="var(--metal-light, #E0703A)" stroke-width="1.4" opacity="0.4"></rect>
+    <rect x="34" y="33" width="52" height="38" rx="9" fill="var(--screen, #140E0A)"></rect>
+    <line x1="38" y1="42" x2="82" y2="42" stroke="var(--glow, #F4B860)" stroke-width="1" opacity="0.09"></line>
+    <line x1="38" y1="56" x2="82" y2="56" stroke="var(--glow, #F4B860)" stroke-width="1" opacity="0.09"></line>
+    <g class="rusty-face">
+      <path d="M44 39 l9 2.4" stroke="var(--glow, #F4B860)" stroke-width="2.2" stroke-linecap="round"></path>
+      <path d="M76 39 l-9 2.4" stroke="var(--glow, #F4B860)" stroke-width="2.2" stroke-linecap="round"></path>
+      <g class="rusty-eyes">
+        <rect x="46" y="45" width="7" height="12" rx="3.5" fill="var(--glow, #F4B860)"></rect>
+        <rect x="67" y="45" width="7" height="12" rx="3.5" fill="var(--glow, #F4B860)"></rect>
+      </g>
+      <path d="M53 64 C 57 67, 63 67, 67 64" stroke="var(--glow, #F4B860)" stroke-width="2.4" stroke-linecap="round" fill="none"></path>
+    </g>
+    <circle cx="60" cy="84" r="12.5" fill="var(--metal, #B8501F)"></circle>
+    <circle cx="60" cy="84" r="12.5" fill="none" stroke="var(--metal-deep, #8E3D17)" stroke-width="2"></circle>
+    <g class="vault-dial">
+      <circle cx="60" cy="84" r="6.5" fill="var(--metal-light, #E0703A)"></circle>
+      <circle cx="60" cy="84" r="2.4" fill="var(--glow, #F4B860)"></circle>
+      <path d="M60 84 L 60 75" stroke="var(--metal-deep, #8E3D17)" stroke-width="2.2" stroke-linecap="round"></path>
+    </g>
+    <path d="M60 71 v3 M73 84 h-3 M60 97 v-3 M47 84 h3" stroke="var(--metal-deep, #8E3D17)" stroke-width="1.8" stroke-linecap="round" opacity="0.7"></path>
+    <circle cx="92" cy="92" r="2.6" fill="var(--led, #6FCF7A)"></circle>
+  </svg></span></div>
+          <div style="margin-top:10px; text-align:center;"><div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:17px; color:#F5EDE3;">Vault</div><div style="font-size:12.5px; color:#B3A493; margin-top:3px;">Sandboxes every action</div></div>
+        </div>
+        <span style="align-self:flex-start; height:160px; display:flex; align-items:center; color:var(--glow); opacity:0.55; font-size:18px;">▸</span>
+        <!-- Floppy -->
+        <div style="display:flex; flex-direction:column; align-items:center; width:148px;">
+          <div style="height:160px; display:flex; align-items:center; justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;width:118px;height:118px;line-height:0"><svg viewBox="0 0 120 120" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+    <ellipse cx="60" cy="113" rx="40" ry="5" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+    <path d="M16 17 Q16 8 25 8 H89 L104 22 V101 Q104 110 95 110 H25 Q16 110 16 101 Z" fill="var(--metal-deep, #8E3D17)"></path>
+    <path d="M26 14 C 44 11, 62 11, 80 13" stroke="var(--metal, #B8501F)" stroke-width="2.6" stroke-linecap="round" opacity="0.7"></path>
+    <rect x="54" y="8" width="32" height="30" rx="2.5" fill="#C9BFAE"></rect>
+    <rect x="68" y="12" width="6" height="22" rx="1.2" fill="#948B7B"></rect>
+    <rect x="23" y="13" width="8" height="8" rx="1.2" fill="var(--screen, #140E0A)" opacity="0.55"></rect>
+    <rect x="22" y="46" width="76" height="58" rx="6" fill="var(--screen, #140E0A)"></rect>
+    <rect x="22" y="46" width="76" height="58" rx="6" fill="none" stroke="var(--metal, #B8501F)" stroke-width="1.4" opacity="0.45"></rect>
+    <line x1="28" y1="55" x2="74" y2="55" stroke="var(--glow, #F4B860)" stroke-width="1.1" opacity="0.10"></line>
+    <g class="rusty-face">
+      <g class="rusty-eyes">
+        <rect x="43" y="65" width="8.5" height="14" rx="4.2" fill="var(--glow, #F4B860)"></rect>
+        <rect x="68.5" y="65" width="8.5" height="14" rx="4.2" fill="var(--glow, #F4B860)"></rect>
+      </g>
+      <path d="M48 88 C 54 94, 66 94, 72 88" stroke="var(--glow, #F4B860)" stroke-width="3.2" stroke-linecap="round" fill="none"></path>
+    </g>
+  </svg></span></div>
+          <div style="margin-top:10px; text-align:center;"><div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:17px; color:#F5EDE3;">Floppy</div><div style="font-size:12.5px; color:#B3A493; margin-top:3px;">Keeps it one tiny binary</div></div>
+        </div>
+        <span style="align-self:flex-start; height:160px; display:flex; align-items:center; color:var(--glow); opacity:0.55; font-size:18px;">▸</span>
+        <!-- Cassette -->
+        <div style="display:flex; flex-direction:column; align-items:center; width:148px;">
+          <div style="height:160px; display:flex; align-items:center; justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;width:158px;height:158px;line-height:0"><svg viewBox="0 0 140 100" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+    <ellipse cx="70" cy="95" rx="50" ry="5" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+    <rect x="8" y="8" width="124" height="80" rx="13" fill="var(--metal, #B8501F)"></rect>
+    <path d="M12 70 C 12 80, 18 84, 26 84 L 114 84 C 122 84, 128 80, 128 70 L 128 66 L 12 66 Z" fill="var(--metal-deep, #8E3D17)" opacity="0.4"></path>
+    <path d="M20 15 C 56 11, 84 11, 120 15" stroke="var(--metal-light, #E0703A)" stroke-width="2.6" stroke-linecap="round" opacity="0.8"></path>
+    <circle cx="16" cy="16" r="2" fill="var(--metal-deep, #8E3D17)"></circle>
+    <circle cx="124" cy="16" r="2" fill="var(--metal-deep, #8E3D17)"></circle>
+    <circle cx="16" cy="80" r="2" fill="var(--metal-deep, #8E3D17)"></circle>
+    <circle cx="124" cy="80" r="2" fill="var(--metal-deep, #8E3D17)"></circle>
+    <rect x="26" y="14" width="88" height="16" rx="4" fill="var(--screen, #140E0A)"></rect>
+    <line x1="32" y1="20" x2="92" y2="20" stroke="var(--glow, #F4B860)" stroke-width="1.4" opacity="0.22"></line>
+    <line x1="32" y1="25" x2="74" y2="25" stroke="var(--glow, #F4B860)" stroke-width="1.4" opacity="0.14"></line>
+    <g class="rusty-face">
+      <g class="rusty-eyes">
+        <circle cx="50" cy="56" r="16" fill="var(--screen, #140E0A)"></circle>
+        <circle cx="90" cy="56" r="16" fill="var(--screen, #140E0A)"></circle>
+        <circle cx="50" cy="56" r="16" fill="none" stroke="var(--glow, #F4B860)" stroke-width="1.4" opacity="0.25"></circle>
+        <circle cx="90" cy="56" r="16" fill="none" stroke="var(--glow, #F4B860)" stroke-width="1.4" opacity="0.25"></circle>
+        <g class="reel">
+          <circle cx="50" cy="56" r="6" fill="var(--glow, #F4B860)"></circle>
+          <path d="M50 49 V44 M50 62 V67 M43 56 H38 M57 56 H62" stroke="var(--glow, #F4B860)" stroke-width="2" stroke-linecap="round" opacity="0.55"></path>
+        </g>
+        <g class="reel">
+          <circle cx="90" cy="56" r="6" fill="var(--glow, #F4B860)"></circle>
+          <path d="M90 49 V44 M90 62 V67 M83 56 H78 M97 56 H102" stroke="var(--glow, #F4B860)" stroke-width="2" stroke-linecap="round" opacity="0.55"></path>
+        </g>
+      </g>
+      <path d="M62 78 C 66 82, 74 82, 78 78" stroke="var(--glow, #F4B860)" stroke-width="2.8" stroke-linecap="round" fill="none"></path>
+    </g>
+    <rect x="52" y="82" width="36" height="6" rx="2" fill="var(--metal-deep, #8E3D17)" opacity="0.5"></rect>
+  </svg></span></div>
+          <div style="margin-top:10px; text-align:center;"><div style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:17px; color:#F5EDE3;">Cassette</div><div style="font-size:12.5px; color:#B3A493; margin-top:3px;">Boots &amp; replays fast</div></div>
+        </div>
+      </div>
+    </div>
+
+    <p style="max-width:760px; margin:34px auto 0; text-align:center; font-size:17px; line-height:1.7; color:var(--muted);">Here's the loop: you describe the change, <strong style="color:var(--text); font-weight:600;">Rusty</strong> reads your repo and writes the code, then hands each action to <strong style="color:var(--text); font-weight:600;">Vault</strong>, which runs it sandboxed and waits for your nod. <strong style="color:var(--text); font-weight:600;">Floppy</strong> keeps the whole crew inside one 12&nbsp;MB binary, and <strong style="color:var(--text); font-weight:600;">Cassette</strong> makes it cold-start and replay in milliseconds. One tool you talk to — a tiny team doing the work.</p>
+  </section>
+
+  <!-- MODELS -->
+  <section id="models" style="background:var(--bg-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+    <div style="max-width:1200px; margin:0 auto; padding:104px 32px;">
+      <div style="display:grid; grid-template-columns:0.85fr 1.15fr; gap:56px; align-items:center;">
+        <div>
+          <div style="font-size:13px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); margin-bottom:16px;">Bring your own model</div>
+          <h2 style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(30px,3.4vw,46px); line-height:1.05; letter-spacing:-0.025em; margin:0 0 20px;">Built for open weights.</h2>
+          <p style="font-size:18px; line-height:1.6; color:var(--muted); max-width:460px; margin:0 0 24px;">Rusty is model-agnostic and tuned to shine on the open-source frontier — point it at a local runtime or any OpenAI-compatible endpoint and keep everything in your own walls.</p>
+          <p style="font-size:15.5px; line-height:1.6; color:var(--muted); max-width:460px; margin:0;">Prefer a hosted frontier model? <strong style="color:var(--text); font-weight:600;">OpenAI</strong> and <strong style="color:var(--text); font-weight:600;">Anthropic</strong> work great too — same workflow, same approvals.</p>
+        </div>
+
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:12.5px; letter-spacing:0.04em; text-transform:uppercase; color:var(--muted); margin-bottom:16px;">Works best with</div>
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+            <div class="rusty-card" style="display:flex; flex-direction:column; gap:10px; padding:20px; background:var(--surface); border:1px solid var(--border); border-radius:14px;">
+              <span style="width:9px; height:9px; border-radius:50%; background:var(--led);"></span>
+              <span style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:18px; letter-spacing:-0.01em; color:var(--text);">Xiaomi MiMo</span>
+            </div>
+            <div class="rusty-card" style="display:flex; flex-direction:column; gap:10px; padding:20px; background:var(--surface); border:1px solid var(--border); border-radius:14px;">
+              <span style="width:9px; height:9px; border-radius:50%; background:var(--led);"></span>
+              <span style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:18px; letter-spacing:-0.01em; color:var(--text);">Kimi</span>
+            </div>
+            <div class="rusty-card" style="display:flex; flex-direction:column; gap:10px; padding:20px; background:var(--surface); border:1px solid var(--border); border-radius:14px;">
+              <span style="width:9px; height:9px; border-radius:50%; background:var(--led);"></span>
+              <span style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:18px; letter-spacing:-0.01em; color:var(--text);">GLM</span>
+            </div>
+            <div class="rusty-card" style="display:flex; flex-direction:column; gap:10px; padding:20px; background:var(--surface); border:1px solid var(--border); border-radius:14px;">
+              <span style="width:9px; height:9px; border-radius:50%; background:var(--led);"></span>
+              <span style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:18px; letter-spacing:-0.01em; color:var(--text);">MiniMax</span>
+            </div>
+            <div class="rusty-card" style="display:flex; flex-direction:column; gap:10px; padding:20px; background:var(--surface); border:1px solid var(--border); border-radius:14px;">
+              <span style="width:9px; height:9px; border-radius:50%; background:var(--led);"></span>
+              <span style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:18px; letter-spacing:-0.01em; color:var(--text);">DeepSeek</span>
+            </div>
+            <div class="rusty-card" style="display:flex; flex-direction:column; justify-content:center; gap:6px; padding:20px; background:var(--ink); border:1px solid var(--border); border-radius:14px;">
+              <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#B3A493;">+ OpenAI</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#B3A493;">+ Anthropic</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL CTA -->
+  <section id="install" style="max-width:1200px; margin:0 auto; padding:128px 32px;">
+    <div style="position:relative; overflow:hidden; border:1px solid var(--border); border-radius:24px; background:var(--surface); padding:64px 48px; text-align:center;">
+      <div style="position:absolute; inset:auto 0 -40% 0; height:300px; background:radial-gradient(ellipse at 50% 100%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);"></div>
+      <div style="position:relative;">
+        <div class="rusty-float" style="display:inline-block; margin-bottom:8px;">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:96px;height:96px;line-height:0"><svg viewBox="0 0 120 116" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+<ellipse cx="60" cy="105" rx="38" ry="6" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+<rect x="12" y="8" width="96" height="90" rx="18" fill="var(--metal, #B8501F)"></rect>
+<path d="M16 80 C 16 90, 24 98, 34 98 L 86 98 C 96 98, 104 90, 104 80 L 104 74 L 16 74 Z" fill="var(--metal-deep, #8E3D17)" opacity="0.45"></path>
+<path d="M26 16 C 48 12, 72 12, 94 16" stroke="var(--metal-light, #E0703A)" stroke-width="3" stroke-linecap="round" opacity="0.85"></path>
+<rect x="22" y="17" width="76" height="56" rx="12" fill="var(--screen, #140E0A)"></rect>
+<line x1="27" y1="30" x2="93" y2="30" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="45" x2="93" y2="45" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="60" x2="93" y2="60" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<g class="rusty-face"><g class="rusty-eyes"><rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect><rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect></g><path d="M47 55 C 53 62, 67 62, 73 55" stroke="var(--glow, #F4B860)" stroke-width="3.4" stroke-linecap="round" fill="none"></path></g>
+<line x1="24" y1="86" x2="40" y2="86" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<line x1="24" y1="92" x2="36" y2="92" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<circle cx="92" cy="89" r="3.2" fill="var(--led, #6FCF7A)"></circle>
+</svg></span>
+        </div>
+        <h2 style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:clamp(32px,4vw,56px); line-height:1.02; letter-spacing:-0.03em; margin:0 0 16px;">Get Rusty in one line.</h2>
+        <p style="font-size:18px; color:var(--muted); max-width:480px; margin:0 auto 32px;">macOS, Linux, and Windows. No account required to start.</p>
+        <div style="display:inline-flex; align-items:center; gap:16px; padding:15px 16px 15px 22px; background:var(--bg); border:1px solid var(--border); border-radius:14px; font-family:'JetBrains Mono',monospace; font-size:16px; max-width:100%;">
+          <span style="color:var(--accent);">$</span>
+          <span>curl -fsSL rustycli.com/install | sh</span>
+          <button onclick="copyInstall()" class="rusty-btn" id="cta-copy" style="padding:8px 14px; background:var(--accent); color:#fff; border:none; border-radius:9px; font-family:'Hanken Grotesk',sans-serif; font-size:14px; font-weight:600; cursor:pointer;">Copy</button>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px 18px; margin-top:26px; font-size:14px; color:var(--muted);">
+          <span>brew install rusty</span><span style="opacity:.4;">·</span>
+          <span>cargo install rusty-cli</span><span style="opacity:.4;">·</span>
+          <span>scoop install rusty</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer style="border-top:1px solid var(--border); background:var(--bg-2);">
+    <div style="max-width:1200px; margin:0 auto; padding:48px 32px; display:flex; flex-wrap:wrap; gap:28px; align-items:center; justify-content:space-between;">
+      <div style="display:flex; align-items:center; gap:11px;">
+        <span style="display:inline-flex; transform:translateY(3px);"><span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;line-height:0"><svg viewBox="0 0 120 116" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible">
+<ellipse cx="60" cy="105" rx="38" ry="6" fill="var(--ink, #1A1410)" opacity="0.16"></ellipse>
+<rect x="12" y="8" width="96" height="90" rx="18" fill="var(--metal, #B8501F)"></rect>
+<path d="M16 80 C 16 90, 24 98, 34 98 L 86 98 C 96 98, 104 90, 104 80 L 104 74 L 16 74 Z" fill="var(--metal-deep, #8E3D17)" opacity="0.45"></path>
+<path d="M26 16 C 48 12, 72 12, 94 16" stroke="var(--metal-light, #E0703A)" stroke-width="3" stroke-linecap="round" opacity="0.85"></path>
+<rect x="22" y="17" width="76" height="56" rx="12" fill="var(--screen, #140E0A)"></rect>
+<line x1="27" y1="30" x2="93" y2="30" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="45" x2="93" y2="45" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<line x1="27" y1="60" x2="93" y2="60" stroke="var(--glow, #F4B860)" stroke-width="1.2" opacity="0.08"></line>
+<g class="rusty-face"><g class="rusty-eyes"><rect x="44.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect><rect x="66.5" y="32" width="9" height="16" rx="4.5" fill="var(--glow, #F4B860)"></rect></g><path d="M47 55 C 53 62, 67 62, 73 55" stroke="var(--glow, #F4B860)" stroke-width="3.4" stroke-linecap="round" fill="none"></path></g>
+<line x1="24" y1="86" x2="40" y2="86" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<line x1="24" y1="92" x2="36" y2="92" stroke="var(--metal-deep, #8E3D17)" stroke-width="3" stroke-linecap="round"></line>
+<circle cx="92" cy="89" r="3.2" fill="var(--led, #6FCF7A)"></circle>
+</svg></span></span>
+        <span style="font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:20px; letter-spacing:-0.02em; line-height:1; display:block;">rusty</span>
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:24px; font-size:14.5px;">
+        <a href="https://docs.rustycli.com" class="rusty-link" style="color:var(--muted); text-decoration:none;">Docs</a>
+        <a href="https://github.com/PDG-Global/rusty" class="rusty-link" style="color:var(--muted); text-decoration:none;">GitHub</a>
+        <a href="https://github.com/PDG-Global/rusty/releases" class="rusty-link" style="color:var(--muted); text-decoration:none;">Changelog</a>
+        <a href="privacy.html" class="rusty-link" style="color:var(--muted); text-decoration:none;">Privacy</a>
+        <a href="https://github.com/PDG-Global/rusty/blob/main/LICENSE" class="rusty-link" style="color:var(--muted); text-decoration:none;">License (AGPL-3.0)</a>
+      </div>
+      <div style="font-size:13.5px; color:var(--muted);">© 2026 PDG Global Limited · Made in the terminal</div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+const themes = {
+  daylight: {
+    "--metal":"#B8501F","--metal-deep":"#8E3D17","--metal-light":"#E0703A",
+    "--screen":"#140E0A","--glow":"#F4B860","--led":"#4FAE6F","--ink":"#1A1410",
+    "--bg":"#FCFAF6","--bg-2":"#F4EEE4","--surface":"#FFFFFF","--text":"#211A13",
+    "--muted":"#7C6F5D","--border":"#EBE3D5","--accent":"#C2541C","--accent-2":"#E0703A"
+  },
+  ember: {
+    "--metal":"#B8501F","--metal-deep":"#8E3D17","--metal-light":"#E0703A",
+    "--screen":"#140E0A","--glow":"#F4B860","--led":"#6FCF7A","--ink":"#1A1410",
+    "--bg":"#15110E","--bg-2":"#1E1712","--surface":"#231A13","--text":"#F5EDE3",
+    "--muted":"#B3A493","--border":"#382A1F","--accent":"#E0703A","--accent-2":"#F4B860"
+  },
+  patina: {
+    "--metal":"#B8501F","--metal-deep":"#8E3D17","--metal-light":"#E0703A",
+    "--screen":"#0E1411","--glow":"#7FD0B0","--led":"#E0703A","--ink":"#0F1512",
+    "--bg":"#101513","--bg-2":"#16201C","--surface":"#15201B","--text":"#ECF4EF",
+    "--muted":"#9FB6AC","--border":"#243530","--accent":"#5FB89A","--accent-2":"#7FD0B0"
+  }
+};
+
+function applyTheme(id) {
+  const el = document.getElementById('root');
+  const vars = themes[id];
+  if (el && vars) {
+    for (const k in vars) el.style.setProperty(k, vars[k]);
+    el.style.background = vars["--bg"];
+  }
+  try { localStorage.setItem("rusty-theme-v2", id); } catch (e) {}
+}
+
+function copyInstall() {
+  try { navigator.clipboard.writeText("curl -fsSL rustycli.com/install | sh"); } catch (e) {}
+  const btns = document.querySelectorAll('#hero-copy, #cta-copy');
+  btns.forEach(b => { b.textContent = 'Copied ✓'; setTimeout(() => b.textContent = 'Copy', 1600); });
+}
+
+// Restore saved theme
+try {
+  const saved = localStorage.getItem("rusty-theme-v2");
+  if (saved && themes[saved] && saved !== "daylight") applyTheme(saved);
+} catch (e) {}
+</script>
 
 </body>
 </html>
