@@ -1002,6 +1002,10 @@ pub struct AppState {
     /// When true, the user pressed Ctrl+C once and we are waiting for a second
     /// press to confirm exit. Resets on any other key press.
     pub confirming_exit: bool,
+    /// Snapshot of the input buffer taken when the last response completed.
+    /// Used to ignore stale follow-up suggestions arriving after the user
+    /// has started typing.
+    pub input_at_response_complete: String,
 }
 
 pub struct PendingTool {
@@ -1191,6 +1195,7 @@ impl Default for AppState {
             update_available: None,
             autocomplete: None,
             confirming_exit: false,
+            input_at_response_complete: String::new(),
         }
     }
 }
@@ -2238,6 +2243,9 @@ impl AppState {
             tracing::debug!("Heuristic suggestion: {:?}", heuristic);
             self.input_suggestion = heuristic;
         }
+        // Snapshot the input buffer so we can detect whether the user typed
+        // anything between response completion and a late suggestion arriving.
+        self.input_at_response_complete = self.input.clone();
         // Save any remaining thinking text
         if self.is_thinking && !self.thinking_text.is_empty() {
             self.saved_thinking = self.thinking_text.clone();
@@ -2822,4 +2830,198 @@ fn rgba_to_png(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
         }
     }
     Some(png_data)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with_streaming(text: &str) -> AppState {
+        let mut s = AppState::default();
+        s.streaming_text = text.to_string();
+        s.is_streaming = true;
+        s
+    }
+
+    mod extract_followup {
+        use super::*;
+
+        #[test]
+        fn prefers_last_question() {
+            let text = "Here is some info.\nWhat is the first step?\nMore detail.\nAny other questions?";
+            assert_eq!(
+                AppState::extract_followup_suggestion(text),
+                Some("Any other questions?".to_string())
+            );
+        }
+
+        #[test]
+        fn ignores_single_char_question() {
+            // `l.len() > 1` guard: a lone "?" should not count as a question.
+            let text = "Details here.\n?";
+            assert_eq!(
+                AppState::extract_followup_suggestion(text),
+                Some("Details here.".to_string())
+            );
+        }
+
+        #[test]
+        fn last_line_fallback_when_no_question() {
+            let text = "First line.\nSecond line.\nFinal line.";
+            assert_eq!(
+                AppState::extract_followup_suggestion(text),
+                Some("Final line.".to_string())
+            );
+        }
+
+        #[test]
+        fn strips_bullet_markers() {
+            for marker in ["- ", "* ", "+ "] {
+                let text = format!("Intro.\n{marker}Run the tests");
+                assert_eq!(
+                    AppState::extract_followup_suggestion(&text),
+                    Some("Run the tests".to_string()),
+                    "failed for marker {marker:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn strips_numbered_prefixes() {
+            assert_eq!(
+                AppState::extract_followup_suggestion("Intro.\n1. First step"),
+                Some("First step".to_string())
+            );
+            assert_eq!(
+                AppState::extract_followup_suggestion("Intro.\n12) Second step"),
+                Some("Second step".to_string())
+            );
+        }
+
+        #[test]
+        fn strips_markdown_decoration() {
+            assert_eq!(
+                AppState::extract_followup_suggestion("Intro.\n## Heading"),
+                Some("Heading".to_string())
+            );
+            assert_eq!(
+                AppState::extract_followup_suggestion("Intro.\n> quoted text"),
+                Some("quoted text".to_string())
+            );
+            assert_eq!(
+                AppState::extract_followup_suggestion("Intro.\n`code`"),
+                Some("code".to_string())
+            );
+        }
+
+        #[test]
+        fn caps_long_suggestion_with_ellipsis() {
+            let long_line = "a".repeat(200);
+            let text = format!("Intro.\n{long_line}");
+            let result = AppState::extract_followup_suggestion(&text).unwrap();
+            assert_eq!(result.chars().count(), 120);
+            assert_eq!(result.chars().last(), Some('\u{2026}'));
+            assert_eq!(result.chars().filter(|c| *c == 'a').count(), 119);
+        }
+
+        #[test]
+        fn keeps_suggestion_under_cap() {
+            let text = "Intro.\nShort question?";
+            let result = AppState::extract_followup_suggestion(&text).unwrap();
+            assert_eq!(result, "Short question?");
+            assert!(result.chars().count() <= 120);
+        }
+
+        #[test]
+        fn empty_input_returns_none() {
+            assert_eq!(AppState::extract_followup_suggestion(""), None);
+        }
+
+        #[test]
+        fn whitespace_only_returns_none() {
+            assert_eq!(AppState::extract_followup_suggestion("   \n\t\n "), None);
+        }
+
+        #[test]
+        fn no_alphanumeric_returns_none() {
+            // Lines exist but none have alphanumeric content for the fallback.
+            assert_eq!(AppState::extract_followup_suggestion("---\n###\n***"), None);
+        }
+
+        #[test]
+        fn question_wins_over_later_decorated_line() {
+            // A question earlier in the text is preferred even when a
+            // decorated final line is present.
+            let text = "Which file should I edit?\n- final note";
+            assert_eq!(
+                AppState::extract_followup_suggestion(text),
+                Some("Which file should I edit?".to_string())
+            );
+        }
+    }
+
+    mod finish_streaming {
+        use super::*;
+
+        #[test]
+        fn flushes_streaming_text_to_messages_as_assistant() {
+            let mut s = state_with_streaming("Hello world.");
+            s.finish_streaming();
+            assert_eq!(s.messages.len(), 1);
+            assert_eq!(s.messages[0].role, MessageRole::Assistant);
+            assert_eq!(s.messages[0].content, "Hello world.");
+            assert!(s.streaming_text.is_empty());
+        }
+
+        #[test]
+        fn populates_heuristic_suggestion() {
+            let mut s = state_with_streaming("Done.\nWhat should we test next?");
+            s.finish_streaming();
+            assert_eq!(
+                s.input_suggestion,
+                Some("What should we test next?".to_string())
+            );
+        }
+
+        #[test]
+        fn snapshots_input_at_response_complete() {
+            let mut s = state_with_streaming("Response.");
+            s.input = "partial user input".to_string();
+            s.finish_streaming();
+            assert_eq!(s.input_at_response_complete, "partial user input");
+        }
+
+        #[test]
+        fn no_suggestion_for_response_without_usable_line() {
+            let mut s = state_with_streaming("###\n***");
+            s.finish_streaming();
+            assert!(s.input_suggestion.is_none());
+            // Still flushed to messages.
+            assert_eq!(s.messages.len(), 1);
+        }
+
+        #[test]
+        fn empty_streaming_text_pushes_nothing_but_snapshots_input() {
+            let mut s = AppState::default();
+            s.is_streaming = true;
+            s.input = "leftover".to_string();
+            s.finish_streaming();
+            assert!(s.messages.is_empty());
+            assert!(s.input_suggestion.is_none());
+            assert_eq!(s.input_at_response_complete, "leftover");
+            assert!(!s.is_streaming);
+        }
+
+        #[test]
+        fn clears_streaming_state_flags() {
+            let mut s = state_with_streaming("Text.");
+            s.is_thinking = true;
+            s.thinking_expanded = true;
+            s.finish_streaming();
+            assert!(!s.is_streaming);
+            assert!(!s.is_thinking);
+            assert!(!s.thinking_expanded);
+            assert!(s.thinking_text.is_empty());
+            assert!(s.pending_tools.is_empty());
+        }
+    }
 }
