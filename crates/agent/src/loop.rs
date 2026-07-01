@@ -828,8 +828,12 @@ impl Agent {
                 max_tokens,
                 thinking_budget,
             );
-            let mut stream = match self.call_with_retry(&request, on_text).await {
+            let mut stream = match self.call_with_retry(&request, on_text, cancel).await {
                 Ok(s) => s,
+                Err(RustyError::Cancelled) => {
+                    self.finalize_plan();
+                    return Ok("Cancelled.".to_string());
+                }
                 Err(e) => {
                     warn!("LLM API call failed after retries: {e}");
                     self.finalize_plan();
@@ -969,6 +973,13 @@ impl Agent {
                     warn!("Tool call {} ({}) has empty ID after streaming — generating synthetic ID", i, tc.name);
                     tc.id = format!("call_{i}");
                 }
+            }
+
+            if !tool_calls.is_empty() {
+                debug!(
+                    "Finalized tool call IDs: {:?}",
+                    tool_calls.iter().enumerate().map(|(i, tc)| (i, &tc.name, &tc.id)).collect::<Vec<_>>()
+                );
             }
 
             // Estimate tokens only if the provider didn't report usage
@@ -1416,10 +1427,13 @@ impl Agent {
 
     /// Call the LLM API with automatic retry for transient errors.
     /// Retries up to MAX_RETRIES times for rate limits and server errors.
+    /// Checks the cancel token between retries and during backoff sleeps so the
+    /// user can abort even when the API is unreachable.
     async fn call_with_retry(
         &self,
         request: &MessageRequest,
         on_text: Option<&TextCallback>,
+        cancel: Option<&CancelToken>,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = Result<StreamEvent, RustyError>> + Send>>, RustyError>
     {
         let mut last_err = None;
@@ -1431,10 +1445,31 @@ impl Agent {
                 if let Some(cb) = on_text {
                     cb(&format!("\n[Retrying API call (attempt {}/{})...]\n", attempt + 1, MAX_RETRIES + 1));
                 }
-                tokio::time::sleep(delay).await;
+                if let Some(c) = cancel {
+                    tokio::select! {
+                        _ = tokio::time::sleep(delay) => {},
+                        _ = c.cancelled() => {
+                            return Err(RustyError::Cancelled);
+                        }
+                    }
+                } else {
+                    tokio::time::sleep(delay).await;
+                }
             }
 
-            match self.provider.create_message_stream(request.clone()).await {
+            // Make the API request cancellable
+            let result = if let Some(c) = cancel {
+                tokio::select! {
+                    r = self.provider.create_message_stream(request.clone()) => r,
+                    _ = c.cancelled() => {
+                        return Err(RustyError::Cancelled);
+                    }
+                }
+            } else {
+                self.provider.create_message_stream(request.clone()).await
+            };
+
+            match result {
                 Ok(stream) => return Ok(stream),
                 Err(e) => {
                     if e.is_retryable() && attempt < MAX_RETRIES {
@@ -1442,7 +1477,16 @@ impl Agent {
                         if let RustyError::RateLimit { retry_after: Some(secs) } = &e {
                             let delay = std::time::Duration::from_secs(*secs);
                             debug!("Rate limited, waiting {delay:?} before retry");
-                            tokio::time::sleep(delay).await;
+                            if let Some(c) = cancel {
+                                tokio::select! {
+                                    _ = tokio::time::sleep(delay) => {},
+                                    _ = c.cancelled() => {
+                                        return Err(RustyError::Cancelled);
+                                    }
+                                }
+                            } else {
+                                tokio::time::sleep(delay).await;
+                            }
                         }
                         warn!("Retryable API error (attempt {}): {e}", attempt + 1);
                         last_err = Some(e);

@@ -2959,6 +2959,56 @@ mod tests {
         }
     }
 
+    mod autocomplete {
+        use super::*;
+
+        #[test]
+        fn compute_returns_none_for_non_slash() {
+            assert!(AutocompleteState::compute("hello").is_none());
+            assert!(AutocompleteState::compute("").is_none());
+            assert!(AutocompleteState::compute(" /help").is_none());
+        }
+
+        #[test]
+        fn compute_matches_prefix() {
+            let ac = AutocompleteState::compute("/h").unwrap();
+            assert!(ac.matches.iter().any(|(cmd, _)| cmd == "/help"));
+            // Should not include non-matching commands
+            assert!(ac.matches.iter().all(|(cmd, _)| cmd.starts_with("/h")));
+        }
+
+        #[test]
+        fn compute_exact_match_includes_command() {
+            let ac = AutocompleteState::compute("/help").unwrap();
+            assert!(ac.matches.iter().any(|(cmd, _)| cmd == "/help"));
+        }
+
+        #[test]
+        fn compute_slash_alone_shows_all() {
+            let ac = AutocompleteState::compute("/").unwrap();
+            assert_eq!(ac.matches.len(), SLASH_COMMANDS.len());
+        }
+
+        #[test]
+        fn compute_returns_none_for_no_match() {
+            assert!(AutocompleteState::compute("/zzz").is_none());
+        }
+
+        #[test]
+        fn selected_defaults_to_first() {
+            let ac = AutocompleteState::compute("/").unwrap();
+            assert_eq!(ac.selected, 0);
+            assert_eq!(ac.selected_command(), ac.matches[0].0);
+        }
+
+        #[test]
+        fn selected_command_after_navigation() {
+            let mut ac = AutocompleteState::compute("/").unwrap();
+            ac.selected = 2;
+            assert_eq!(ac.selected_command(), ac.matches[2].0);
+        }
+    }
+
     mod finish_streaming {
         use super::*;
 

@@ -294,18 +294,25 @@ pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
     idx += 1;
     draw_status(app, chunks[idx], buf);
 
-    // Overlay autocomplete dropdown below input area
+    // Overlay autocomplete dropdown — prefer below input, fall back to above
     if let Some(ref ac) = app.autocomplete {
         if !ac.matches.is_empty() {
             let input_area = chunks[input_area_idx];
-            draw_autocomplete(
-                ac,
-                input_area.x + 1,
-                input_area.y + input_area.height,
-                input_area.width.saturating_sub(2),
-                main_area,
-                buf,
-            );
+            let x = input_area.x + 1;
+            let width = input_area.width.saturating_sub(2);
+
+            // How many rows does the dropdown need?
+            let needed = (ac.matches.len() as u16).min(8u16);
+            let below_y = input_area.y + input_area.height;
+            let space_below = main_area.height.saturating_sub(below_y).saturating_sub(1);
+
+            if space_below >= needed {
+                // Enough space below input
+                draw_autocomplete(ac, x, below_y, width, false, 0, main_area, buf);
+            } else {
+                // Not enough below; render above the input area
+                draw_autocomplete(ac, x, 0, width, true, input_area.y, main_area, buf);
+            }
         }
     }
 
@@ -344,6 +351,57 @@ pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
     }
 }
 
+/// Return the Rusty mascot as styled ratatui Lines.
+fn mascot_lines() -> Vec<Line<'static>> {
+    let rust = Color::Rgb(184, 80, 31);
+    let amber = Color::Rgb(244, 184, 96);
+    let green = Color::Rgb(111, 207, 122);
+    let sr = Style::default().fg(rust);
+    let sa = Style::default().fg(amber);
+    let sg = Style::default().fg(green);
+
+    vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ╭─────────────────╮", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │ ╭─────────────╮ │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │ │             │ │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │ │   ", sr),
+            Span::styled("▊     ▊", sa),
+            Span::styled("   │ │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │ │             │ │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │ │   ", sr),
+            Span::styled("╲_____╱", sa),
+            Span::styled("   │ │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │ │             │ │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │ ╰─────────────╯ │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  │  ▬▬▬        ", sr),
+            Span::styled("●", sg),
+            Span::styled("   │", sr),
+        ]),
+        Line::from(vec![
+            Span::styled("  ╰─────────────────╯", sr),
+        ]),
+        Line::from(""),
+    ]
+}
+
 fn draw_chat(app: &mut AppState, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -357,6 +415,11 @@ fn draw_chat(app: &mut AppState, area: Rect, buf: &mut Buffer) {
 
     let width = inner.width as usize;
     let mut lines: Vec<Line> = Vec::new();
+
+    // Show mascot when chat is empty (fresh session, no messages yet)
+    if app.messages.is_empty() && !app.is_streaming {
+        lines.extend(mascot_lines());
+    }
 
     for msg in &app.messages {
         let (prefix, base_style) = match msg.role {
@@ -2808,26 +2871,46 @@ fn draw_autocomplete(
     x: u16,
     y: u16,
     width: u16,
+    render_above: bool,
+    anchor_y: u16, // bottom of input area (for above mode)
     screen_area: Rect,
     buf: &mut Buffer,
 ) {
     let max_visible = 8u16;
     let count = ac.matches.len() as u16;
-    let visible = count.min(max_visible);
-    if visible == 0 {
+    if count == 0 {
         return;
     }
 
-    // Clamp to screen bounds
-    let available_below = screen_area.height.saturating_sub(y);
-    let visible = visible.min(available_below.saturating_sub(1));
-    if visible == 0 {
-        return;
-    }
+    let (y_pos, visible) = if render_above {
+        let available = anchor_y.saturating_sub(1); // 1 row gap from input top
+        let vis = count.min(max_visible).min(available);
+        if vis == 0 {
+            return;
+        }
+        // Position above anchor_y with a 1-row gap
+        (anchor_y.saturating_sub(vis + 1), vis)
+    } else {
+        let available = screen_area.height.saturating_sub(y).saturating_sub(1);
+        let vis = count.min(max_visible).min(available);
+        if vis == 0 {
+            return;
+        }
+        (y, vis)
+    };
+
+    // Calculate scroll offset so the selected item is always visible
+    let selected = ac.selected as u16;
+    let scroll_offset = if selected < visible {
+        0u16
+    } else {
+        // selected is beyond the visible window; scroll to keep it at the bottom
+        selected - visible + 1
+    };
 
     let area = Rect {
         x,
-        y,
+        y: y_pos,
         width: width.min(screen_area.width.saturating_sub(x)),
         height: visible,
     };
@@ -2836,9 +2919,15 @@ fn draw_autocomplete(
     let normal_style = Style::default().fg(Color::White);
     let desc_style = Style::default().fg(Color::DarkGray);
 
-    for (i, (name, desc)) in ac.matches.iter().enumerate().take(visible as usize) {
+    for i in 0..visible as usize {
+        let match_idx = scroll_offset as usize + i;
+        if match_idx >= ac.matches.len() {
+            break;
+        }
+        let (ref name, ref desc) = ac.matches[match_idx];
         let row_y = area.y + i as u16;
-        let style = if i == ac.selected {
+        let is_selected = match_idx == ac.selected;
+        let style = if is_selected {
             selected_style
         } else {
             normal_style
@@ -2864,19 +2953,14 @@ fn draw_autocomplete(
         let desc_len = desc_text.chars().count() as u16;
         let name_len = name_chars.len() as u16;
         let min_gap = 2u16;
-        if i != ac.selected && name_len + min_gap + desc_len < area.width {
+        if !is_selected && name_len + min_gap + desc_len < area.width {
             let desc_start = area.width.saturating_sub(desc_len);
-            let style = if i == ac.selected {
-                selected_style
-            } else {
-                desc_style
-            };
             for (ci, ch) in desc_text.chars().enumerate() {
                 let col = desc_start + ci as u16;
                 if col >= area.width {
                     break;
                 }
-                buf[(area.x + col, row_y)].set_char(ch).set_style(style);
+                buf[(area.x + col, row_y)].set_char(ch).set_style(desc_style);
             }
         }
     }

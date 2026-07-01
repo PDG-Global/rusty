@@ -74,7 +74,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `file_write.rs` | `file_write` | Write | Create/overwrite files, auto-creates parent dirs. Path sandbox. |
 | `file_edit.rs` | `file_edit` | Write | Exact string match-and-replace editing. Path sandbox. |
 | `apply_patch.rs` | `apply_patch` | Write | Apply unified diff patches. Supports `*** Begin Patch` / `*** End Patch` format with `*** Add File`, `*** Update File`, `*** Delete File` sections. Fuzzy matching for context lines (3-line search window). Uses `similar` crate for diff stats. Path sandbox. |
-| `bash.rs` | `bash` | Classified per-command | Execute shell commands. Read-only commands (ls, git status, cargo check, etc.) bypass write permissions via `classify_bash_command`. |
+| `bash.rs` | `bash` | Classified per-command | Execute shell commands. Read-only commands (ls, git status, cargo check, etc.) bypass write permissions via `classify_bash_command`. Path sandboxing: blocks commands with absolute paths or redirect targets outside the working directory. |
 | `grep.rs` | `grep` | ReadOnly | Regex search across files with glob filtering. Caps at 200 results. Skips binary extensions. |
 | `glob.rs` | `glob` | ReadOnly | File pattern matching. |
 | `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via reqwest (30s timeout). Configurable max_length (default 10000 chars). Comprehensive SSRF protection (see Security section). |
@@ -217,7 +217,7 @@ When given multi-step work, follow this discipline:
 
 8. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume` or `/resume`. Sidecar files: `{id}.notes.md` (scratchpad) and `{id}.checkpoint.md` (structured state) are cleaned up with the session.
 
-8. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory.
+8. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory. Bash tool uses `check_bash_paths()` to block commands with path arguments or redirect targets outside the working directory.
 
 9. **Wire format conversion**: Internal `Message`/`ToolDefinition` types are converted to/from OpenAI wire format via helpers in `provider/types.rs`. Supports reasoning content (`reasoning_content` field for MiMo/DeepSeek models).
 
@@ -380,6 +380,15 @@ All file tools use `resolve_path()` which:
 - Rejects any path that escapes the working directory.
 - TOCTOU-hardened: avoids `path.exists()` before `canonicalize()` to prevent symlink race conditions.
 - Pre-write verification (`verify_not_escaping_symlink()`) and post-write re-verification (`verify_no_symlink_escape()`) guard against symlink attacks during file creation.
+
+### Bash Path Sandboxing (`check_bash_paths`)
+
+The bash tool performs lightweight path checking before executing commands:
+
+- **Path token extraction**: Parses the command for path-like tokens (absolute paths, `./`, `../`, `~` expansions).
+- **Redirect target validation**: Extracts and validates redirect targets (`>`, `>>`, `2>`) against the working directory.
+- **Boundary enforcement**: Rejects commands where any path token or redirect target resolves outside the working directory.
+- **Limitations**: Does not catch paths constructed via shell variables (`$VAR`), subshells, or commands that `cd` internally. Complex pipelines may have reduced coverage.
 
 ### Prompt Injection Defences
 

@@ -1967,9 +1967,11 @@ async fn tui_main_loop(
                             app.needs_redraw = true;
                         }
                         rusty_tui::app::AgentEvent::Suggestion(suggestion) => {
-                            // Override the heuristic fallback with the LLM result when present.
-                            // When None, keep any heuristic suggestion already set as a fallback.
-                            if let Some(s) = suggestion {
+                            // Ignore the LLM suggestion if the user has typed anything
+                            // since the response completed (it's now stale).
+                            if app.input != app.input_at_response_complete {
+                                // stale: drop silently
+                            } else if let Some(s) = suggestion {
                                 if !s.is_empty() {
                                     app.input_suggestion = Some(s);
                                     app.needs_redraw = true;

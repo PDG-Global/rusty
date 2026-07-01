@@ -183,8 +183,13 @@ async fn run_loop(
                         app.needs_redraw = true;
                     }
                     AgentEvent::Suggestion(suggestion) => {
-                        // Override the heuristic fallback with the LLM result when present.
-                        if let Some(s) = suggestion {
+                        // Ignore the LLM suggestion if the user has typed anything
+                        // since the response completed (it's now stale).
+                        if app.input != app.input_at_response_complete {
+                            tracing::debug!(
+                                "Dropping stale suggestion: input changed since response"
+                            );
+                        } else if let Some(s) = suggestion {
                             if !s.is_empty() {
                                 tracing::debug!("LLM suggestion overriding heuristic: {}", s);
                                 app.input_suggestion = Some(s);

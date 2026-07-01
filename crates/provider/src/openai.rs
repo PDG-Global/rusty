@@ -41,6 +41,7 @@ impl OpenAiProvider {
         let client = reqwest::Client::builder()
             .user_agent(rusty_core::rusty_user_agent())
             .default_headers(headers)
+            .connect_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(600))
             .build()
             .map_err(|e| RustyError::Other(format!("Failed to build HTTP client: {e}")))?;
@@ -301,6 +302,12 @@ impl LlmProvider for OpenAiProvider {
                                             let existing = &mut tool_calls[tc.index].1;
 
                                             if let Some(id) = &tc.id {
+                                                if existing.id.is_some() && existing.id.as_deref() != Some(id.as_str()) {
+                                                    debug!(
+                                                        "Tool call index {}: ID changed from {:?} to {:?}",
+                                                        tc.index, existing.id, id
+                                                    );
+                                                }
                                                 existing.id = Some(id.clone());
                                             }
                                             let mut args_delta = String::new();
@@ -337,7 +344,13 @@ impl LlmProvider for OpenAiProvider {
                                             // from an earlier delta with a synthetic one.
                                             let effective_id = match &existing.id {
                                                 Some(id) if !id.is_empty() => Some(id.clone()),
-                                                _ => Some(format!("call_{}", tc.index)),
+                                                _ => {
+                                                    debug!(
+                                                        "Tool call index {}: no ID from provider, using synthetic call_{}",
+                                                        tc.index, tc.index
+                                                    );
+                                                    Some(format!("call_{}", tc.index))
+                                                }
                                             };
 
                                             events.push(Ok(StreamEvent::ToolCallDelta {

@@ -4,6 +4,7 @@
 use rusty_core::ContentBlock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::warn;
 
 // OpenAI-compatible wire format types
 
@@ -183,6 +184,11 @@ pub struct OaiStreamFunction {
 
 pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage> {
     let mut result = Vec::new();
+    // Track valid tool_call IDs from the most recent assistant message so we can
+    // filter out orphaned ToolResult blocks (those whose tool_use_id doesn't match
+    // any tool_call that survived the id/name filter).  Without this, the API
+    // receives tool results referencing non-existent tool calls and returns 400.
+    let mut last_valid_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for msg in messages {
         match msg {
             rusty_core::Message {
@@ -208,7 +214,11 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                     .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
                 if has_tool_results {
-                    // Each tool result needs its own message in OpenAI format
+                    // Each tool result needs its own message in OpenAI format.
+                    // Filter out orphaned results whose tool_use_id doesn't match
+                    // any valid tool_call from the preceding assistant message.
+                    // This prevents "toolcallid is not found" errors from APIs that
+                    // strictly validate tool_call_id references.
                     for block in &blocks {
                         if let ContentBlock::ToolResult {
                             tool_use_id,
@@ -216,6 +226,19 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                             is_error,
                         } = block
                         {
+                            if !last_valid_tool_ids.is_empty()
+                                && !last_valid_tool_ids.contains(tool_use_id)
+                            {
+                                warn!(
+                                    "Dropping orphaned tool result (tool_use_id={tool_use_id:?}) — \
+                                     no matching tool_call in preceding assistant message"
+                                );
+                                continue;
+                            }
+                            if tool_use_id.trim().is_empty() {
+                                warn!("Dropping tool result with empty tool_use_id");
+                                continue;
+                            }
                             let text = if is_error.unwrap_or(false) {
                                 format!("ERROR: {content}")
                             } else {
@@ -312,6 +335,18 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                     Some(OaiMessageContent::Text(text_parts.join("")))
                 };
 
+                // Log ToolUse blocks that will be dropped due to empty id/name
+                for block in &blocks {
+                    if let ContentBlock::ToolUse { id, name, .. } = block {
+                        if name.trim().is_empty() || id.trim().is_empty() {
+                            warn!(
+                                "Dropping tool_use block with empty {} (id={id:?}, name={name:?})",
+                                if id.trim().is_empty() { "id" } else { "name" }
+                            );
+                        }
+                    }
+                }
+
                 let tool_calls: Vec<OaiToolCall> = blocks
                     .iter()
                     .filter_map(|b| match b {
@@ -337,6 +372,12 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                         _ => None,
                     })
                     .collect();
+
+                // Track valid tool_call IDs for orphan detection in subsequent tool results
+                last_valid_tool_ids.clear();
+                for tc in &tool_calls {
+                    last_valid_tool_ids.insert(tc.id.clone());
+                }
 
                 result.push(OaiMessage {
                     role: "assistant".to_string(),
