@@ -56,6 +56,28 @@ ls -la | grep ".rs"
 echo "hello" > output.txt
 ```
 
+## Path Sandboxing
+
+The bash tool performs path validation before executing commands via `check_bash_paths()`:
+
+- **Path token extraction**: Parses the command for path-like tokens (absolute paths, `./`, `../`, `~` expansions).
+- **Redirect target validation**: Extracts and validates redirect targets (`>`, `>>`, `2>`) against the working directory.
+- **Boundary enforcement**: Rejects commands where any path token or redirect target resolves outside the working directory.
+
+```bash
+# Allowed: relative path within project
+cat src/main.rs
+
+# Blocked: absolute path outside sandbox
+cat /etc/passwd
+
+# Blocked: redirect target outside sandbox
+echo "data" > /tmp/output.txt
+```
+
+!!! note
+    Path sandboxing does not catch paths constructed via shell variables (`$VAR`), subshells, or commands that `cd` internally. Complex pipelines may have reduced coverage.
+
 ## Examples
 
 ```json

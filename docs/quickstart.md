@@ -65,11 +65,25 @@ rusty --preset openai
 
 `RUSTY_API_KEY` takes precedence over `OPENAI_API_KEY` if both are set.
 
+## Common Flags
+
+| Flag | Description |
+|------|-------------|
+| `--model` | Override the default model |
+| `--permissions` | Set permission mode: `default`, `accept-edits`, `bypass`, `plan` |
+| `--plan-with-tasks` | Enable structured task tracking in responses |
+| `--thinking-budget` | Token budget for reasoning/thinking content |
+| `--cwd` | Set the working directory |
+| `--no-claude-md` | Disable discovery of AGENTS.md/CLAUDE.md/RUSTY.md context files |
+| `--append-system-prompt` | Append additional text to the system prompt |
+| `--resume` | Resume a saved session by ID |
+
 ## Your First Conversation
 
 Once running, just type your prompt and press Enter. Rusty will stream the response in real-time and offer to execute tools when needed.
 
 Try asking:
+
 - "What files are in this directory?"
 - "Read the Cargo.toml and explain the dependencies"
 - "Create a hello world script in Python"

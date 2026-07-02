@@ -58,6 +58,21 @@ Stores the API key in plaintext in `~/.rusty/settings.json`. Use this if your pl
 !!! warning
     When using `settings_file` mode, the API key is stored in plaintext. Ensure appropriate file permissions on `~/.rusty/settings.json`.
 
+## Per-Model API Keys
+
+If you use multiple providers, you can store separate API keys per model in the `api_keys` field:
+
+```json
+{
+  "api_keys": {
+    "mimo-v2.5-pro": "sk-mimo-...",
+    "gpt-4o": "sk-openai-..."
+  }
+}
+```
+
+Per-model keys in `api_keys` take precedence over the top-level `api_key` field when the matching model is active.
+
 ## Multi-Provider Setup
 
 If you switch between providers, you can store separate credentials using environment variables:
@@ -68,3 +83,14 @@ export RUSTY_API_KEY=sk-other-...
 ```
 
 `RUSTY_API_KEY` always takes precedence over `OPENAI_API_KEY`.
+
+## Programmatic Access
+
+The `CredentialManager` in `rusty-core` provides helper functions:
+
+| Function | Description |
+|----------|-------------|
+| `resolve_api_key(settings)` | Full tiered resolution (env, keyring, settings) |
+| `store_in_keyring(key)` | Store a key in the OS keyring |
+| `delete_from_keyring()` | Remove the key from the OS keyring |
+| `is_keyring_available()` | Check if the OS keyring is accessible |

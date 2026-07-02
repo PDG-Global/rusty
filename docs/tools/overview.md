@@ -17,9 +17,10 @@ Rusty provides a set of built-in tools that the LLM can invoke during a conversa
 | `grep` | ReadOnly | Regex search across files |
 | `glob` | ReadOnly | File pattern matching |
 | `web_fetch` | ReadOnly | Fetch content from URLs (with SSRF protection) |
-| `web_search` | ReadOnly | Search the web for current information |
 | `todowrite` | None | Structured task list management |
+| `note` | None | Session-scoped scratchpad for recording observations |
 | `agent` | None | Spawn sub-agents for complex tasks |
+| `memory` | None | Per-project persistent memory (save, search, list, delete) |
 
 ## Permission Levels
 
@@ -32,7 +33,15 @@ Tools operate under one of four permission levels:
 
 ## Path Sandboxing
 
-All file tools enforce path sandboxing. Paths are canonicalized and validated to ensure they remain within the working directory. The sandbox is TOCTOU-hardened against symlink races: all operations use `openat2()` with `RESOLVE_BENEATH` on Linux, and equivalent atomic lookups on macOS. Attempts to access files outside the sandbox are rejected.
+All file tools enforce path sandboxing via `resolve_path()`. Paths are canonicalized (resolving symlinks and `..` components) and validated to ensure they remain within the working directory. Attempts to access files outside the sandbox are rejected.
+
+The sandbox is hardened against TOCTOU symlink races:
+
+- **Pre-write verification** via `verify_not_escaping_symlink()` checks before file creation.
+- **Post-write re-verification** via `verify_no_symlink_escape()` confirms after write.
+- Avoids `path.exists()` before `canonicalize()` to prevent race conditions.
+
+The bash tool uses `check_bash_paths()` to validate path-like tokens and redirect targets in commands before execution.
 
 ## Tool Definitions
 

@@ -14,7 +14,8 @@ Sessions are stored at:
 ```
 ~/.rusty/sessions/
 ├── <session-id>.json
-├── <session-id>.json
+├── <session-id>.notes.md
+├── <session-id>.checkpoint.md
 └── ...
 ```
 
@@ -25,6 +26,17 @@ Each session file contains:
 - **model**: Model used for the conversation
 - **created_at**: Session start timestamp
 - **updated_at**: Last activity timestamp
+
+### Sidecar Files
+
+Sessions can have associated sidecar files:
+
+| File | Purpose |
+|------|---------|
+| `<id>.notes.md` | Session-scoped scratchpad written by the `note` tool. Content is processed during checkpoint extraction and cleared after use. |
+| `<id>.checkpoint.md` | Structured state extracted during Tier 2 compaction. Preserves key context when old messages are summarised. |
+
+Sidecar files are automatically cleaned up when the session is deleted.
 
 ## Listing Sessions
 

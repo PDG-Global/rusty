@@ -18,10 +18,13 @@ The default mode launches a full terminal UI built with Ratatui. This provides:
 - Status bar showing model, permission mode, and token usage
 - Scrollable message history
 - Session save on exit
+- Model registry picker via the sidebar (`/settings`)
+- Structured task tracking with `--plan-with-tasks`
 
 ```bash
 rusty
 rusty --preset openai --api-key sk-...
+rusty --plan-with-tasks
 ```
 
 ### Keyboard Shortcuts
@@ -79,3 +82,4 @@ Features:
 | CI/CD pipelines | Headless with `--permissions bypass` |
 | Quick one-off question | Headless |
 | Long-running development work | TUI with session resume |
+| Planning and task tracking | TUI with `--plan-with-tasks` |

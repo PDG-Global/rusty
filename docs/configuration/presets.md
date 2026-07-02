@@ -10,10 +10,13 @@ Rusty ships with presets for popular LLM providers. Use `--preset` to select one
 | Preset | API Base | Default Model |
 |--------|----------|---------------|
 | `xiaomi` | `https://token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5-pro` |
-| `kimi` | `https://api.kimi.com/coding/v1/` | `kimi-k2.6` |
+| `kimi` | `https://api.kimi.com/coding/v1/` | `kimi-k2` |
 | `openai` | `https://api.openai.com/v1` | `gpt-4o` |
 | `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` |
 | `ollama` | `http://localhost:11434/v1` | `llama3` |
+
+!!! note
+    The setup wizard may use slightly different default models for some providers (e.g. `kimi-k2`, `gpt-4.1`, `qwen3:8b` for Ollama). CLI presets take precedence when `--preset` is used.
 
 ## Usage
 

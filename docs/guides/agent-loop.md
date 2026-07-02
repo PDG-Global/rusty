@@ -11,15 +11,37 @@ The agent loop is the core orchestrator in Rusty. It manages the conversation be
 
 1.  **User message** -- The user's input is added to the message history.
 
-2.  **Auto-compaction check** -- If the conversation exceeds approximately 80,000 tokens or 40 messages, older messages are summarized (keeping the last 10 messages) via an LLM call to reduce context window usage.
+2.  **Auto-compaction check** -- If context usage is high, older messages are managed via a three-tier compaction system (see below).
 
 3.  **Send to LLM** -- The full message history, system prompt, and tool definitions are sent to the LLM provider via SSE streaming.
 
 4.  **Stream response** -- The response is streamed back event by event: text deltas, thinking deltas, and tool call deltas are accumulated as they arrive.
 
-5.  **Process tool calls** -- If the response contains tool calls, each tool is executed in order. Results are appended to the message history as tool result messages.
+5.  **Process tool calls** -- If the response contains tool calls, all calls are executed concurrently via a `JoinSet`. Each tool call runs as an independent spawned task, with results collected and returned in call-order once all complete.
 
 6.  **Loop or complete** -- If tool calls were present, the loop returns to step 2 with the new messages. If no tool calls were present, the response text is returned as the final answer.
+
+## Auto-Compaction
+
+Long conversations are managed via a three-tier compaction system to stay within the context window:
+
+| Tier | Context Threshold | Action |
+|------|------------------|--------|
+| Tier 1 | 25% | Micro-compact: replace old tool results with short placeholders |
+| Tier 2 | 50% | Extract structured checkpoint to `checkpoint.md` via an LLM call |
+| Tier 3 | 75% | Summarise old messages via an LLM call, keeping the last 10 messages |
+
+Each tier triggers at most once per conversation. The notes scratchpad content (from the `note` tool) is incorporated into checkpoints and summaries, then cleared.
+
+Use `/compact` to trigger compaction manually.
+
+## Concurrent Tool Execution
+
+When the LLM issues multiple tool calls in a single response, they are executed concurrently using `tokio::JoinSet`. This means:
+
+- Independent tools (e.g. two `file_read` calls) run in parallel.
+- Results are collected once all tools complete.
+- Wall-clock time is significantly reduced compared to sequential execution.
 
 ## Cancellation
 

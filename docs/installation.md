@@ -21,15 +21,26 @@ sudo cp ./target/release/rusty /usr/local/bin/
 export PATH="$PWD/target/release:$PATH"
 ```
 
+## Pre-built Binaries
+
+Pre-built binaries are available on the [GitHub releases page](https://github.com/PDG-Global/rusty/releases). Download the appropriate binary for your platform and add it to your `PATH`.
+
 ## Platform Support
 
 | Platform | Architecture | Status |
 |----------|-------------|--------|
 | macOS | aarch64 (Apple Silicon) | Fully supported |
 | macOS | x86_64 (Intel) | Fully supported |
-| Linux | x86_64 | Fully supported |
-| Linux | aarch64 | Fully supported |
-| Windows | x86_64 | Supported (TUI requires Windows Terminal) |
+| macOS | Universal (arm64 + x86_64) | Fully supported |
+| Linux | x86_64 (GNU libc) | Fully supported |
+| Linux | aarch64 (GNU libc) | Fully supported |
+| Linux | armv7 (GNU libc) | Fully supported |
+| Linux | x86_64 (musl, static) | Fully supported |
+| Linux | aarch64 (musl, static) | Fully supported |
+| FreeBSD | x86_64 | Fully supported |
+
+!!! note
+    macOS binaries are code-signed and notarised. Static Linux (musl) builds have no glibc dependency and work on minimal containers.
 
 ## Dependencies
 

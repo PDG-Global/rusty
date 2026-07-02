@@ -131,3 +131,13 @@ When applying updates, the patch tool uses fuzzy matching for context lines. If 
  }
 *** End Patch
 ```
+
+---
+
+## Path Sandboxing
+
+All file tools use `resolve_path()` to enforce path sandboxing:
+
+- Paths are canonicalized, resolving symlinks and `..` components.
+- Any path that escapes the working directory is rejected.
+- **TOCTOU hardening**: The implementation avoids checking `path.exists()` before `canonicalize()` to prevent symlink race conditions. Pre-write verification (`verify_not_escaping_symlink()`) runs before file creation, and post-write re-verification (`verify_no_symlink_escape()`) runs after writes to guard against symlink attacks.
