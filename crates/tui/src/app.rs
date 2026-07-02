@@ -2238,10 +2238,10 @@ impl AppState {
                 content: finished_text.clone(),
                 tool_blocks,
             });
-            // Derive a follow-up suggestion from the response (heuristic fallback).
-            let heuristic = Self::extract_followup_suggestion(&finished_text);
-            tracing::debug!("Heuristic suggestion: {:?}", heuristic);
-            self.input_suggestion = heuristic;
+            // No heuristic suggestion — the LLM prediction (AgentEvent::Suggestion)
+            // is the sole source. Heuristic grabbed the assistant's own last line,
+            // which is almost never a sensible user message.
+            self.input_suggestion = None;
         }
         // Snapshot the input buffer so we can detect whether the user typed
         // anything between response completion and a late suggestion arriving.
@@ -2259,68 +2259,6 @@ impl AppState {
         self.is_thinking = false;
         self.thinking_expanded = false;
         self.needs_redraw = true;
-    }
-
-    /// Extract a short follow-up suggestion from an assistant response.
-    ///
-    /// Preference order:
-    ///   1. The last question (sentence ending with '?') in the text.
-    ///   2. The last non-empty line.
-    /// Returns None if nothing useful is found. The result is trimmed and
-    /// capped to a reasonable length so it fits on the input line.
-    pub fn extract_followup_suggestion(text: &str) -> Option<String> {
-        let clean_line = |line: &str| -> String {
-            let trimmed = line.trim();
-            let stripped = trimmed
-                .strip_prefix("- ")
-                .or_else(|| trimmed.strip_prefix("* "))
-                .or_else(|| trimmed.strip_prefix("+ "))
-                .unwrap_or(trimmed);
-            // Drop leading "N. " or "N)" numbered prefixes.
-            let stripped = stripped
-                .trim_start_matches(|c: char| c.is_ascii_digit())
-                .trim_start_matches(|c: char| c == '.' || c == ')')
-                .trim_start();
-            stripped
-                .trim_matches(['#', '*', '`', '>'].as_ref())
-                .trim()
-                .to_string()
-        };
-
-        // Prefer the last sentence-ending question in the text.
-        if let Some(q) = text
-            .lines()
-            .map(clean_line)
-            .filter(|l| l.ends_with('?') && l.len() > 1)
-            .last()
-        {
-            return Self::cap_suggestion(&q);
-        }
-
-        // Otherwise take the last non-empty line with alphanumeric content.
-        if let Some(line) = text
-            .lines()
-            .map(clean_line)
-            .filter(|l| !l.is_empty() && l.chars().any(|c| c.is_alphanumeric()))
-            .last()
-        {
-            return Self::cap_suggestion(&line);
-        }
-        None
-    }
-
-    fn cap_suggestion(s: &str) -> Option<String> {
-        let s = s.trim();
-        if s.is_empty() {
-            return None;
-        }
-        const MAX_LEN: usize = 120;
-        if s.chars().count() <= MAX_LEN {
-            Some(s.to_string())
-        } else {
-            let truncated: String = s.chars().take(MAX_LEN.saturating_sub(1)).collect();
-            Some(format!("{truncated}\u{2026}"))
-        }
     }
 
     pub fn push_error(&mut self, msg: &str) {
@@ -2842,123 +2780,6 @@ mod tests {
         s
     }
 
-    mod extract_followup {
-        use super::*;
-
-        #[test]
-        fn prefers_last_question() {
-            let text = "Here is some info.\nWhat is the first step?\nMore detail.\nAny other questions?";
-            assert_eq!(
-                AppState::extract_followup_suggestion(text),
-                Some("Any other questions?".to_string())
-            );
-        }
-
-        #[test]
-        fn ignores_single_char_question() {
-            // `l.len() > 1` guard: a lone "?" should not count as a question.
-            let text = "Details here.\n?";
-            assert_eq!(
-                AppState::extract_followup_suggestion(text),
-                Some("Details here.".to_string())
-            );
-        }
-
-        #[test]
-        fn last_line_fallback_when_no_question() {
-            let text = "First line.\nSecond line.\nFinal line.";
-            assert_eq!(
-                AppState::extract_followup_suggestion(text),
-                Some("Final line.".to_string())
-            );
-        }
-
-        #[test]
-        fn strips_bullet_markers() {
-            for marker in ["- ", "* ", "+ "] {
-                let text = format!("Intro.\n{marker}Run the tests");
-                assert_eq!(
-                    AppState::extract_followup_suggestion(&text),
-                    Some("Run the tests".to_string()),
-                    "failed for marker {marker:?}"
-                );
-            }
-        }
-
-        #[test]
-        fn strips_numbered_prefixes() {
-            assert_eq!(
-                AppState::extract_followup_suggestion("Intro.\n1. First step"),
-                Some("First step".to_string())
-            );
-            assert_eq!(
-                AppState::extract_followup_suggestion("Intro.\n12) Second step"),
-                Some("Second step".to_string())
-            );
-        }
-
-        #[test]
-        fn strips_markdown_decoration() {
-            assert_eq!(
-                AppState::extract_followup_suggestion("Intro.\n## Heading"),
-                Some("Heading".to_string())
-            );
-            assert_eq!(
-                AppState::extract_followup_suggestion("Intro.\n> quoted text"),
-                Some("quoted text".to_string())
-            );
-            assert_eq!(
-                AppState::extract_followup_suggestion("Intro.\n`code`"),
-                Some("code".to_string())
-            );
-        }
-
-        #[test]
-        fn caps_long_suggestion_with_ellipsis() {
-            let long_line = "a".repeat(200);
-            let text = format!("Intro.\n{long_line}");
-            let result = AppState::extract_followup_suggestion(&text).unwrap();
-            assert_eq!(result.chars().count(), 120);
-            assert_eq!(result.chars().last(), Some('\u{2026}'));
-            assert_eq!(result.chars().filter(|c| *c == 'a').count(), 119);
-        }
-
-        #[test]
-        fn keeps_suggestion_under_cap() {
-            let text = "Intro.\nShort question?";
-            let result = AppState::extract_followup_suggestion(&text).unwrap();
-            assert_eq!(result, "Short question?");
-            assert!(result.chars().count() <= 120);
-        }
-
-        #[test]
-        fn empty_input_returns_none() {
-            assert_eq!(AppState::extract_followup_suggestion(""), None);
-        }
-
-        #[test]
-        fn whitespace_only_returns_none() {
-            assert_eq!(AppState::extract_followup_suggestion("   \n\t\n "), None);
-        }
-
-        #[test]
-        fn no_alphanumeric_returns_none() {
-            // Lines exist but none have alphanumeric content for the fallback.
-            assert_eq!(AppState::extract_followup_suggestion("---\n###\n***"), None);
-        }
-
-        #[test]
-        fn question_wins_over_later_decorated_line() {
-            // A question earlier in the text is preferred even when a
-            // decorated final line is present.
-            let text = "Which file should I edit?\n- final note";
-            assert_eq!(
-                AppState::extract_followup_suggestion(text),
-                Some("Which file should I edit?".to_string())
-            );
-        }
-    }
-
     mod autocomplete {
         use super::*;
 
@@ -3024,12 +2845,11 @@ mod tests {
 
         #[test]
         fn populates_heuristic_suggestion() {
+            // Heuristic was removed: LLM prediction (AgentEvent::Suggestion)
+            // is now the sole source. finish_streaming sets suggestion to None.
             let mut s = state_with_streaming("Done.\nWhat should we test next?");
             s.finish_streaming();
-            assert_eq!(
-                s.input_suggestion,
-                Some("What should we test next?".to_string())
-            );
+            assert_eq!(s.input_suggestion, None);
         }
 
         #[test]
