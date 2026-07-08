@@ -248,8 +248,11 @@ async fn main() -> Result<()> {
     // Add a startup log line so we know where logs are written
     info!("Log file: {}", log_path.display());
 
-    // Handle --setup or auto-detect first run
-    let needs_setup = args.setup || is_first_run();
+    // Handle --setup or auto-detect first run.
+    // Skip auto-setup in headless/prompt mode — it blocks automated callers
+    // like Raftdaemon. Explicit --setup still works in any mode.
+    let is_headless = args.prompt.is_some() || args.headless;
+    let needs_setup = args.setup || (!is_headless && is_first_run());
     if needs_setup {
         if !args.setup {
             eprintln!("No configuration found. Starting setup wizard...");
