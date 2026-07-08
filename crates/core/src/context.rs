@@ -122,7 +122,7 @@ async fn discover_md_files(working_dir: &Path) -> String {
     // Walk up from working_dir to root, collecting project instruction files
     let mut dir = Some(working_dir.to_path_buf());
     while let Some(d) = dir {
-        for name in &["AGENTS.md", "CLAUDE.md", "RUSTY.md"] {
+        for name in &["AGENTS.md", "CLAUDE.md", "RUSTY.md", "MEMORY.md"] {
             let path = d.join(name);
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 let header = format!("# {} ({})", name, path.display());
@@ -134,7 +134,7 @@ async fn discover_md_files(working_dir: &Path) -> String {
 
     // Also check ~/.rusty/ instruction files (these are the user's own, trusted)
     if let Some(home) = dirs::home_dir() {
-        for name in &["AGENTS.md", "CLAUDE.md"] {
+        for name in &["AGENTS.md", "CLAUDE.md", "MEMORY.md"] {
             let path = home.join(".rusty").join(name);
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 let header = format!("# {} ({})", name, path.display());

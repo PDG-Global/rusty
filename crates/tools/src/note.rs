@@ -106,6 +106,7 @@ mod tests {
             working_dir: std::env::temp_dir(),
             permission_mode: rusty_core::PermissionMode::BypassPermissions,
             cancel: None,
+            on_question: None,
         }
     }
 

@@ -1,61 +1,38 @@
 ---
-title: Rusty
-description: A lightweight, statically compiled terminal AI coding agent
+title: Introduction
 ---
 
 # Rusty
 
-**A lightweight, statically compiled terminal AI coding agent.** Connects to OpenAI-compatible LLM APIs via SSE streaming, executes tools (file I/O, bash, search, patches, web fetch, sub-agents), and enforces a tiered permission system.
+A coding agent that never leaves your terminal. Rusty is a single 12&nbsp;MB
+binary that pairs with you right where you work — fast, private, and entirely
+yours. No telemetry. No cloud lock-in. No bloat.
 
-## Features
-
-<div class="grid cards" markdown>
-
-- :material-console:{ .lg .middle } **Terminal UI**
-
-    ---
-
-    Full ratatui-based terminal interface with streaming, markdown rendering, and interactive permission prompts.
-
-- :material-connection:{ .lg .middle } **Multi-Provider**
-
-    ---
-
-    Works with Xiaomi MiMo, Kimi, OpenAI, DeepSeek, Ollama, and any OpenAI-compatible API.
-
-- :material-wrench:{ .lg .middle } **Tool Execution**
-
-    ---
-
-    File read/write/edit, bash commands, regex search, glob, web fetch, unified diff patches, and sub-agent spawning.
-
-- :material-shield:{ .lg .middle } **Permission System**
-
-    ---
-
-    Tiered permission model: Bypass, AcceptEdits, Default, and Plan modes with per-tool classification.
-
-</div>
-
-## Quick Start
-
-```bash
-# Install and run (launches setup wizard on first run)
-cargo install rusty
-rusty
-
-# Or build from source
-git clone https://github.com/pdg-global/rusty.git
-cd rusty
-cargo build --release
-./target/release/rusty --preset openai --api-key YOUR_KEY
+```bash title="terminal"
+curl -fsSL rustycli.com/install | sh
 ```
 
-## Run Modes
+!!! note
+
+    Rusty verifies the download with a checksum before it runs. Prefer to
+    inspect first? Pipe the script to a file and read it — it's ~40 lines of
+    plain shell.
+
+## What you get
+
+- **Context-aware edits** across your whole tree — file read/write/edit, unified diff patches
+- **A sandbox with approvals** — tiered permission model with per-tool classification
+- **Readable diffs** before any change lands
+- **Bring your own model** — Xiaomi MiMo, Kimi, OpenAI, DeepSeek, Ollama, or any OpenAI-compatible API
+- **Built-in tools** — bash, regex search, glob, web fetch, sub-agent spawning, task management
+- **Auto-compaction** — three-tier system that keeps long conversations under the context window
+- **Session persistence** — save, resume, and name sessions across restarts
+
+## Run modes
 
 === "TUI Mode"
 
-    Full terminal UI with streaming, permission prompts, and slash commands (default).
+    Full terminal UI with streaming, markdown rendering, permission prompts, and slash commands. This is the default.
 
     ```bash
     rusty
@@ -63,7 +40,7 @@ cargo build --release
 
 === "Headless Mode"
 
-    Single prompt, print response, save session.
+    Single prompt, print response, save session. Ideal for scripting.
 
     ```bash
     rusty --prompt "Explain this codebase"
@@ -71,25 +48,19 @@ cargo build --release
 
 === "Stdin REPL"
 
-    Interactive line-by-line REPL without TUI.
+    Interactive line-by-line REPL without the TUI. Supports slash commands.
 
     ```bash
     rusty --headless
     ```
 
-## Architecture
+## Where to next
 
-Rusty is a Cargo workspace with 6 crates:
+<div class="grid cards" markdown>
 
-| Crate | Purpose |
-|-------|---------|
-| `rusty-core` | Types, config, permissions, errors, credentials, setup wizard |
-| `rusty-provider` | OpenAI-compatible HTTP/SSE streaming client |
-| `rusty-tools` | All tool implementations |
-| `rusty-agent` | Agent loop, compaction, sub-agent spawning |
-| `rusty-tui` | Ratatui terminal UI |
-| `rusty` (cli) | Binary entry point, CLI args, run modes |
+- **[Installation](getting-started/installation.md)** — get the binary on your PATH
+- **[Quickstart](getting-started/quickstart.md)** — ship your first change
+- **[Settings](configuration/settings.md)** — configure models, keys, and preferences
+- **[Permissions](configuration/permissions.md)** — how Rusty stays safe
 
-## License
-
-AGPL-3.0-or-later
+</div>

@@ -1,0 +1,448 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Rusty — Starlight theme
+   Bricolage Grotesque headings · Hanken Grotesk body · JetBrains Mono code
+   Rust-orange accents · warm paper (light) / ember (dark) · CRT code blocks
+   Everything is driven by the --rz-* tokens + Starlight's --sl-* variables.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* ─────────────────────────  FONTS  ───────────────────────── */
+:root {
+  --sl-font: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --rz-font-display: 'Bricolage Grotesque', 'Hanken Grotesk', sans-serif;
+
+  /* nav height a touch taller, like the marketing site */
+  --sl-nav-height: 3.75rem;
+}
+
+/* ─────────────────────────  DARK (Ember) — default  ───────────────────────── */
+:root {
+  --rz-bg:       #15110E;
+  --rz-bg-2:     #1E1712;
+  --rz-surface:  #231A13;
+  --rz-text:     #F5EDE3;
+  --rz-muted:    #B3A493;
+  --rz-border:   #382A1F;
+  --rz-accent:   #E0703A;
+  --rz-accent-2: #F4B860;
+  --rz-glow:     #F4B860;
+  --rz-led:      #6FCF7A;
+  --rz-danger:   #E8695C;
+
+  /* Starlight accent ramp */
+  --sl-color-accent-low:  #3A2113;
+  --sl-color-accent:      #C2541C;
+  --sl-color-accent-high: #F0B67E;
+
+  /* Starlight gray ramp (light → dark for a dark theme) */
+  --sl-color-white:  #F5EDE3;  /* highest-contrast text / headings */
+  --sl-color-gray-1: #EADFD2;
+  --sl-color-gray-2: #C9BBA8;  /* body text */
+  --sl-color-gray-3: #B3A493;  /* muted */
+  --sl-color-gray-4: #7C6F5D;
+  --sl-color-gray-5: #382A1F;  /* hairlines / borders */
+  --sl-color-gray-6: #1E1712;  /* elevated surface */
+  --sl-color-gray-7: #241C15;
+  --sl-color-black:  #15110E;  /* page background */
+
+  --sl-color-bg:         var(--rz-bg);
+  --sl-color-bg-nav:     color-mix(in srgb, var(--rz-bg) 82%, transparent);
+  --sl-color-bg-sidebar: var(--rz-bg);
+  --sl-color-text-accent: var(--rz-accent-2);
+  --sl-color-hairline:        var(--rz-border);
+  --sl-color-hairline-light:  var(--rz-border);
+  --sl-color-hairline-shade:  var(--rz-border);
+
+  color-scheme: dark;
+}
+
+/* ─────────────────────────  LIGHT (Daylight)  ───────────────────────── */
+:root[data-theme='light'] {
+  --rz-bg:       #FCFAF6;
+  --rz-bg-2:     #F4EEE4;
+  --rz-surface:  #FFFFFF;
+  --rz-text:     #211A13;
+  --rz-muted:    #7C6F5D;
+  --rz-border:   #EBE3D5;
+  --rz-accent:   #C2541C;
+  --rz-accent-2: #E0703A;
+  --rz-glow:     #B8871F;
+  --rz-led:      #3E9C5F;
+  --rz-danger:   #C6453A;
+
+  --sl-color-accent-low:  #F1DEC8;
+  --sl-color-accent:      #C2541C;
+  --sl-color-accent-high: #8E3D17;
+
+  --sl-color-white:  #211A13;  /* highest-contrast text / headings */
+  --sl-color-gray-1: #2B241C;
+  --sl-color-gray-2: #4A4034;  /* body text */
+  --sl-color-gray-3: #7C6F5D;  /* muted */
+  --sl-color-gray-4: #A99B87;
+  --sl-color-gray-5: #EBE3D5;  /* hairlines / borders */
+  --sl-color-gray-6: #F4EEE4;  /* elevated surface */
+  --sl-color-gray-7: #F7F2EA;
+  --sl-color-black:  #FCFAF6;  /* page background */
+
+  --sl-color-bg:         var(--rz-bg);
+  --sl-color-bg-nav:     color-mix(in srgb, var(--rz-bg) 82%, transparent);
+  --sl-color-bg-sidebar: var(--rz-bg);
+  --sl-color-text-accent: var(--rz-accent);
+  --sl-color-hairline:        var(--rz-border);
+  --sl-color-hairline-light:  var(--rz-border);
+  --sl-color-hairline-shade:  var(--rz-border);
+
+  color-scheme: light;
+}
+
+/* ─────────────────────────  HEADER  ───────────────────────── */
+/* Translucent bar with a hairline border + blur, like rustycli.com */
+header.header {
+  background-color: var(--sl-color-bg-nav);
+  border-bottom: 1px solid var(--rz-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.site-title {
+  font-family: var(--rz-font-display);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-size: 1.35rem;
+  color: var(--rz-text);
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.site-title img { height: 1.85rem; width: auto; }
+/* "docs" badge next to the wordmark, matching the mockup */
+.site-title::after {
+  content: 'docs';
+  font-family: var(--sl-font-mono);
+  font-weight: 500;
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+  color: var(--rz-muted);
+  border: 1px solid var(--rz-border);
+  border-radius: 6px;
+  padding: 0.1rem 0.4rem;
+  line-height: 1;
+}
+
+/* Search pill */
+site-search button.sl-flex {
+  background: var(--rz-surface);
+  border: 1px solid var(--rz-border);
+  border-radius: 10px;
+  color: var(--rz-muted);
+}
+site-search button.sl-flex:hover { border-color: var(--rz-accent); }
+
+/* ─────────────────────────  TYPE  ───────────────────────── */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4,
+.sl-markdown-content h5,
+.content-panel h1,
+h1#_top {
+  font-family: var(--rz-font-display);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--rz-text);
+}
+.content-panel h1, h1#_top {
+  font-size: clamp(2rem, 4vw, 2.7rem);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+}
+.sl-markdown-content h2 {
+  font-size: 1.5rem;
+  margin-top: 2.4em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--rz-border);
+}
+.sl-markdown-content h3 { font-size: 1.2rem; margin-top: 1.8em; }
+
+.sl-markdown-content { font-size: 1rem; line-height: 1.7; }
+
+/* Page description under the title */
+.content-panel .sl-markdown-content > p:first-child { color: var(--rz-muted); }
+
+/* ─────────────────────────  LINKS  ───────────────────────── */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--sl-color-text-accent) 34%, transparent);
+  transition: color .15s ease, border-color .15s ease;
+}
+.sl-markdown-content a:hover:not(:where(.not-content *)) {
+  color: var(--rz-accent-2);
+  border-bottom-color: var(--rz-accent-2);
+}
+
+/* ─────────────────────────  LEFT SIDEBAR NAV  ───────────────────────── */
+/* Group headings → mono uppercase rust */
+.sidebar-content summary .group-label span,
+.sidebar-content > ul > li > details > summary .large,
+nav.sidebar .top-level > li > details > summary span.large {
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--rz-accent);
+}
+/* Links */
+.sidebar-content a {
+  color: var(--rz-muted);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  padding-block: 0.42rem;
+  transition: color .15s ease, background .15s ease;
+}
+.sidebar-content ul ul li + li { margin-top: 0.12rem; }
+.sidebar-content a:hover {
+  color: var(--rz-text);
+  background: var(--rz-bg-2);
+}
+/* Active page */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+  color: var(--rz-accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--rz-accent) 10%, transparent);
+  box-shadow: inset 2px 0 0 var(--rz-accent);
+}
+
+/* ─────────────────────────  RIGHT TOC  ───────────────────────── */
+starlight-toc nav a {
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  color: var(--rz-muted);
+  font-size: 0.85rem;
+}
+starlight-toc nav a[aria-current='true'],
+starlight-toc nav a:hover {
+  color: var(--rz-accent);
+}
+starlight-toc nav a[aria-current='true'] {
+  border-left-color: var(--rz-accent);
+  font-weight: 600;
+}
+
+/* ─────────────────────────  INLINE CODE  ───────────────────────── */
+.sl-markdown-content code:not(:where(.expressive-code *)) {
+  font-family: var(--sl-font-mono);
+  font-size: 0.84em;
+  background: var(--rz-bg-2);
+  border: 1px solid var(--rz-border);
+  border-radius: 6px;
+  padding: 0.12em 0.42em;
+  color: var(--rz-accent);
+}
+:root[data-theme='light'] .sl-markdown-content code:not(:where(.expressive-code *)) {
+  color: var(--rz-accent);
+}
+
+/* ─────────────────────────  CODE BLOCKS (Expressive Code)  ───────────────────────── */
+/* Expressive Code owns ALL frame geometry: border, radius, terminal titlebar,
+   dots, and the drop shadow (configured in astro.config.mjs → expressiveCode).
+   Overriding the figure/header/pre geometry here fights EC's own chrome and
+   splits the titlebar off the body, so we DON'T. We only restyle the copy
+   button and set the titlebar font. */
+.expressive-code { margin: 1.15rem 0; }
+.expressive-code figure.frame figcaption.header {
+  font-family: var(--sl-font-mono);
+}
+/* copy button */
+.expressive-code .copy button {
+  background: #241A13;
+  border: 1px solid #382A1F;
+}
+.expressive-code .copy button:hover { background: var(--rz-accent); }
+
+/* ─────────────────────────  ADMONITIONS / ASIDES  ───────────────────────── */
+.sl-markdown-content .starlight-aside {
+  border: 1px solid var(--rz-border);
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: var(--rz-surface);
+  padding: 1rem 1.15rem;
+}
+.starlight-aside__title {
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.starlight-aside__icon { width: 1.1em; height: 1.1em; }
+
+/* note → rust */
+.starlight-aside--note {
+  border-left-color: var(--rz-accent);
+  background: color-mix(in srgb, var(--rz-accent) 6%, var(--rz-surface));
+}
+.starlight-aside--note .starlight-aside__title { color: var(--rz-accent); }
+
+/* tip → green LED */
+.starlight-aside--tip {
+  border-left-color: var(--rz-led);
+  background: color-mix(in srgb, var(--rz-led) 7%, var(--rz-surface));
+}
+.starlight-aside--tip .starlight-aside__title { color: var(--rz-led); }
+
+/* caution (← MkDocs warning) → amber */
+.starlight-aside--caution {
+  border-left-color: var(--rz-glow);
+  background: color-mix(in srgb, var(--rz-glow) 8%, var(--rz-surface));
+}
+.starlight-aside--caution .starlight-aside__title { color: var(--rz-glow); }
+
+/* danger → red-orange */
+.starlight-aside--danger {
+  border-left-color: var(--rz-danger);
+  background: color-mix(in srgb, var(--rz-danger) 7%, var(--rz-surface));
+}
+.starlight-aside--danger .starlight-aside__title { color: var(--rz-danger); }
+
+/* ─────────────────────────  TABLES  ───────────────────────── */
+/* Use the collapse model (matching Starlight) and explicitly reset EVERY cell
+   border, then re-add only horizontal row dividers. `border-collapse: separate`
+   fights Starlight's per-cell borders and produces doubled/seamed grids. */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  border: 1px solid var(--rz-border);
+  border-radius: 10px;
+  border-collapse: collapse;
+  overflow: hidden;
+  font-size: 0.9rem;
+}
+.sl-markdown-content :is(th, td) {
+  border: none;
+  border-bottom: 1px solid var(--rz-border);
+  padding: 0.6rem 0.9rem;
+  text-align: start;
+}
+.sl-markdown-content thead th {
+  font-family: var(--rz-font-display);
+  font-weight: 700;
+  background: var(--rz-bg-2);
+  color: var(--rz-text);
+}
+.sl-markdown-content td { color: var(--rz-muted); }
+/* replace Starlight's zebra striping with a soft brand tint */
+.sl-markdown-content tbody tr:nth-child(2n) {
+  background: color-mix(in srgb, var(--rz-bg-2) 45%, transparent);
+}
+.sl-markdown-content tbody tr:last-child :is(th, td) { border-bottom: none; }
+
+/* ─────────────────────────  CARDS / LINK CARDS  ───────────────────────── */
+.sl-markdown-content .card,
+.sl-link-card {
+  border: 1px solid var(--rz-border);
+  border-radius: 14px;
+  background: var(--rz-surface);
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.sl-link-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--rz-accent);
+  box-shadow: 0 12px 28px -20px rgba(20, 10, 4, 0.5);
+}
+.sl-link-card .title { font-family: var(--rz-font-display); font-weight: 700; color: var(--rz-text); }
+.sl-link-card a { color: inherit; }
+
+/* ─────────────────────────  TABS  ───────────────────────── */
+.sl-markdown-content .tab > [role='tab'][aria-selected] {
+  color: var(--rz-accent);
+  border-color: var(--rz-accent);
+  font-weight: 600;
+}
+.sl-markdown-content [role='tablist'] { border-bottom-color: var(--rz-border); }
+
+/* ─────────────────────────  PREV / NEXT PAGER  ───────────────────────── */
+.pagination-links a {
+  border: 1px solid var(--rz-border);
+  border-radius: 12px;
+  background: var(--rz-surface);
+  transition: transform .18s ease, border-color .18s ease;
+}
+.pagination-links a:hover {
+  transform: translateY(-2px);
+  border-color: var(--rz-accent);
+}
+.pagination-links a span.link-title { font-family: var(--rz-font-display); font-weight: 700; }
+.pagination-links svg { color: var(--rz-accent); }
+
+/* ─────────────────────────  MISC  ───────────────────────── */
+::selection { background: var(--rz-accent-2); color: #150f0a; }
+
+/* Hairlines everywhere */
+.sl-markdown-content hr,
+.right-sidebar,
+.sidebar-pane { border-color: var(--rz-border); }
+.right-sidebar { border-inline-start: 1px solid var(--rz-border); }
+.sidebar-pane { border-inline-end: 1px solid var(--rz-border); }
+
+/* “Edit page” + meta */
+.meta a {
+  color: var(--rz-muted);
+  border: 1px solid var(--rz-border);
+  border-radius: 8px;
+  transition: color .15s ease, border-color .15s ease;
+}
+.meta a:hover { color: var(--rz-accent); border-color: var(--rz-accent); }
+
+/* Focus ring in brand color */
+:focus-visible { outline-color: var(--rz-accent); }
+
+/* ─────────────────────────  THEME + LANGUAGE SELECTORS  ───────────────────────── */
+/* Both the theme picker ("Auto/Dark/Light") and the language picker render as
+   a <select> wrapped in a custom element. Give them the Rusty pill treatment. */
+starlight-theme-select,
+starlight-lang-select { color: var(--rz-muted); }
+starlight-theme-select > label,
+starlight-lang-select > label {
+  gap: 0.35rem;
+  color: var(--rz-muted);
+  border: 1px solid var(--rz-border);
+  border-radius: 9px;
+  background: var(--rz-surface);
+  padding: 0.32rem 0.5rem;
+  transition: border-color .15s ease, color .15s ease;
+}
+starlight-theme-select > label:hover,
+starlight-lang-select > label:hover {
+  border-color: var(--rz-accent);
+  color: var(--rz-text);
+}
+starlight-theme-select select,
+starlight-lang-select select {
+  font-family: var(--sl-font);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--rz-text);
+}
+starlight-theme-select label .icon,
+starlight-lang-select label .icon { color: var(--rz-accent); }
+
+/* GitHub / social icons */
+.social-icons a { color: var(--rz-muted); transition: color .15s ease; }
+.social-icons a:hover { color: var(--rz-accent); }
+
+/* "On this page" heading → mono uppercase, matching section labels */
+.right-sidebar h2,
+mobile-starlight-toc .sl-hidden + *,
+starlight-toc > nav > h2 {
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--rz-muted);
+}

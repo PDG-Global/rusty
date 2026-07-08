@@ -349,6 +349,13 @@ pub fn draw(app: &mut AppState, area: Rect, buf: &mut Buffer) {
         let prompt_area = centered_rect(70, 10, area);
         draw_permission_prompt(app, prompt_area, buf);
     }
+
+    // Question prompt overlay — shows question and text input for the answer.
+    if app.question_prompt.is_some() {
+        dim_screen(area, buf);
+        let prompt_area = centered_rect(70, 30, area);
+        draw_question_prompt(app, prompt_area, buf);
+    }
 }
 
 /// Return the Rusty mascot as styled ratatui Lines.
@@ -562,6 +569,40 @@ fn draw_chat(app: &mut AppState, area: Rect, buf: &mut Buffer) {
         .title(title)
         .title_alignment(Alignment::Right)
         .render(area, buf);
+
+    // Clamp each line's display width to the inner area so content can't
+    // overflow into the border.  Walk spans left-to-right, accumulating
+    // display width; truncate the first span that would push past the limit.
+    let max_w = inner.width as usize;
+    for line in &mut lines {
+        let mut w = 0;
+        let mut overflow = false;
+        for span in &mut line.spans {
+            if overflow {
+                span.content = std::borrow::Cow::Borrowed("");
+                continue;
+            }
+            let sw = str_display_width(&span.content);
+            if w + sw <= max_w {
+                w += sw;
+            } else {
+                let mut truncated = String::new();
+                let mut cw = w;
+                for ch in span.content.chars() {
+                    let cdw = char_display_width(ch);
+                    if cw + cdw > max_w { break; }
+                    truncated.push(ch);
+                    cw += cdw;
+                }
+                span.content = std::borrow::Cow::Owned(truncated);
+                w = cw;
+                overflow = true;
+            }
+        }
+        while line.spans.last().is_some_and(|s| s.content.is_empty()) {
+            line.spans.pop();
+        }
+    }
 
     let paragraph = Paragraph::new(lines).scroll((scroll as u16, 0));
     Widget::render(&paragraph, inner, buf);
@@ -2864,6 +2905,85 @@ fn draw_permission_prompt(app: &AppState, area: Rect, buf: &mut Buffer) {
 
     let paragraph = Paragraph::new(lines);
     Widget::render(&paragraph, inner, buf);
+}
+
+/// Draw the question prompt as a centered popup overlay with text input.
+fn draw_question_prompt(app: &AppState, area: Rect, buf: &mut Buffer) {
+    let prompt = match &app.question_prompt {
+        Some(p) => p,
+        None => return,
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(
+            " Question ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(area);
+    block.render(area, buf);
+
+    // Split inner into question text area and input area
+    let question_lines: Vec<&str> = prompt.prompt.lines().collect();
+    let question_height = (question_lines.len() as u16 + 2).min(inner.height.saturating_sub(3));
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(question_height),
+            Constraint::Length(1), // separator
+            Constraint::Min(1),   // input area
+        ])
+        .split(inner);
+
+    // Render question text
+    let mut q_lines = Vec::new();
+    for line in &question_lines {
+        q_lines.push(Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(Color::White),
+        )));
+    }
+    let q_para = Paragraph::new(q_lines);
+    Widget::render(&q_para, chunks[0], buf);
+
+    // Separator
+    let sep = Line::from(Span::styled(
+        "─".repeat(inner.width as usize),
+        Style::default().fg(Color::DarkGray),
+    ));
+    let sep_para = Paragraph::new(sep);
+    Widget::render(&sep_para, chunks[1], buf);
+
+    // Input area with cursor
+    let input_text = format!("> {}▌", app.input);
+    let input_para = Paragraph::new(Line::from(Span::styled(
+        input_text,
+        Style::default().fg(Color::Green),
+    )));
+    Widget::render(&input_para, chunks[2], buf);
+
+    // Footer hint
+    if chunks[2].height > 0 {
+        let footer_area = Rect {
+            x: chunks[2].x,
+            y: chunks[2].y + chunks[2].height.saturating_sub(1),
+            width: chunks[2].width,
+            height: 1,
+        };
+        let footer = Line::from(vec![
+            Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(" Submit  ", Style::default().fg(Color::Gray)),
+            Span::styled("[Esc]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(" Cancel", Style::default().fg(Color::Gray)),
+        ]);
+        let footer_para = Paragraph::new(footer);
+        Widget::render(&footer_para, footer_area, buf);
+    }
 }
 
 fn draw_autocomplete(

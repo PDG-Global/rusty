@@ -56,6 +56,8 @@ fn smart_truncate_output(text: &str, max_chars: usize) -> String {
 pub type TextCallback = Box<dyn Fn(&str) + Send + Sync>;
 /// Callback for streaming thinking/reasoning deltas
 pub type ThinkingCallback = Box<dyn Fn(&str) + Send + Sync>;
+/// Callback for the question tool — receives (header, full_prompt), returns user's answer
+pub type QuestionCallback = rusty_tools::QuestionCallback;
 
 /// Status of a tool execution, sent to the TUI
 pub enum ToolStatus {
@@ -93,6 +95,7 @@ pub struct Agent {
     permission_mode: PermissionMode,
     max_turns: u32,
     permission_callback: Option<PermissionCallback>,
+    question_callback: Option<QuestionCallback>,
     session_allowlist: HashSet<String>,
     permanent_allowlist: HashSet<String>,
     /// Task registry (SQLite-backed). Replaces the old Plan system.
@@ -132,8 +135,9 @@ pub struct Agent {
 }
 
 /// Maximum times the task gate can force a re-entry before allowing the agent
-/// to stop with incomplete tasks. Matches MiMo's MAX_TASK_GATE_MAIN_REACT.
-const MAX_TASK_GATE_REENTRIES: u32 = 3;
+/// to stop with incomplete tasks. Raised from 3 to give complex multi-step tasks
+/// more room to complete.
+const MAX_TASK_GATE_REENTRIES: u32 = 6;
 
 #[derive(Default)]
 pub struct AgentCallbacks<'a> {
@@ -142,6 +146,7 @@ pub struct AgentCallbacks<'a> {
     pub on_tool: Option<&'a ToolCallback>,
     pub on_usage: Option<&'a UsageCallback>,
     pub on_thinking_level: Option<&'a ThinkingLevelCallback>,
+    pub on_question: Option<&'a QuestionCallback>,
     pub cancel: Option<&'a CancelToken>,
 }
 
@@ -173,6 +178,7 @@ impl Agent {
             permission_mode: PermissionMode::Default,
             max_turns,
             permission_callback: None,
+            question_callback: None,
             session_allowlist: HashSet::new(),
             permanent_allowlist: HashSet::new(),
             task_registry: None,
@@ -209,6 +215,14 @@ impl Agent {
 
     pub fn set_permission_callback(&mut self, cb: PermissionCallback) {
         self.permission_callback = Some(cb);
+    }
+
+    pub fn set_question_callback(&mut self, cb: QuestionCallback) {
+        self.question_callback = Some(cb);
+    }
+
+    pub fn question_callback(&self) -> Option<&QuestionCallback> {
+        self.question_callback.as_ref()
     }
 
     pub fn set_permanent_allowlist(&mut self, allowlist: HashSet<String>) {
@@ -620,6 +634,7 @@ impl Agent {
             on_tool,
             on_usage,
             on_thinking_level,
+            on_question: _,
             cancel,
         } = callbacks;
         if let Some(c) = cancel {
@@ -1090,6 +1105,7 @@ impl Agent {
                     working_dir: self.working_dir.clone(),
                     permission_mode: self.permission_mode,
                     cancel: callbacks.cancel.cloned(),
+                    on_question: callbacks.on_question.cloned(),
                 };
 
                 // Phase 1: Check permissions for all tool calls (sequential)
@@ -1315,11 +1331,16 @@ impl Agent {
                         self.consecutive_read_turns += 1;
                     }
 
+                    // If the model is asking the user a question, let it stop.
+                    // Don't inject the task gate or fallback continuation — the model
+                    // is waiting for user input, not signalling completion.
+                    let asking_question = asks_user_question(&assistant_text);
+
                     // Task gate: if there are incomplete tasks in the Plan and the model
                     // didn't explicitly exit plan mode, inject a re-entry message listing
                     // the specific tasks. Capped at MAX_TASK_GATE_REENTRIES to prevent
                     // infinite loops. Modeled after MiMo's TaskGate.decide().
-                    if !self.exited_plan_mode_this_turn {
+                    if !self.exited_plan_mode_this_turn && !asking_question {
                         if let Some(gate_msg) = self.task_gate_check().await {
                             self.messages.push(Message::user(gate_msg));
                             continue;
@@ -1334,6 +1355,7 @@ impl Agent {
                         && made_progress_this_run
                         && had_write_or_execute_this_run
                         && !auto_continued_once
+                        && !asking_question
                     {
                         auto_continued_once = true;
                         warn!("Model stopped after write/execute with no incomplete tasks; nudging once");
@@ -1671,6 +1693,60 @@ fn task_gate_decide(incomplete: &[(String, String)]) -> Option<String> {
     Some(msg)
 }
 
+/// Detect whether the model's response text is asking the user a question.
+/// When this returns true, the continuation system should NOT nudge the model
+/// to keep going — the model is waiting for user input.
+fn asks_user_question(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Ends with a question mark (possibly followed by whitespace/newlines)
+    if trimmed.ends_with('?') {
+        return true;
+    }
+
+    // Ends with a numbered option list (e.g., "1. Foo\n2. Bar")
+    let last_lines: Vec<&str> = trimmed.lines().rev().take(5).collect();
+    let has_numbered_options = last_lines.iter().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("1.") || t.starts_with("1)") || t.starts_with("- 1.")
+    });
+    if has_numbered_options {
+        return true;
+    }
+
+    // Check for question patterns in the last ~200 chars
+    let tail = if trimmed.len() > 200 {
+        &trimmed[trimmed.len() - 200..]
+    } else {
+        trimmed
+    };
+    let tail_lower = tail.to_lowercase();
+
+    let patterns = [
+        "would you like",
+        "should i ",
+        "which do you prefer",
+        "which one do you",
+        "do you want me to",
+        "how should i",
+        "what would you",
+        "shall i ",
+        "do you prefer",
+        "would you prefer",
+        "pick one",
+        "choose one",
+        "let me know which",
+        "let me know if",
+        "tell me which",
+        "what do you think",
+    ];
+
+    patterns.iter().any(|p| tail_lower.contains(p))
+}
+
 /// Normalize a tool name from the model to match our registered tools.
 /// Handles case differences and common aliases (e.g. Claude-style `read` → `file_read`).
 fn normalize_tool_name(name: &str) -> String {
@@ -1802,5 +1878,46 @@ mod tests {
         assert!(lines[1].starts_with("- "));
         assert!(lines[2].starts_with("- "));
         assert!(lines[3].contains("For EACH"));
+    }
+
+    // ── asks_user_question ──────────────────────────────────────────
+
+    #[test]
+    fn question_detection_ends_with_question_mark() {
+        assert!(asks_user_question("Which framework should I use?"));
+        assert!(asks_user_question("What do you think?  \n"));
+        assert!(asks_user_question("Should I proceed?\n\n"));
+    }
+
+    #[test]
+    fn question_detection_not_question() {
+        assert!(!asks_user_question("I've completed the task."));
+        assert!(!asks_user_question("Here's the summary of changes."));
+        assert!(!asks_user_question("The build passes now."));
+    }
+
+    #[test]
+    fn question_detection_empty_text() {
+        assert!(!asks_user_question(""));
+        assert!(!asks_user_question("   "));
+    }
+
+    #[test]
+    fn question_detection_pattern_matching() {
+        assert!(asks_user_question("I can implement this in two ways. Would you like me to use React or Vue?"));
+        assert!(asks_user_question("Should I proceed with the migration?"));
+        assert!(asks_user_question("Which one do you prefer for the database?"));
+        assert!(asks_user_question("How should I handle the error cases?"));
+        assert!(asks_user_question("Do you want me to add tests as well?"));
+    }
+
+    #[test]
+    fn question_detection_numbered_options() {
+        assert!(asks_user_question(
+            "Here are the options:\n1. React\n2. Vue\n3. Angular"
+        ));
+        assert!(asks_user_question(
+            "Pick one:\n1. Fast approach\n2. Thorough approach"
+        ));
     }
 }

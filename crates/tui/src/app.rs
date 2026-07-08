@@ -471,6 +471,13 @@ pub struct PermissionPromptState {
     pub respond: Option<oneshot::Sender<PermissionDecision>>,
 }
 
+/// State for the question tool prompt — shows a question and waits for user input.
+pub struct QuestionPromptState {
+    pub header: String,
+    pub prompt: String,
+    pub respond: Option<tokio::sync::oneshot::Sender<String>>,
+}
+
 pub struct SessionPickerState {
     pub sessions: Vec<SessionEntry>,
     pub selected: usize,
@@ -934,6 +941,7 @@ pub struct AppState {
     pub needs_redraw: bool,
     pub should_quit: bool,
     pub permission_prompt: Option<PermissionPromptState>,
+    pub question_prompt: Option<QuestionPromptState>,
     pub session_picker: Option<SessionPickerState>,
     /// Settings overlay state (for /settings)
     pub settings_overlay: Option<SettingsState>,
@@ -1163,6 +1171,7 @@ impl Default for AppState {
             needs_redraw: true,
             should_quit: false,
             permission_prompt: None,
+            question_prompt: None,
             session_picker: None,
             settings_overlay: None,
             pending_tools: Vec::new(),
@@ -1337,6 +1346,58 @@ impl AppState {
                     self.needs_redraw = true;
                 }
                 _ => {} // Ignore other keys during prompt
+            }
+            return;
+        }
+
+        // If question prompt is active, handle text input
+        if let Some(ref mut prompt) = self.question_prompt {
+            match key.code {
+                KeyCode::Enter => {
+                    let answer = self.input.trim().to_string();
+                    let answer = if answer.is_empty() { "User skipped.".to_string() } else { answer };
+                    if let Some(respond) = prompt.respond.take() {
+                        let _ = respond.send(answer);
+                    }
+                    self.question_prompt = None;
+                    self.input.clear();
+                    self.cursor_pos = 0;
+                    self.needs_redraw = true;
+                }
+                KeyCode::Esc => {
+                    if let Some(respond) = prompt.respond.take() {
+                        let _ = respond.send("User cancelled.".to_string());
+                    }
+                    self.question_prompt = None;
+                    self.input.clear();
+                    self.cursor_pos = 0;
+                    self.needs_redraw = true;
+                }
+                KeyCode::Char(c) => {
+                    self.input.insert(self.cursor_pos, c);
+                    self.cursor_pos += 1;
+                    self.needs_redraw = true;
+                }
+                KeyCode::Backspace => {
+                    if self.cursor_pos > 0 {
+                        self.cursor_pos -= 1;
+                        self.input.remove(self.cursor_pos);
+                        self.needs_redraw = true;
+                    }
+                }
+                KeyCode::Left => {
+                    if self.cursor_pos > 0 {
+                        self.cursor_pos -= 1;
+                        self.needs_redraw = true;
+                    }
+                }
+                KeyCode::Right => {
+                    if self.cursor_pos < self.input.len() {
+                        self.cursor_pos += 1;
+                        self.needs_redraw = true;
+                    }
+                }
+                _ => {}
             }
             return;
         }

@@ -1,0 +1,69 @@
+---
+title: Rusty
+description: 一个始终驻留在终端里的编码智能体。
+---
+
+import { Tabs, TabItem, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+一个始终驻留在终端里的编码智能体。Rusty 是一个仅 12&nbsp;MB 的独立二进制文件，
+在你工作的地方与你结对——快速、私密、完全属于你。无遥测、无云端锁定、无冗余。
+
+```bash title="terminal"
+curl -fsSL rustycli.com/install | sh
+```
+
+:::note
+Rusty 在运行前会用校验和验证下载内容。想先检查一下？把脚本导出到文件再阅读——
+它只有约 40 行纯 shell 脚本。
+:::
+
+## 你能得到什么
+
+- **上下文感知的编辑**——遍历整个代码树，支持文件读/写/改与统一 diff 补丁
+- **带审批的沙箱**——分级权限模型，按工具逐一分类
+- **可读的 diff**——任何更改落地前都先展示
+- **自带模型**——Xiaomi MiMo、Kimi、OpenAI、DeepSeek、Ollama，或任何兼容 OpenAI 的 API
+- **内置工具**——bash、正则搜索、glob、网页抓取、子代理派生、任务管理
+- **自动压缩**——三级系统，让长对话始终保持在上下文窗口以内
+- **会话持久化**——跨重启保存、恢复并命名会话
+
+## 运行模式
+
+<Tabs>
+<TabItem label="TUI 模式">
+
+完整的终端界面，支持流式输出、Markdown 渲染、权限提示与斜杠命令。这是默认模式。
+
+```bash
+rusty
+```
+
+</TabItem>
+<TabItem label="无头模式">
+
+单次提示、打印响应、保存会话。非常适合脚本化。
+
+```bash
+rusty --prompt "解释这个代码库"
+```
+
+</TabItem>
+<TabItem label="标准输入 REPL">
+
+不带 TUI 的逐行交互式 REPL，支持斜杠命令。
+
+```bash
+rusty --headless
+```
+
+</TabItem>
+</Tabs>
+
+## 下一步去哪
+
+<CardGrid>
+  <LinkCard title="安装" href="/zh-cn/getting-started/installation/" description="把二进制文件放到你的 PATH 上" />
+  <LinkCard title="快速开始" href="/zh-cn/getting-started/quickstart/" description="提交你的第一个更改" />
+  <LinkCard title="设置" href="/zh-cn/configuration/settings/" description="配置模型、密钥与偏好" />
+  <LinkCard title="权限" href="/zh-cn/configuration/permissions/" description="Rusty 如何保持安全" />
+</CardGrid>

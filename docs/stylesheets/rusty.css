@@ -1,0 +1,525 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Rusty — Material for MkDocs reskin
+   Matches the Rusty marketing site: Bricolage Grotesque headings,
+   Hanken Grotesk body, JetBrains Mono code, rust-orange accents,
+   warm paper background, dark "terminal" code blocks.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Bricolage Grotesque for headings & wordmark (body/code come from mkdocs.yml) */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&display=swap');
+
+/* ─────────────────────────────  TOKENS  ───────────────────────────── */
+
+/* Daylight (light) — the primary Rusty theme */
+[data-md-color-scheme="default"] {
+  --rz-bg:       #FCFAF6;
+  --rz-bg-2:     #F4EEE4;
+  --rz-surface:  #FFFFFF;
+  --rz-text:     #211A13;
+  --rz-muted:    #7C6F5D;
+  --rz-border:   #EBE3D5;
+  --rz-accent:   #C2541C;
+  --rz-accent-2: #E0703A;
+  --rz-glow:     #B8871F;   /* amber, darkened for legibility on light */
+  --rz-led:      #3E9C5F;   /* green */
+
+  /* Map onto Material's system */
+  --md-primary-fg-color:        var(--rz-accent);
+  --md-primary-fg-color--light: var(--rz-accent-2);
+  --md-primary-fg-color--dark:  #8E3D17;
+  --md-primary-bg-color:        var(--rz-text);
+  --md-accent-fg-color:         var(--rz-accent-2);
+
+  --md-default-bg-color:            var(--rz-bg);
+  --md-default-fg-color:            var(--rz-text);
+  --md-default-fg-color--light:     var(--rz-muted);
+  --md-default-fg-color--lighter:   #A99B87;
+  --md-default-fg-color--lightest:  var(--rz-bg-2);
+
+  --md-typeset-color:      var(--rz-text);
+  --md-typeset-a-color:    var(--rz-accent);
+
+  --md-code-bg-color: var(--rz-bg-2);
+  --md-code-fg-color: var(--rz-accent);
+
+  --md-footer-bg-color:      var(--rz-bg-2);
+  --md-footer-bg-color--dark: var(--rz-bg-2);
+  --md-footer-fg-color:      var(--rz-muted);
+}
+
+/* Ember (dark) */
+[data-md-color-scheme="slate"] {
+  --rz-bg:       #15110E;
+  --rz-bg-2:     #1E1712;
+  --rz-surface:  #231A13;
+  --rz-text:     #F5EDE3;
+  --rz-muted:    #B3A493;
+  --rz-border:   #382A1F;
+  --rz-accent:   #E0703A;
+  --rz-accent-2: #F4B860;
+  --rz-glow:     #F4B860;
+  --rz-led:      #6FCF7A;
+
+  --md-hue: 30;
+  --md-primary-fg-color:        var(--rz-accent);
+  --md-primary-fg-color--light: var(--rz-accent-2);
+  --md-primary-fg-color--dark:  #8E3D17;
+  --md-primary-bg-color:        var(--rz-text);
+  --md-accent-fg-color:         var(--rz-accent-2);
+
+  --md-default-bg-color:            var(--rz-bg);
+  --md-default-fg-color:            var(--rz-text);
+  --md-default-fg-color--light:     var(--rz-muted);
+  --md-default-fg-color--lighter:   #8A7A66;
+  --md-default-fg-color--lightest:  var(--rz-bg-2);
+
+  --md-typeset-color:      var(--rz-text);
+  --md-typeset-a-color:    var(--rz-accent-2);
+
+  --md-code-bg-color: #0F0B08;
+  --md-code-fg-color: #E8DDCF;
+
+  --md-footer-bg-color:       var(--rz-bg-2);
+  --md-footer-bg-color--dark: var(--rz-bg-2);
+  --md-footer-fg-color:       var(--rz-muted);
+}
+
+/* ─────────────────────────────  TYPE  ───────────────────────────── */
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-nav__title,
+.md-header__title {
+  font-family: "Bricolage Grotesque", "Hanken Grotesk", sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--rz-text);
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  font-size: 2.5rem;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin-bottom: 0.5em;
+}
+.md-typeset h2 {
+  font-size: 1.65rem;
+  margin-top: 2.2em;
+  letter-spacing: -0.022em;
+}
+.md-typeset h3 { font-size: 1.25rem; }
+
+.md-typeset { font-size: 0.86rem; }
+.md-typeset p { line-height: 1.7; }
+
+/* Lead paragraph: first paragraph after the H1 */
+.md-typeset h1 + p {
+  font-size: 1.12rem;
+  line-height: 1.6;
+  color: var(--rz-muted);
+}
+
+/* Section-permalink anchor in accent */
+.md-typeset .headerlink { color: var(--rz-border); }
+.md-typeset :hover > .headerlink { color: var(--rz-accent); }
+
+/* ─────────────────────────  ANNOUNCEMENT BAR  ───────────────────────── */
+
+.md-banner {
+  background-color: var(--rz-bg-2) !important;
+  color: var(--rz-text) !important;
+}
+.md-banner a { color: var(--rz-accent) !important; }
+
+/* ─────────────────────────────  HEADER  ───────────────────────────── */
+/* Rusty's nav is a translucent light bar with a hairline border — not a
+   solid colored header. Recreate that instead of Material's default. */
+
+.md-header {
+  background-color: color-mix(in srgb, var(--rz-bg) 86%, transparent);
+  color: var(--rz-text);
+  border-bottom: 1px solid var(--rz-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: none;
+}
+.md-header__title { font-size: 1.15rem; color: var(--rz-text); }
+.md-header__topic .md-ellipsis { font-weight: 700; }
+.md-header [type="checkbox"] ~ .md-icon,
+.md-header__button.md-icon { color: var(--rz-text); }
+.md-header__button.md-logo img { height: 1.7rem; width: auto; }
+
+/* Search box → Rusty surface + border pill */
+.md-search__form {
+  background-color: var(--rz-surface);
+  border: 1px solid var(--rz-border);
+  border-radius: 10px;
+  box-shadow: none;
+}
+.md-search__form:hover { background-color: var(--rz-surface); }
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+  border-color: var(--rz-accent);
+}
+.md-search__input { color: var(--rz-text); }
+.md-search__input::placeholder { color: var(--rz-muted); }
+.md-search__icon { color: var(--rz-muted); }
+
+/* Tabs (if enabled) sit flush under the header */
+.md-tabs {
+  background-color: var(--rz-bg);
+  color: var(--rz-text);
+  border-bottom: 1px solid var(--rz-border);
+}
+.md-tabs__link { color: var(--rz-muted); opacity: 1; }
+.md-tabs__link--active,
+.md-tabs__link:hover { color: var(--rz-accent); }
+
+/* ─────────────────────────  LEFT NAV / SIDEBAR  ───────────────────────── */
+
+.md-nav {
+  font-size: 0.74rem;
+}
+.md-nav__title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rz-accent);
+}
+/* Section group labels (navigation.sections) */
+.md-nav__item--section > .md-nav__link,
+.md-nav--secondary .md-nav__title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rz-accent);
+}
+
+.md-nav__link {
+  color: var(--rz-muted);
+  border-radius: 8px;
+  padding: 0.36rem 0.6rem;
+  margin: 1px 0;
+  transition: color .15s ease, background .15s ease;
+}
+.md-nav__link:hover {
+  color: var(--rz-text);
+  background: var(--rz-bg-2);
+}
+/* Active page */
+.md-nav__link--active,
+.md-nav__item .md-nav__link--active {
+  color: var(--rz-accent) !important;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--rz-accent) 9%, transparent);
+  box-shadow: inset 2px 0 0 var(--rz-accent);
+}
+
+/* ─────────────────────────  RIGHT TOC  ───────────────────────── */
+
+.md-nav--secondary .md-nav__title { box-shadow: none; }
+.md-sidebar--secondary .md-nav__list {
+  border-left: 1px solid var(--rz-border);
+}
+.md-sidebar--secondary .md-nav__link {
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  margin-left: -1px;
+  padding-left: 0.85rem;
+  box-shadow: none;
+  background: none;
+}
+.md-sidebar--secondary .md-nav__link--active,
+.md-sidebar--secondary .md-nav__link--passed {
+  color: var(--rz-accent) !important;
+  background: none;
+}
+.md-sidebar--secondary .md-nav__link--active {
+  border-left-color: var(--rz-accent);
+  font-weight: 600;
+}
+
+/* ─────────────────────────  LINKS  ───────────────────────── */
+
+.md-typeset a {
+  color: var(--rz-accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--rz-accent) 32%, transparent);
+  transition: border-color .15s ease, color .15s ease;
+}
+.md-typeset a:hover {
+  color: var(--rz-accent-2);
+  border-bottom-color: var(--rz-accent-2);
+}
+
+/* ─────────────────────────  INLINE CODE  ───────────────────────── */
+
+.md-typeset code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82em;
+  background: var(--rz-bg-2);
+  border: 1px solid var(--rz-border);
+  border-radius: 6px;
+  padding: 0.12em 0.42em;
+  color: var(--rz-accent);
+}
+
+/* ─────────────────────────  CODE BLOCKS (terminal look)  ───────────────────────── */
+
+.md-typeset pre > code,
+.md-typeset .highlight {
+  font-family: "JetBrains Mono", monospace;
+}
+.md-typeset pre {
+  border-radius: 14px;
+}
+.md-typeset .highlight {
+  border-radius: 14px;
+}
+/* The dark terminal panel — used in BOTH schemes so code always reads as a
+   little CRT, matching the marketing site. */
+.md-typeset pre > code,
+.md-typeset .highlight > pre > code,
+.md-typeset .highlighttable .code td {
+  background: #140E0A;
+  color: #E8DDCF;
+  border-radius: 14px;
+  border: 1px solid #2A2018;
+}
+.md-typeset .highlight pre {
+  background: #140E0A;
+  border-radius: 14px;
+  box-shadow: 0 18px 40px -26px rgba(40, 25, 12, 0.4);
+}
+.md-typeset .highlight code { padding: 1rem 1.1rem; }
+
+/* Filename label above a fenced block ( ```bash title="..." ) */
+.md-typeset .highlight span.filename {
+  background: #1B1510;
+  color: #9A8C7A;
+  border: 1px solid #2A2018;
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  padding: 0.5rem 1rem;
+}
+.md-typeset .highlight span.filename + pre > code { border-radius: 0 0 14px 14px; }
+
+/* Syntax highlighting tuned to the Rusty palette (on the dark panel) */
+.md-typeset .highlight .go  { color: #9A8C7A; }              /* generic output */
+.md-typeset .highlight .gp  { color: #F4B860; }              /* prompt $ */
+.md-typeset .highlight .c,
+.md-typeset .highlight .c1,
+.md-typeset .highlight .cm  { color: #7E8E63; font-style: italic; } /* comments */
+.md-typeset .highlight .k,
+.md-typeset .highlight .kd,
+.md-typeset .highlight .kn  { color: #E0703A; }              /* keywords */
+.md-typeset .highlight .s,
+.md-typeset .highlight .s1,
+.md-typeset .highlight .s2,
+.md-typeset .highlight .sb  { color: #F4B860; }              /* strings */
+.md-typeset .highlight .nb,
+.md-typeset .highlight .nf,
+.md-typeset .highlight .nx  { color: #7FD0B0; }              /* names / funcs */
+.md-typeset .highlight .mi,
+.md-typeset .highlight .mf  { color: #E0B23A; }              /* numbers */
+.md-typeset .highlight .nt  { color: #E0703A; }              /* tags */
+
+/* Copy button on code blocks */
+.md-clipboard { color: #6B5E4E; }
+.md-clipboard:hover { color: var(--rz-accent-2); }
+
+/* ─────────────────────────  ADMONITIONS  ───────────────────────── */
+
+.md-typeset .admonition,
+.md-typeset details {
+  font-size: 0.8rem;
+  border: 1px solid var(--rz-border);
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: var(--rz-surface);
+  box-shadow: none;
+}
+.md-typeset .admonition-title,
+.md-typeset summary {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  padding-top: 0.7rem;
+  padding-bottom: 0.2rem;
+}
+.md-typeset .admonition-title::before,
+.md-typeset summary::before { top: 0.6rem; }
+
+/* note / info → rust */
+.md-typeset .admonition.note,   .md-typeset details.note,
+.md-typeset .admonition.info,   .md-typeset details.info,
+.md-typeset .admonition.abstract, .md-typeset details.abstract {
+  border-left-color: var(--rz-accent);
+}
+.note > .admonition-title, .note > summary,
+.info > .admonition-title, .info > summary,
+.abstract > .admonition-title, .abstract > summary { color: var(--rz-accent); }
+.note > .admonition-title::before,
+.info > .admonition-title::before,
+.abstract > .admonition-title::before { background-color: var(--rz-accent); }
+
+/* tip / success → green LED */
+.md-typeset .admonition.tip,     .md-typeset details.tip,
+.md-typeset .admonition.success, .md-typeset details.success {
+  border-left-color: var(--rz-led);
+}
+.tip > .admonition-title, .tip > summary,
+.success > .admonition-title, .success > summary { color: var(--rz-led); }
+.tip > .admonition-title::before,
+.success > .admonition-title::before { background-color: var(--rz-led); }
+
+/* warning / caution → amber glow */
+.md-typeset .admonition.warning, .md-typeset details.warning,
+.md-typeset .admonition.caution, .md-typeset details.caution {
+  border-left-color: var(--rz-glow);
+}
+.warning > .admonition-title, .warning > summary,
+.caution > .admonition-title, .caution > summary { color: var(--rz-glow); }
+.warning > .admonition-title::before,
+.caution > .admonition-title::before { background-color: var(--rz-glow); }
+
+/* danger → deep red-orange */
+.md-typeset .admonition.danger, .md-typeset details.danger {
+  border-left-color: #E05A4F;
+}
+.danger > .admonition-title, .danger > summary { color: #E05A4F; }
+.danger > .admonition-title::before { background-color: #E05A4F; }
+
+/* ─────────────────────────  TABLES  ───────────────────────── */
+
+.md-typeset table:not([class]) {
+  border: 1px solid var(--rz-border);
+  border-radius: 12px;
+  overflow: hidden;
+  font-size: 0.8rem;
+  box-shadow: none;
+}
+.md-typeset table:not([class]) th {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+  background: var(--rz-bg-2);
+  color: var(--rz-text);
+  border-bottom: 1px solid var(--rz-border);
+}
+.md-typeset table:not([class]) td {
+  border-top: 1px solid var(--rz-border);
+  color: var(--rz-muted);
+}
+
+/* ─────────────────────────  BUTTONS  ───────────────────────── */
+
+.md-typeset .md-button {
+  border-radius: 10px;
+  border: 1px solid var(--rz-border);
+  color: var(--rz-text);
+  font-weight: 600;
+  transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+.md-typeset .md-button:hover { transform: translateY(-2px); border-color: var(--rz-accent); }
+.md-typeset .md-button--primary {
+  background: var(--rz-accent);
+  border-color: var(--rz-accent);
+  color: #fff;
+}
+.md-typeset .md-button--primary:hover { background: var(--rz-accent-2); border-color: var(--rz-accent-2); }
+
+/* ─────────────────────────  PREV / NEXT PAGER  ───────────────────────── */
+
+/* Override Material's footer — use !important to beat minified selectors */
+.md-footer {
+  background-color: var(--rz-bg) !important;
+  color: var(--rz-text) !important;
+}
+.md-footer__inner.md-grid {
+  display: flex !important;
+  flex-direction: row !important;
+  justify-content: center !important;
+  gap: 0.8rem !important;
+  padding: 0.8rem 0 !important;
+}
+.md-footer__link {
+  display: flex !important;
+  align-items: center !important;
+  border: 1px solid var(--rz-border) !important;
+  border-radius: 12px !important;
+  background-color: var(--rz-surface) !important;
+  color: var(--rz-text) !important;
+  padding: 0.9rem 1rem !important;
+  transition: transform .18s ease, border-color .18s ease !important;
+  flex: 0 1 auto !important;
+  max-width: 50% !important;
+}
+.md-footer__link:hover {
+  transform: translateY(-2px) !important;
+  border-color: var(--rz-accent) !important;
+  opacity: 1 !important;
+}
+/* Match Material's [dir] specificity to kill margin-left:auto */
+[dir=ltr] .md-footer__link--next,
+[dir=rtl] .md-footer__link--next,
+.md-footer__link--prev,
+.md-footer__link--next {
+  margin: 0 !important;
+  text-align: left !important;
+}
+.md-footer__title {
+  font-family: "Bricolage Grotesque", sans-serif !important;
+  color: var(--rz-text) !important;
+  display: block !important;
+}
+.md-footer__direction { color: var(--rz-muted) !important; opacity: 1 !important; }
+.md-footer__button { color: var(--rz-muted) !important; }
+.md-footer__button svg { fill: var(--rz-muted) !important; }
+.md-footer__link:hover .md-footer__direction,
+.md-footer__link:hover .md-footer__button { color: var(--rz-accent) !important; }
+.md-footer__link:hover .md-footer__button svg { fill: var(--rz-accent) !important; }
+.md-footer-meta {
+  background-color: var(--rz-bg-2) !important;
+  color: var(--rz-muted) !important;
+}
+.md-footer-meta__inner { color: var(--rz-muted) !important; }
+.md-copyright { color: var(--rz-muted) !important; }
+.md-footer a { color: var(--rz-accent) !important; }
+.md-footer .md-social__link { color: var(--rz-muted) !important; }
+.md-footer .md-social__link svg { fill: var(--rz-muted) !important; }
+.md-footer .md-social__link:hover { color: var(--rz-accent) !important; }
+.md-footer .md-social__link:hover svg { fill: var(--rz-accent) !important; }
+
+/* ─────────────────────────  MISC  ───────────────────────── */
+
+::selection { background: var(--rz-accent-2); color: #fff; }
+
+/* Back-to-top button */
+.md-top {
+  background: var(--rz-surface);
+  color: var(--rz-accent);
+  border: 1px solid var(--rz-border);
+  box-shadow: 0 4px 16px -6px rgba(40, 25, 12, 0.3);
+}
+.md-top:hover { background: var(--rz-accent); color: #fff; }
+
+/* Scrollbars in the nav panels */
+.md-sidebar__scrollwrap::-webkit-scrollbar { width: 8px; }
+.md-sidebar__scrollwrap::-webkit-scrollbar-thumb {
+  background: var(--rz-border);
+  border-radius: 8px;
+}
+
+/* Focus ring in brand color */
+:focus-visible { outline-color: var(--rz-accent) !important; }

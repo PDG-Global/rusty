@@ -13,6 +13,7 @@ pub mod grep;
 pub mod memory;
 pub mod note;
 pub mod plan_mode;
+pub mod question;
 pub mod task_output;
 pub mod task_stop;
 pub mod todowrite;
@@ -23,11 +24,30 @@ use rusty_core::{CancelToken, PermissionLevel, RustyError, ToolDefinition};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+/// Callback for the question tool: receives (header, full_prompt), returns user's answer.
+pub type QuestionCallback = std::sync::Arc<
+    dyn Fn(&str, &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send>>
+        + Send
+        + Sync,
+>;
+
+#[derive(Clone)]
 pub struct ToolContext {
     pub working_dir: PathBuf,
     pub permission_mode: rusty_core::PermissionMode,
     pub cancel: Option<CancelToken>,
+    pub on_question: Option<QuestionCallback>,
+}
+
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("working_dir", &self.working_dir)
+            .field("permission_mode", &self.permission_mode)
+            .field("cancel", &self.cancel)
+            .field("on_question", &self.on_question.is_some())
+            .finish()
+    }
 }
 
 /// Resolve a path against the working directory and validate it stays within the sandbox.
@@ -209,6 +229,7 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
         Box::new(web_fetch::WebFetchTool::new()),
         Box::new(plan_mode::EnterPlanModeTool),
         Box::new(plan_mode::ExitPlanModeTool),
+        Box::new(question::QuestionTool),
     ]
 }
 

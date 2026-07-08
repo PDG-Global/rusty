@@ -965,12 +965,21 @@ struct PermissionPromptMsg {
     respond: oneshot::Sender<PermissionDecision>,
 }
 
+/// A question from the question tool, bundled with a oneshot sender for the answer.
+struct QuestionPromptMsg {
+    header: String,
+    prompt: String,
+    respond: oneshot::Sender<String>,
+}
+
 /// Events from the agent task to the TUI.
 enum AgentTaskEvent {
     /// Regular agent event (text, tool, etc.)
     Event(rusty_tui::app::AgentEvent),
     /// Permission request — TUI should show prompt and send response on the oneshot.
     PermissionRequest(PermissionPromptMsg),
+    /// Question request — TUI should show question and send answer on the oneshot.
+    QuestionRequest(QuestionPromptMsg),
     /// Agent has finished processing a message and is ready for more input
     ReadyForInput,
 }
@@ -1099,6 +1108,24 @@ async fn run_tui(
                 })
             });
             agent.set_permission_callback(perm_cb);
+
+            // Set up question callback
+            let event_tx_q = event_tx.clone();
+            let question_cb: rusty_agent::QuestionCallback = Arc::new(move |header, prompt| {
+                let tx = event_tx_q.clone();
+                let header = header.to_string();
+                let prompt = prompt.to_string();
+                Box::pin(async move {
+                    let (resp_tx, resp_rx) = oneshot::channel();
+                    let _ = tx.send(AgentTaskEvent::QuestionRequest(QuestionPromptMsg {
+                        header,
+                        prompt,
+                        respond: resp_tx,
+                    }));
+                    resp_rx.await.unwrap_or_else(|_| "User did not answer.".to_string())
+                })
+            });
+            agent.set_question_callback(question_cb);
             drop(agent);
 
             let agent_arc = agent_arc;
@@ -1166,6 +1193,7 @@ async fn run_tui(
                         ));
                     });
 
+                    let question_cb_ref = agent.question_callback().cloned();
                     let cancel_ref = cancel.clone();
                     let result = agent
                         .run(
@@ -1176,6 +1204,7 @@ async fn run_tui(
                                 on_tool: Some(&tool_cb),
                                 on_usage: Some(&usage_cb),
                                 on_thinking_level: Some(&thinking_level_cb),
+                                on_question: question_cb_ref.as_ref(),
                                 cancel: Some(&cancel_ref),
                             },
                         )
@@ -1982,6 +2011,14 @@ async fn tui_main_loop(
                     Some(AgentTaskEvent::PermissionRequest(msg)) => {
                         app.permission_prompt = Some(rusty_tui::app::PermissionPromptState {
                             request: msg.request,
+                            respond: Some(msg.respond),
+                        });
+                        app.needs_redraw = true;
+                    }
+                    Some(AgentTaskEvent::QuestionRequest(msg)) => {
+                        app.question_prompt = Some(rusty_tui::app::QuestionPromptState {
+                            header: msg.header,
+                            prompt: msg.prompt,
                             respond: Some(msg.respond),
                         });
                         app.needs_redraw = true;

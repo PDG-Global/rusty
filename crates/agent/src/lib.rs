@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, ToolStatus};
+pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, QuestionCallback, ToolStatus};
 // Re-export CancelToken so downstream crates (e.g. rusty CLI) can use `rusty_agent::CancelToken`.
 pub use rusty_core::CancelToken;
 
@@ -312,7 +312,13 @@ pub async fn build_system_prompt(
         Work through multi-step requests in one continuous flow. Do not stop after the first step \
         and do not ask the user to confirm the next obvious action. Only stop when the task is \
         complete, you are genuinely blocked, or you need a decision only the user can make. Be \
-        economical: prefer one well-chosen tool call over several, and do not narrate each step."
+        economical: prefer one well-chosen tool call over several, and do not narrate each step.\n\n\
+        ## Asking Questions\n\n\
+        Every time you need the user to decide, clarify, or approve something, route it through \
+        the `question` tool. **Never** stop the loop with a natural-language question. A \
+        natural-language question ends your turn without finishing the task; a `question` tool \
+        call does not. The tool blocks until the user responds, then you continue working. \
+        Always prefer this over ending your turn with a question."
             .to_string(),
     );
 
