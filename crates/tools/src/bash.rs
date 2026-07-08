@@ -310,8 +310,11 @@ impl Tool for BashTool {
 
         let timeout_secs = input["timeout"].as_u64().unwrap_or(120);
 
-        // Check for paths outside the working directory before executing
-        check_bash_paths(command, &ctx.working_dir)?;
+        // Check for paths outside the working directory before executing.
+        // Bypass mode skips this restriction — the user explicitly opted in.
+        if ctx.permission_mode != rusty_core::PermissionMode::BypassPermissions {
+            check_bash_paths(command, &ctx.working_dir)?;
+        }
 
         debug!("Executing bash command: {command}");
 
