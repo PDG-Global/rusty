@@ -244,6 +244,11 @@ pub fn rusty_messages_to_oai(messages: &[rusty_core::Message]) -> Vec<OaiMessage
                             } else {
                                 content.clone()
                             };
+                            tracing::debug!(
+                                "OAI: emitting tool result with tool_call_id={:?} (len={})",
+                                tool_use_id,
+                                text.len()
+                            );
                             result.push(OaiMessage {
                                 role: "tool".to_string(),
                                 content: Some(OaiMessageContent::Text(text)),

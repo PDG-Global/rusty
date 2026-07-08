@@ -7,7 +7,67 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::atomic_write_async;
 
-use crate::Message;
+use crate::{ContentBlock, Message};
+
+/// Sanitize loaded session messages to fix tool_call_id issues from older versions.
+/// Drops ToolResult blocks with empty tool_use_id or that don't match a valid
+/// ToolUse in the preceding assistant message.
+fn sanitize_messages(messages: &mut Vec<Message>) {
+    let mut last_valid_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut removed = 0;
+
+    for msg in messages.iter_mut() {
+        match &msg.content {
+            crate::MessageContent::Blocks(blocks) => {
+                // Track valid IDs from assistant messages
+                if msg.role == crate::Role::Assistant {
+                    last_valid_ids.clear();
+                    for block in blocks {
+                        if let ContentBlock::ToolUse { id, .. } = block {
+                            if !id.trim().is_empty() {
+                                last_valid_ids.insert(id.clone());
+                            }
+                        }
+                    }
+                }
+                // Filter user messages with tool results
+                if msg.role == crate::Role::User {
+                    let has_results = blocks.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+                    if has_results {
+                        let original_len = blocks.len();
+                        let filtered: Vec<ContentBlock> = blocks
+                            .iter()
+                            .filter(|b| {
+                                if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                                    if tool_use_id.trim().is_empty() {
+                                        removed += 1;
+                                        return false;
+                                    }
+                                    if !last_valid_ids.is_empty()
+                                        && !last_valid_ids.contains(tool_use_id)
+                                    {
+                                        removed += 1;
+                                        return false;
+                                    }
+                                }
+                                true
+                            })
+                            .cloned()
+                            .collect();
+                        if filtered.len() != original_len {
+                            msg.content = crate::MessageContent::Blocks(filtered);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if removed > 0 {
+        tracing::warn!("Sanitized {removed} orphaned tool results from loaded session");
+    }
+}
 
 /// Sessions older than this are cleaned up automatically.
 const SESSION_TTL_DAYS: i64 = 30;
@@ -72,7 +132,8 @@ impl ConversationSession {
             return Ok(None);
         }
         let content = tokio::fs::read_to_string(&path).await?;
-        let session: Self = serde_json::from_str(&content)?;
+        let mut session: Self = serde_json::from_str(&content)?;
+        sanitize_messages(&mut session.messages);
         Ok(Some(session))
     }
 
