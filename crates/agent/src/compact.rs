@@ -220,8 +220,8 @@ Rules:
 - Focus on facts, not narration.
 - Include file paths and specific technical details.
 - §1 MUST contain at least one block-quoted verbatim user request.
-- §2 MUST be present and actionable — the agent wakes up with only this checkpoint.
-- If a section has nothing, write '(none)' — do not omit sections.";
+- §2 MUST be present and actionable: the agent wakes up with only this checkpoint.
+- If a section has nothing, write '(none)'. Do not omit sections.";
 
 /// Extract structured checkpoint from conversation history using an LLM call.
 /// Writes the result to `checkpoint_path`. If `notes_content` is provided,
@@ -258,7 +258,7 @@ pub async fn extract_checkpoint(
     prompt.push_str(&old_text);
 
     prompt.push_str("\n\nProduce the full checkpoint with all 11 sections. \
-        Use the exact `## §N Title` headers. Update sections incrementally — \
+        Use the exact `## §N Title` headers. Update sections incrementally: \
         preserve content that's still accurate, update what changed.");
 
     let request = MessageRequest {
@@ -381,7 +381,7 @@ pub async fn maybe_compact(
             "Summarize the following conversation concisely. Your summary MUST include:\n\n\
              1. **Active intent**: The user's most ORIGINAL request that started this work, \
              VERBATIM BLOCK-QUOTED. This is the single most important thing to preserve. \
-             If the user gave one request at the start, that is the intent — do not let it \
+             If the user gave one request at the start, that is the intent. Do not let it \
              be overwritten by intermediate exploration or tangential work.\n\
              2. **Next concrete action**: The single next step to take when resuming. \
              Be specific: name files to edit, commands to run, or changes to make.\n\
@@ -394,7 +394,7 @@ pub async fn maybe_compact(
              Use the user's FIRST substantive request, not a later clarification.\n\
              - §2 must be an actionable directive the agent can execute immediately.\n\
              - §4 must list the exact file paths the agent was reading or writing.\n\
-             - The agent wakes up with ONLY this summary — it must know exactly where to continue.\n\
+             - The agent wakes up with ONLY this summary, so it must know exactly where to continue.\n\
              - Do NOT include git status, git diff, or unrelated repository state in the summary. \
              Only include context directly relevant to the user's active request.\n\n"
         );
@@ -788,7 +788,7 @@ pub fn tail_aware_reminder(messages: &[Message]) -> &'static str {
                  and continue your work loop."
             } else {
                 "The previous assistant turn ended. Check your task list before stopping \
-                 again — if work remains, continue."
+                 again. If work remains, continue."
             }
         }
         Role::User => "",
@@ -855,7 +855,7 @@ pub async fn render_rebuild_context(
 
     // Section 4: Seam framing — explicit resume instructions
     lines.push(
-        "Recent messages are preserved below — the assistant turn (and any tool results) \
+        "Recent messages are preserved below: the assistant turn (and any tool results) \
          you will see is real history, not pseudo-content. Continue your task by responding \
          to the most recent state."
             .to_string(),

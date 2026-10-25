@@ -18,7 +18,7 @@ impl Tool for QuestionTool {
     fn description(&self) -> &str {
         "Ask the user a question and wait for their answer. Use this instead of stopping \
          with a natural-language question. The tool blocks until the user responds. \
-         Always prefer this over ending your turn with a question — it keeps your task \
+         Always prefer this over ending your turn with a question, as it keeps your task \
          context intact and prevents the auto-continuation system from answering on the \
          user's behalf."
     }
@@ -85,7 +85,7 @@ impl Tool for QuestionTool {
                     if desc.is_empty() {
                         prompt.push_str(&format!("  {}. {}\n", i + 1, label));
                     } else {
-                        prompt.push_str(&format!("  {}. {} — {}\n", i + 1, label, desc));
+                        prompt.push_str(&format!("  {}. {}: {}\n", i + 1, label, desc));
                     }
                 }
             }

@@ -31,7 +31,7 @@ pub fn permission_mode_prompt(mode: PermissionMode) -> Option<&'static str> {
         PermissionMode::BypassPermissions => Some(
             "## Permission Mode\n\n\
             You are in bypass-permissions mode. All tools are auto-approved. \
-            Work autonomously — do not pause for approvals or ask clarifying questions. \
+            Work autonomously. Do not pause for approvals or ask clarifying questions. \
             Make reasonable decisions and continue working.",
         ),
         PermissionMode::Plan => Some(

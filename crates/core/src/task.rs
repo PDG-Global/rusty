@@ -424,7 +424,7 @@ impl TaskRegistry {
                 ""
             };
             out.push_str(&format!(
-                "{parent_indent}{icon} {} — {}\n",
+                "{parent_indent}{icon} {}: {}\n",
                 task.id, task.summary
             ));
         }
@@ -440,7 +440,7 @@ impl TaskRegistry {
         }
         let lines: Vec<String> = tasks
             .iter()
-            .map(|t| format!("{} ({}) — {}", t.id, t.status.as_str(), t.summary))
+            .map(|t| format!("{} ({}): {}", t.id, t.status.as_str(), t.summary))
             .collect();
         lines.join("\n")
     }

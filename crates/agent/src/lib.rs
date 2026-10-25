@@ -270,7 +270,7 @@ pub async fn build_system_prompt(
         );
     parts.push(base.to_string());
 
-    // Global response style — applies to every message, not only written documents.
+    // Global response style: applies to every message, not only written documents.
     parts.push(
         "## Response Style\n\n\
         Keep every response terse and on point. Do not use filler phrases such as \"That's a \
@@ -301,7 +301,7 @@ pub async fn build_system_prompt(
         Guidelines:\n\
         - Update the list only after real progress. Do not re-call the tool when nothing meaningful has changed.\n\
         - Keep exactly one task in_progress when work is underway.\n\
-        - Only mark a task completed when it is fully done — not when you have merely planned or started it.\n\
+        - Only mark a task completed when it is fully done, not when you have merely planned or started it.\n\
         - Never mark a task done if tests are failing, implementation is partial, unresolved errors remain, \
           or required files/dependencies could not be found.\n\
         - If no available tool can move any task forward, stop and report where you are stuck \
@@ -322,28 +322,51 @@ pub async fn build_system_prompt(
             .to_string(),
     );
 
-    // Writing style: enforce clean, human-sounding output for all writing tasks
+    // Writing style and design fundamentals: apply to every response and artefact
     parts.push(
         "## Writing Style\n\n\
-        When writing any content (documentation, READMEs, code comments, commit messages, \
-        emails, reports, or any other text intended for human consumption), you must follow \
-        these rules strictly:\n\n\
-        1. **No emojis.** Never use emoji characters under any circumstances. \
-        Do not use them in documentation, commit messages, code comments, or any written output.\n\
-        2. **British English by default.** Use British spelling (colour, optimise, behaviour, \
-        initialised, licence as a noun, defence, centre) unless the existing content is clearly \
-        American English, in which case match the established convention.\n\
-        3. **No em-dashes.** Use commas, colons, parentheses, or rewrite the sentence instead. \
-        Em-dashes (--- or \u{2014}) are a telltale sign of AI-generated text.\n\
-        4. **Clear and concise.** Write in plain, direct language. Avoid filler phrases like \
-        \"it is worth noting that\", \"it is important to mention\", \"in order to\", \
-        \"basically\", or \"essentially\". Get to the point.\n\
-        5. **No AI tells.** Do not use phrases like \"Certainly!\", \"Of course!\", \
-        \"Great question!\", \"I'd be happy to\", \"Let me\", \"Here's\", or similar \
-        preamble. Start responses directly with the answer or action. The global Response Style \
-        rules above apply to every message, including this one.\n\
-        6. **Match existing tone.** When editing existing documents, match the voice and \
-        style already in use rather than imposing a different register."
+        These rules apply to everything you write: replies, documentation, READMEs, code \
+        comments, commit messages, UI copy and reports. Explicit instructions from the user or \
+        the project's context files take precedence.\n\n\
+        1. **British English by default.** Use British spelling and usage (colour, organise, \
+        behaviour, centre, defence, licence as a noun, practise as a verb, programme except for \
+        computer programs, -ise and -yse endings). This holds even when the user's own message \
+        uses American spelling: that is not a request to switch. Use American English only \
+        when the user explicitly asks for it or you are editing existing text that clearly \
+        uses it.\n\
+        2. **No em dashes.** Do not use em dashes (\u{2014}), en dashes as punctuation, or \
+        spaced hyphens in their place. Use a comma, colon, full stop or brackets, or rewrite \
+        the sentence.\n\
+        3. **No emojis** unless the user explicitly asks for them.\n\
+        4. **Plain and specific.** Lead with the point. Prefer short sentences and concrete \
+        detail over general claims. Do not restate the question, announce what you are about \
+        to do, or close with a recap of what you just said.\n\
+        5. **No stock phrasing.** Avoid words and constructions typical of generated text: \
+        delve, leverage, seamless, robust, comprehensive, crucial, pivotal, unlock, elevate, \
+        empower, streamline, tapestry, landscape, realm, \"it is worth noting\", \"in \
+        today's fast-paced world\", the \"not just X but Y\" and \"whether you are X or Y\" \
+        patterns in any wording, and lists of three added for rhythm. No preamble such as \"Certainly!\" or \"Great \
+        question\".\n\
+        6. **Restrained formatting.** Use headings and bullets when they aid scanning, not by \
+        default. Do not bold random phrases. Write prose when the content is an argument or \
+        explanation.\n\
+        7. **Match existing tone.** When editing existing text, keep its voice and register.\n\n\
+        ## Design\n\n\
+        When producing anything visual (UI, HTML/CSS, slides, documents, diagrams), apply \
+        design fundamentals. Follow the project's existing design system when there is one.\n\n\
+        - **Typography:** one or two typefaces at most. Use a consistent type scale and build \
+        hierarchy with size and weight, not colour alone. Body text at least 16px, line height \
+        1.4 to 1.6, line length 45 to 75 characters.\n\
+        - **Whitespace:** use a consistent spacing scale (multiples of 4 or 8px). Give content \
+        room to breathe. Group related elements by proximity and separate unrelated ones.\n\
+        - **Colour:** a restrained palette of neutrals, one accent and semantic colours for \
+        states. Meet WCAG AA contrast (4.5:1 for body text). Never convey meaning by colour \
+        alone. Support dark mode where the platform expects it.\n\
+        - **Layout and positioning:** align to a grid and keep alignment edges consistent. \
+        Establish a clear visual hierarchy with one primary action per view. Make layouts \
+        responsive down to phone widths.\n\
+        - **Avoid template defaults:** no gratuitous gradients, heavy shadows, glassmorphism or \
+        everything-centred layouts. Every decorative choice should serve the content."
             .to_string(),
     );
 

@@ -3062,7 +3062,7 @@ fn draw_autocomplete(
 }
 
 /// Colour a task line rendered by `TaskRegistry::render_for_tool_output`
-/// (e.g. `T1 (in_progress) — summary`).
+/// (e.g. `T1 (in_progress): summary`).
 fn todo_line_style(line: &str) -> Style {
     if line.contains("(done)") {
         Style::default().fg(Color::Green)

@@ -104,7 +104,7 @@ fn apply_budget(files: &[(String, String)], budget: &mut usize) -> Vec<String> {
             // If we have room for a meaningful chunk (>1KB), include a truncated version
             if *budget > 1024 {
                 let truncated: String = entry.chars().take(*budget).collect();
-                result.push(format!("{}...\n(truncated — file exceeds remaining context budget)", truncated));
+                result.push(format!("{}...\n(truncated: file exceeds remaining context budget)", truncated));
                 *budget = 0;
             }
             break;
