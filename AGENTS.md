@@ -16,13 +16,14 @@ Rusty is a terminal-based AI coding agent written in Rust. It connects to OpenAI
 
 ```
 rusty/
-├── Cargo.toml              # Workspace root (6 crates)
+├── Cargo.toml              # Workspace root (7 crates)
 ├── crates/
 │   ├── core/               # rusty-core: types, config, permissions, errors, credentials, setup wizard
 │   ├── provider/           # rusty-provider: OpenAI-compatible HTTP/SSE streaming client
 │   ├── tools/              # rusty-tools: all tool implementations
 │   ├── agent/              # rusty-agent: agent loop, compaction, sub-agent spawning
 │   ├── tui/                # rusty-tui: ratatui terminal UI (app state + rendering)
+│   ├── keymap/             # rusty-keymap: JSON-configurable terminal keybindings
 │   └── cli/                # rusty (binary): CLI args, main entry point, run modes
 └── site/                   # Landing page (index.html)
 ```
@@ -33,6 +34,7 @@ rusty/
 cli → agent → provider
   │       ↘ tools → core
   ├→ tui ──────→ core
+  ├→ keymap
   └→ core
 ```
 
@@ -53,6 +55,11 @@ cli → agent → provider
 | `context.rs` | `build_system_context()` (platform info, working directory, git status, recent commits, sandbox notice). `build_user_context()` (discovers AGENTS.md/CLAUDE.md/RUSTY.md files walking up from working dir to root, plus `~/.rusty/` global files, includes current date). Context files capped at 30KB (`CONTEXT_FILES_MAX_BYTES`). Content sanitised: `<` and `>` escaped to fullwidth equivalents to prevent XML tag breakout from the `<environment_context>` wrapper. |
 | `history.rs` | `ConversationSession` - save/load/list sessions in `~/.rusty/sessions/` as JSON files with id, messages, model, timestamps. `notes_path()` and `checkpoint_path()` helpers for sidecar files. |
 | `cost.rs` | `CostTracker` - Thread-safe token usage tracking (input/output totals, total thinking tokens). Estimates cost from configurable per-token pricing. Available via `/cost` slash command. |
+| `cancel.rs` | `CancelToken` - shared cooperative cancel token (`AtomicBool` + `Notify`): `cancel()` to signal, `cancelled()` to await. |
+| `task.rs` | `TaskRegistry` - SQLite-backed task store with hierarchical IDs (`T1`, `T1.1`), a status state machine (open, in_progress, blocked, done, abandoned) and an event log. IDs are per-session: tasks are keyed on `(session_id, id)`. Backs `todowrite` and replaces the flat JSON `Plan`. |
+| `plan.rs` | Legacy JSON `Plan` / `PlanItem` (status, priority) persisted per project; `load_plan_for_prompt()`. |
+| `session_memory.rs` | `SessionMemoryStore` / `SessionMemory` - memories extracted from session transcripts (`extract_memories_from_transcript()`), stored per project. |
+| `update.rs` | `check_for_update()` - compares `CARGO_PKG_VERSION` against the latest GitHub release (5s timeout); `current_version()`. |
 | `memory.rs` | `ProjectMemory` - per-project persistent memory storage in `~/.rusty/memory/{project_id}.json`. Project ID derived from git root slug. CRUD operations: save, search (substring), list, delete. 100-entry cap with FIFO eviction. Multi-layer content sanitisation: control character stripping, length truncation (2000 chars), XML tag neutralisation, regex injection pattern matching. |
 
 ### `crates/provider` - LLM API Client
@@ -62,7 +69,7 @@ cli → agent → provider
 | `types.rs` | `StreamEvent` enum (TextDelta, ThinkingDelta, ToolCallDelta, Usage, Done, Error), `MessageRequest`, `ToolDefinition` (API-facing), `ProviderConfig`. OpenAI wire format types (`OaiRequest`, `OaiMessage`, `OaiTool`, `OaiToolCall`, `OaiResponse`, `OaiStreamChunk`) and conversion helpers (`rusty_messages_to_oai`, `rusty_tools_to_oai`, `oai_response_to_rusty`). |
 | `openai.rs` | `OpenAiProvider` - OpenAI Chat Completions streaming implementation with SSE parsing, retry logic (exponential backoff for rate limits/529s), delta accumulation into `StreamEvent`s. |
 | `anthropic.rs` | `AnthropicProvider` - Claude Messages API streaming implementation. Native Anthropic wire format (content blocks, `message_delta`, `message_stop` events). Supports tool use, thinking/reasoning blocks, and the `x-api-key` authentication header. |
-| `mod.rs` | `LlmProvider` trait: `create_message_stream()`, `model()`, `messages()`. Factory function `create_provider()` selects the appropriate implementation based on `api_base` URL pattern. |
+| `mod.rs` | `LlmProvider` trait: `create_message_stream()`, `model()`, `messages()`. Factory function `create_provider()` selects the implementation from `ProviderType` (`create_provider_from_entry()` builds one from a `ModelEntry`). |
 
 All LLM communication is streaming-first. The provider yields `Stream<Item = Result<StreamEvent, RustyError>>` which the agent loop consumes.
 
@@ -74,12 +81,17 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `file_write.rs` | `file_write` | Write | Create/overwrite files, auto-creates parent dirs. Path sandbox. |
 | `file_edit.rs` | `file_edit` | Write | Exact string match-and-replace editing. Path sandbox. |
 | `apply_patch.rs` | `apply_patch` | Write | Apply unified diff patches. Supports `*** Begin Patch` / `*** End Patch` format with `*** Add File`, `*** Update File`, `*** Delete File` sections. Fuzzy matching for context lines (3-line search window). Uses `similar` crate for diff stats. Path sandbox. |
-| `bash.rs` | `bash` | Classified per-command | Execute shell commands. Read-only commands (ls, git status, cargo check, etc.) bypass write permissions via `classify_bash_command`. Path sandboxing: blocks commands with absolute paths or redirect targets outside the working directory. |
+| `bash.rs` | `bash` | Classified per-command | Execute shell commands. Each command runs in its own process group, killed on timeout or cancel. Read-only commands (ls, git status, cargo check, etc.) bypass write permissions via `classify_bash_command`. Path sandboxing: blocks commands with absolute paths or redirect targets outside the working directory. |
 | `grep.rs` | `grep` | ReadOnly | Regex search across files with glob filtering. Caps at 200 results. Skips binary extensions. |
 | `glob.rs` | `glob` | ReadOnly | File pattern matching. |
 | `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via reqwest (30s timeout). Configurable max_length (default 10000 chars). Comprehensive SSRF protection (see Security section). |
-| `todowrite.rs` | `todowrite` | None | Structured task list management. Accepts array of todo items with content, status (pending/in_progress/completed/cancelled), and priority (high/medium/low). Renders grouped by priority with status indicators. Persists across conversation. |
+| `todowrite.rs` | `todowrite` | None | Task list management backed by core `TaskRegistry` (per-session). Actions: `create` (alias `add`), `list`, `start`, `block`, `unblock`, `done`, `abandon`, `rename`, `reopen`. Args may be a nested `operation` object, flat `{action, id, summary, status}`, or a legacy `todos` list that replaces the whole list (omitted tasks are abandoned). |
 | `note.rs` | `note` | None | Session-scoped scratchpad for recording observations. Appends to `~/.rusty/sessions/{id}.notes.md`. Content is processed during checkpoint extraction and cleared after use. |
+| `plan_mode.rs` | `enter_plan_mode`, `exit_plan_mode` | - | Switch the session into and out of plan (read-only) mode. |
+| `question.rs` | `question` | - | Ask the user a question via `QuestionCallback` and return the answer. |
+| `background.rs` | (no tool) | - | `BackgroundManager` - tracks background sub-agent tasks (status, result). |
+| `task_output.rs` | `task_output` | - | Query status/result of a background sub-agent task. |
+| `task_stop.rs` | `task_stop` | - | Cancel a running background sub-agent task. |
 | `agent.rs` | `agent` | None | Spawn sub-agents via `SubAgentFn` callback. Accepts `task` (required) and `context` (optional). |
 | `memory.rs` | `memory` | None | Per-project persistent memory. Actions: `save`, `search`, `list`, `delete`. Backed by `ProjectMemory` in core (`~/.rusty/memory/{project_id}.json`). Capped at 100 entries per project with FIFO eviction. Content sanitised on input and output to prevent prompt injection. |
 
@@ -87,7 +99,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 
 **`resolve_path(path_str, working_dir)`** in `mod.rs`: canonicalizes paths, resolves symlinks and `..`, rejects paths that escape the working directory. TOCTOU-hardened: avoids `path.exists()` before `canonicalize()` to prevent symlink races. Pre-write verification via `verify_not_escaping_symlink()`, post-write re-verification via `verify_no_symlink_escape()`. Used by all file tools and `apply_patch`.
 
-**`all_tools()`** returns all built-in tools except `agent` and `memory` (both are wired separately by the CLI with custom callbacks).
+**`all_tools()`** returns the stateless built-in tools (apply_patch, bash, file_read/edit/write, glob, grep, web_fetch, plan mode, question). `todowrite`, `note`, `agent`, `memory`, `task_output` and `task_stop` need session state or callbacks and are wired separately by the CLI. `explore_tools()` returns the read-only set (file_read, glob, grep, web_fetch) for explore sub-agents.
 
 ### `crates/agent` - Agent Loop
 
@@ -95,7 +107,15 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 |---|---|
 | `loop.rs` | `Agent` struct - core orchestrator. Holds provider, tools, config, message history, permission state. `run()` method: send messages, stream response, accumulate text + tool calls, execute tools concurrently via `JoinSet`, repeat until done/max turns/cancellation. Supports `cancel()` via `AtomicBool`. |
 | `compact.rs` | Multi-tier auto-compaction: Tier 1 (25% context) micro-compacts old tool results, Tier 2 (50%) extracts structured checkpoint to `checkpoint.md`, Tier 3 (75%) summarizes old messages via LLM. Integrates with notes scratchpad. |
+| `checkpoint_writer.rs` | `spawn_checkpoint_writer()` - background sub-agent task that extracts structured checkpoint state without blocking the main loop. |
 | `lib.rs` | `spawn_subagent()` (same-process tokio task, BypassPermissions), `make_agent_tool()` (constructs `AgentTool` with spawn callback), `build_system_prompt()` (assembles system prompt with tool descriptions, permissions, platform info, date, optional plan-with-tasks instructions). |
+
+**Loop behaviour:**
+- The current task list is injected into the system prompt each turn.
+- Default `max_turns` is 200.
+- Bounded auto-continuation: up to 3 "keep going" nudges when the model stops mid-run, up to 2 retries on empty (or reasoning-only) responses, and up to 3 automatic continuations when a text response is truncated by `max_tokens`.
+- A stream that yields no content for 5 minutes is aborted.
+- Auto-compaction failure is non-fatal; the run continues. Compaction splits on clean turn boundaries.
 
 **Agent loop flow:**
 1. Add user message to history
@@ -121,6 +141,8 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 |---|---|
 | `app.rs` | `AppState` (input buffer, cursor, messages, streaming state, permission prompts, history navigation, scroll). `AgentEvent` enum (TextDelta, ThinkingDelta, ToolCallStart, ToolCallDelta, ToolResult, Done, Error). `SlashCommand` enum with tab-completion. Key handling with command history. |
 | `ui.rs` | Ratatui rendering: chat area with markdown support (bold, italic, code blocks, tables with box-drawing), input box with cursor, status bar (model, permissions, token usage), permission prompt overlay. Color-coded roles. |
+| `model_registry.rs` | Wraps core `ModelEntry` with display helpers for the settings overlay: `default_model_list()`, `host_of()`, `format_tokens()`, thinking-level cycling. |
+| `sidebar.rs` | Sidebar panel: file tree, tool summary and task list (`SidebarState`, `SidebarPanel`). |
 | `lib.rs` | Generic `run()` function (unused by CLI, which implements its own loop). |
 
 **Slash commands** (available in both TUI and headless stdin modes):
@@ -129,7 +151,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 |---|---|---|
 | `/help` | `/h`, `/?` | List available commands |
 | `/init` | | Generate AGENTS.md for the current codebase |
-| `/resume` | `/r` | Resume a saved session (interactive picker in TUI) |
+| `/resume` | `/r` | Resume a saved session (interactive picker in TUI; in headless stdin mode it switches the active session) |
 | `/sessions` | `/s` | List saved sessions |
 | `/compact` | | Force conversation compaction |
 | `/clear` | | Clear screen |
@@ -139,6 +161,15 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `/permissions` | `/perms` | View or revoke always-approved tool permissions |
 | `/settings` | | Open model registry and general settings overlay (TUI only) |
 | `/quit` | `/exit`, `/q` | Exit (saves session) |
+
+### `crates/keymap` - Keybindings
+
+| File | Purpose |
+|---|---|
+| `types.rs` | `KeyEvent`, `KeyCombo`, `Modifier`, `BindingEntry`, `BindingConfig`, `TerminalOverride`. |
+| `parse.rs` | `parse_key_bytes()` - raw terminal bytes to `KeyEvent`. |
+| `keymap.rs` | `KeyMap` - binding lookup built from `BindingConfig` (JSON). |
+| `dispatcher.rs` | `Dispatcher` - resolves key events to actions, including multi-key (prefix) sequences. |
 
 ### `crates/cli` - Binary Entry Point
 
@@ -217,13 +248,13 @@ When given multi-step work, follow this discipline:
 
 8. **Session persistence**: Full message history saved to `~/.rusty/sessions/` as JSON, resumable via `--resume` or `/resume`. Sidecar files: `{id}.notes.md` (scratchpad) and `{id}.checkpoint.md` (structured state) are cleaned up with the session.
 
-8. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory. Bash tool uses `check_bash_paths()` to block commands with path arguments or redirect targets outside the working directory.
+9. **Path sandboxing**: File tools use `resolve_path()` to canonicalize and validate all paths stay within the working directory. Bash tool uses `check_bash_paths()` to block commands with path arguments or redirect targets outside the working directory.
 
-9. **Wire format conversion**: Internal `Message`/`ToolDefinition` types are converted to/from OpenAI wire format via helpers in `provider/types.rs`. Supports reasoning content (`reasoning_content` field for MiMo/DeepSeek models).
+10. **Wire format conversion**: Internal `Message`/`ToolDefinition` types are converted to/from OpenAI wire format via helpers in `provider/types.rs`. Supports reasoning content (`reasoning_content` field for MiMo/DeepSeek models).
 
-10. **Multi-provider support**: The `LlmProvider` trait abstracts LLM communication. Built-in providers include `OpenAiProvider` (OpenAI-compatible Chat Completions with SSE) and `AnthropicProvider` (Claude Messages API with Anthropic-native wire format). Both support streaming, retry logic, and tool calling.
+11. **Multi-provider support**: The `LlmProvider` trait abstracts LLM communication. Built-in providers include `OpenAiProvider` (OpenAI-compatible Chat Completions with SSE) and `AnthropicProvider` (Claude Messages API with Anthropic-native wire format). Both support streaming, retry logic, and tool calling.
 
-11. **Tiered credential management**: `CredentialManager` resolves API keys through env vars, OS keyring, and settings file. The setup wizard can store keys in the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) or in the settings file.
+12. **Tiered credential management**: `CredentialManager` resolves API keys through env vars, OS keyring, and settings file. The setup wizard can store keys in the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) or in the settings file.
 
 ---
 
@@ -289,7 +320,7 @@ The `models` array in `settings.json` defines available LLM models. Each `ModelE
 
 The `active_model` field selects which model entry is used. Per-model API keys can be stored in `api_keys` (keyed by model ID). The TUI `/settings` command provides a visual editor for the model registry.
 
-Note: `ProviderType::Anthropic` is defined and deserialisable but the `AnthropicProvider` implementation is not yet complete. Use `OpenAI`-compatible endpoints for all currently supported providers.
+Note: `ProviderType::Anthropic` selects `AnthropicProvider` (Messages API wire format, `x-api-key` auth). It also serves Anthropic-compatible endpoints such as Kimi's coding API.
 
 ### Thinking Levels
 
@@ -491,6 +522,6 @@ TUI Display ← Agent Events ← Tool Execution ← Tool Calls
 
 ---
 
-*Last updated: June 2026*
-*Version: 0.2.1*
+*Last updated: October 2026*
+*Version: 0.2.2*
 *Rust edition: 2021*
