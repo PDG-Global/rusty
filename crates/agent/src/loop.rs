@@ -248,6 +248,19 @@ impl Agent {
         self.session_id = session_id;
     }
 
+    /// Switch the session this agent tracks tasks under (e.g. after /resume).
+    pub fn set_session_id(&mut self, session_id: String) {
+        self.session_id = session_id;
+    }
+
+    /// The current session's task list, rendered as `T1 (open) — summary` lines.
+    pub fn render_tasks(&self) -> String {
+        self.task_registry
+            .as_ref()
+            .map(|r| r.render_for_tool_output(&self.session_id))
+            .unwrap_or_default()
+    }
+
     /// Set the path to the session-scoped notes scratchpad file.
     pub fn set_notes_path(&mut self, path: PathBuf) {
         self.notes_path = Some(path);
@@ -258,9 +271,8 @@ impl Agent {
         self.checkpoint_path = Some(path);
     }
 
-    /// Refresh the system prompt. The plan is no longer injected here —
-    /// it is returned by the todowrite tool so the model sees it in
-    /// conversation history instead of bloating the system prompt every turn.
+    /// Refresh the system prompt, including the current task list so the model
+    /// always sees up-to-date task state (it survives compaction and resume).
     async fn refresh_system_prompt(&mut self) {
         let mut prompt = self.base_system_prompt.clone();
         // Inject permission-mode guidance so the model knows whether it should
@@ -270,6 +282,18 @@ impl Agent {
         {
             prompt.push_str("\n\n");
             prompt.push_str(mode_text);
+        }
+
+        if let Some(registry) = &self.task_registry {
+            let tasks = registry.format_for_prompt(&self.session_id);
+            if !tasks.is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&tasks);
+                prompt.push_str(
+                    "\nKeep this list current with todowrite: mark a task in_progress before \
+                     starting it and done as soon as it is finished.",
+                );
+            }
         }
 
         // Checkpoint context is injected as a synthetic user message at the
@@ -706,16 +730,15 @@ impl Agent {
                 if let Some(registry) = &self.task_registry {
                     let incomplete = registry.incomplete_details(&self.session_id);
                     if !incomplete.is_empty() {
-                        let reminder = format!(
+                        let reminder = concat!(
                             "\n\nThe todo list has not been updated recently. \
                              If you are working on tasks that benefit from progress tracking, \
                              consider using todowrite to update task status. \
                              Also consider clearing or renaming tasks if they have become stale. \
                              This is a gentle reminder; ignore it if not applicable. \
-                             Make sure that you NEVER mention this reminder to the user.\n\n{}",
-                            registry.render_for_tool_output(&self.session_id)
+                             Make sure that you NEVER mention this reminder to the user."
                         );
-                        self.system_prompt.push_str(&reminder);
+                        self.system_prompt.push_str(reminder);
                     }
                 }
             }

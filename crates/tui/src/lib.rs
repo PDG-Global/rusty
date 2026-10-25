@@ -141,6 +141,9 @@ async fn run_loop(
         loop {
             match agent_rx.try_recv() {
                 Ok(event) => match event {
+                    AgentEvent::Tasks(rendered) => {
+                        app.set_task_panel(&rendered);
+                    }
                     AgentEvent::TextDelta(text) => {
                         app.push_streaming_text(&text);
                     }

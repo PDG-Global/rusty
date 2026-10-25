@@ -2,25 +2,56 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use async_trait::async_trait;
-use rusty_core::task::TaskRegistry;
+use rusty_core::task::{TaskRegistry, TaskStatus};
 use rusty_core::{PermissionLevel, RustyError};
 use serde_json::{json, Value};
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::{Tool, ToolContext, ToolResult};
 
 pub struct TodoWriteTool {
     registry: Arc<TaskRegistry>,
-    session_id: String,
+    session_id: Arc<RwLock<String>>,
 }
 
 impl TodoWriteTool {
     pub fn new(registry: Arc<TaskRegistry>, session_id: String) -> Self {
         Self {
             registry,
-            session_id,
+            session_id: Arc::new(RwLock::new(session_id)),
         }
+    }
+
+    /// Shared handle to the active session id; swap its value to change sessions (e.g. on /resume).
+    pub fn session_handle(&self) -> Arc<RwLock<String>> {
+        self.session_id.clone()
+    }
+
+    fn current_session(&self) -> String {
+        self.session_id
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|e| e.into_inner().clone())
+    }
+}
+
+const FORMAT_HELP: &str = "Expected {\"operation\": {\"action\": ..., \"id\": ..., \"summary\": ...}}, \
+flat args like {\"action\": \"done\", \"id\": \"T2\"}, or legacy {\"todos\": [...]}. \
+Actions: create, list, start, block, unblock, done, abandon, rename, reopen.";
+
+fn terr<E: std::fmt::Display>(e: E) -> RustyError {
+    RustyError::Tool(e.to_string())
+}
+
+/// Normalise action synonyms to the canonical action names.
+fn canonical_action(a: &str) -> String {
+    match a.trim().to_lowercase().as_str() {
+        "add" | "new" => "create".into(),
+        "complete" | "completed" | "finish" => "done".into(),
+        "cancel" | "cancelled" | "canceled" => "abandon".into(),
+        "update" | "status" | "set_status" | "set" => "set_status".into(),
+        other => other.to_string(),
     }
 }
 
@@ -33,20 +64,19 @@ impl Tool for TodoWriteTool {
     fn description(&self) -> &str {
         "Manage a structured task list for tracking progress through multi-step work. \
          Tasks have stable IDs (T1, T1.1, T2, ...) that do not change when other tasks \
-         are added or completed. The list is persisted to disk and injected into your \
-         system prompt each turn.\n\n\
-         Operations:\n\
+         are added or completed. The current task list is shown to you in the system prompt.\n\n\
+         Operations (pass as {\"action\": ..., \"id\": ..., \"summary\": ...}):\n\
          - create: register a new task. summary required. optional: parent_id.\n\
-         - list: enumerate tasks (defaults to active only).\n\
-         - start: mark a task in_progress. id required.\n\
+         - list: enumerate tasks.\n\
+         - start: mark a task in_progress (also reopens a done/abandoned task). id required.\n\
          - block: mark a task blocked. id required. optional: reason.\n\
          - unblock: mark blocked task as open. id required.\n\
          - done: mark a task complete. id required. optional: summary.\n\
          - abandon: drop a task without completing. id required. optional: reason.\n\
-         - rename: change a task's summary. id + summary required.\n\n\
-         Status lifecycle: open ⇄ in_progress → blocked → done | abandoned.\n\
-         Keep one task in_progress when work is underway. Only mark done when fully complete.\n\n\
-         Backward compatible: passing {\"todos\": [...]} auto-creates tasks from the list."
+         - rename: change a task's summary. id + summary required.\n\
+         - reopen: reopen a done/abandoned task. id required.\n\n\
+         Keep one task in_progress when work is underway. Only mark done when fully complete.\n\
+         Legacy: {\"todos\": [...]} replaces the whole list (tasks omitted from it are abandoned)."
     }
 
     fn input_schema(&self) -> Value {
@@ -55,16 +85,16 @@ impl Tool for TodoWriteTool {
             "properties": {
                 "operation": {
                     "type": "object",
-                    "description": "Task operation to perform.",
+                    "description": "Task operation to perform. The same fields may also be given at the top level.",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["create", "list", "start", "block", "unblock", "done", "abandon", "rename"],
+                            "enum": ["create", "list", "start", "block", "unblock", "done", "abandon", "rename", "reopen"],
                             "description": "The operation to perform"
                         },
                         "id": {
                             "type": "string",
-                            "description": "Task id, e.g. T1 or T1.1. Required for start/block/unblock/done/abandon/rename."
+                            "description": "Task id, e.g. T1 or T1.1. Required for all but create/list."
                         },
                         "summary": {
                             "type": "string",
@@ -81,9 +111,13 @@ impl Tool for TodoWriteTool {
                     },
                     "required": ["action"]
                 },
+                "action": {"type": "string", "description": "Flat alternative to operation.action."},
+                "id": {"type": "string", "description": "Flat alternative to operation.id."},
+                "summary": {"type": "string", "description": "Flat alternative to operation.summary."},
+                "status": {"type": "string", "description": "With id: set status (open, in_progress, blocked, done, abandoned)."},
                 "todos": {
                     "type": "array",
-                    "description": "(Legacy) Full list of TODO items. Auto-creates tasks from the list.",
+                    "description": "(Legacy) Full list of TODO items; replaces the task list.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -112,121 +146,126 @@ impl Tool for TodoWriteTool {
     }
 
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolResult, RustyError> {
-        // Check for new-style operation first
-        if let Some(op) = input.get("operation") {
-            return self.execute_operation(op).await;
+        let sid = self.current_session();
+
+        // Nested operation object
+        if let Some(op) = input.get("operation").filter(|v| v.is_object()) {
+            return self.execute_operation(&sid, op);
         }
 
-        // Backward-compatible: legacy {todos: [...]} format
+        // Flat args: top-level action (or id+status)
+        let has_action = input.get("action").and_then(|v| v.as_str()).is_some();
+        let has_id_status = input.get("id").is_some() && input.get("status").is_some();
+        if has_action || has_id_status {
+            return self.execute_operation(&sid, &input);
+        }
+
+        // Legacy {todos: [...]}
         if let Some(todos) = input.get("todos").and_then(|v| v.as_array()) {
-            return self.execute_legacy_todos(todos).await;
+            return self.execute_legacy_todos(&sid, todos);
         }
 
-        // No operation or todos — just list current tasks
-        let rendered = self.registry.render_for_tool_output(&self.session_id);
-        Ok(ToolResult::success(rendered))
+        // Empty call: list current tasks
+        let empty = match &input {
+            Value::Null => true,
+            Value::Object(m) => m.is_empty(),
+            _ => false,
+        };
+        if empty {
+            return Ok(ToolResult::success(self.registry.render_for_tool_output(&sid)));
+        }
+
+        Err(RustyError::Tool(format!(
+            "Unrecognised todowrite input. {FORMAT_HELP}"
+        )))
     }
 }
 
 impl TodoWriteTool {
-    async fn execute_operation(&self, op: &Value) -> Result<ToolResult, RustyError> {
-        let action = op
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RustyError::Tool("Missing 'action' in operation".into()))?;
+    fn execute_operation(&self, sid: &str, op: &Value) -> Result<ToolResult, RustyError> {
+        let raw_action = op.get("action").and_then(|v| v.as_str());
+        let action = match raw_action {
+            Some(a) => canonical_action(a),
+            None if op.get("id").is_some() && op.get("status").is_some() => "set_status".into(),
+            None => {
+                return Err(RustyError::Tool(format!(
+                    "Missing 'action' in operation. {FORMAT_HELP}"
+                )))
+            }
+        };
+        let action = action.as_str();
 
-        let sid = &self.session_id;
+        let transition_output = |task_id: &str, label: &str| {
+            let rendered = self.registry.render_for_tool_output(sid);
+            Ok(ToolResult::success(format!("{task_id} → {label}\n\n{rendered}")))
+        };
 
         match action {
             "create" => {
                 let summary = op
                     .get("summary")
                     .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| RustyError::Tool("create requires 'summary'".into()))?;
                 let parent_id = op.get("parent_id").and_then(|v| v.as_str());
                 let task = self
                     .registry
                     .create(sid, summary, parent_id, None)
-                    .map_err(|e| RustyError::Tool(format!("Failed to create task: {e}")))?;
+                    .map_err(terr)?;
                 let rendered = self.registry.render_for_tool_output(sid);
                 Ok(ToolResult::success(format!(
                     "Created {} — {}\n\n{}",
                     task.id, task.summary, rendered
                 )))
             }
-            "list" => {
-                let rendered = self.registry.render_for_tool_output(sid);
-                Ok(ToolResult::success(rendered))
-            }
+            "list" => Ok(ToolResult::success(self.registry.render_for_tool_output(sid))),
             "start" => {
                 let id = require_id(op)?;
-                let task = self
-                    .registry
-                    .start(sid, id, None)
-                    .map_err(|e| RustyError::Tool(format!("Failed to start task: {e}")))?;
-                let rendered = self.registry.render_for_tool_output(sid);
-                Ok(ToolResult::success(format!(
-                    "{} → {}\n\n{}",
-                    task.id,
-                    task.status.as_str(),
-                    rendered
-                )))
+                let task = self.registry.start(sid, id, None).map_err(terr)?;
+                transition_output(&task.id, task.status.as_str())
+            }
+            "reopen" => {
+                let id = require_id(op)?;
+                let task = self.registry.reopen(sid, id).map_err(terr)?;
+                transition_output(&task.id, task.status.as_str())
             }
             "block" => {
                 let id = require_id(op)?;
                 let reason = op.get("reason").and_then(|v| v.as_str());
-                let task = self
-                    .registry
-                    .block(sid, id, reason)
-                    .map_err(|e| RustyError::Tool(format!("Failed to block task: {e}")))?;
-                let rendered = self.registry.render_for_tool_output(sid);
-                Ok(ToolResult::success(format!(
-                    "{} → {}\n\n{}",
-                    task.id,
-                    task.status.as_str(),
-                    rendered
-                )))
+                let task = self.registry.block(sid, id, reason).map_err(terr)?;
+                transition_output(&task.id, task.status.as_str())
             }
             "unblock" => {
                 let id = require_id(op)?;
                 let reason = op.get("reason").and_then(|v| v.as_str());
-                let task = self
-                    .registry
-                    .unblock(sid, id, reason)
-                    .map_err(|e| RustyError::Tool(format!("Failed to unblock task: {e}")))?;
-                let rendered = self.registry.render_for_tool_output(sid);
-                Ok(ToolResult::success(format!(
-                    "{} → {}\n\n{}",
-                    task.id,
-                    task.status.as_str(),
-                    rendered
-                )))
+                let task = self.registry.unblock(sid, id, reason).map_err(terr)?;
+                transition_output(&task.id, task.status.as_str())
             }
             "done" => {
                 let id = require_id(op)?;
                 let summary = op.get("summary").and_then(|v| v.as_str());
-                let task = self
-                    .registry
-                    .done(sid, id, summary)
-                    .map_err(|e| RustyError::Tool(format!("Failed to complete task: {e}")))?;
-                let rendered = self.registry.render_for_tool_output(sid);
-                Ok(ToolResult::success(format!(
-                    "{} → done\n\n{}",
-                    task.id, rendered
-                )))
+                let task = self.registry.done(sid, id, summary).map_err(terr)?;
+                transition_output(&task.id, "done")
             }
             "abandon" => {
                 let id = require_id(op)?;
                 let reason = op.get("reason").and_then(|v| v.as_str());
-                let task = self
-                    .registry
-                    .abandon(sid, id, reason)
-                    .map_err(|e| RustyError::Tool(format!("Failed to abandon task: {e}")))?;
-                let rendered = self.registry.render_for_tool_output(sid);
-                Ok(ToolResult::success(format!(
-                    "{} → abandoned\n\n{}",
-                    task.id, rendered
-                )))
+                let task = self.registry.abandon(sid, id, reason).map_err(terr)?;
+                transition_output(&task.id, "abandoned")
+            }
+            "set_status" => {
+                let id = require_id(op)?;
+                let raw = op
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RustyError::Tool("status update requires 'status'".into()))?;
+                let status = TaskStatus::parse(raw).ok_or_else(|| {
+                    RustyError::Tool(format!(
+                        "Unknown status '{raw}'. Use: open, in_progress, blocked, done, abandoned"
+                    ))
+                })?;
+                let task = self.registry.set_status(sid, id, status).map_err(terr)?;
+                transition_output(&task.id, task.status.as_str())
             }
             "rename" => {
                 let id = require_id(op)?;
@@ -234,10 +273,7 @@ impl TodoWriteTool {
                     .get("summary")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| RustyError::Tool("rename requires 'summary'".into()))?;
-                let task = self
-                    .registry
-                    .rename(sid, id, summary)
-                    .map_err(|e| RustyError::Tool(format!("Failed to rename task: {e}")))?;
+                let task = self.registry.rename(sid, id, summary).map_err(terr)?;
                 let rendered = self.registry.render_for_tool_output(sid);
                 Ok(ToolResult::success(format!(
                     "{} renamed → \"{}\"\n\n{}",
@@ -245,109 +281,83 @@ impl TodoWriteTool {
                 )))
             }
             other => Err(RustyError::Tool(format!(
-                "Unknown operation: '{other}'. Use: create, list, start, block, unblock, done, abandon, rename"
+                "Unknown operation: '{other}'. Use: create, list, start, block, unblock, done, abandon, rename, reopen"
             ))),
         }
     }
 
-    /// Backward-compatible: create tasks from a legacy {todos: [...]} array.
-    /// Maps old status values to new ones and creates tasks in the registry.
-    async fn execute_legacy_todos(&self, todos: &[Value]) -> Result<ToolResult, RustyError> {
-        let sid = &self.session_id;
+    /// Legacy {todos: [...]}: a full replacement of the session's task list.
+    /// Matches existing tasks by normalised summary, creates new ones, applies
+    /// statuses, and abandons non-terminal tasks missing from the list.
+    fn execute_legacy_todos(&self, sid: &str, todos: &[Value]) -> Result<ToolResult, RustyError> {
+        // Validate everything first so a bad status changes nothing.
+        let mut items: Vec<(String, TaskStatus)> = Vec::new();
+        for item in todos {
+            let summary = item
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if summary.is_empty() {
+                continue;
+            }
+            let status = match item.get("status").and_then(|v| v.as_str()) {
+                None => TaskStatus::Open,
+                Some(raw) => TaskStatus::parse(raw).ok_or_else(|| {
+                    RustyError::Tool(format!(
+                        "Unknown status '{raw}' for todo '{summary}'. Use: pending, in_progress, completed, cancelled, blocked"
+                    ))
+                })?,
+            };
+            items.push((summary, status));
+        }
 
-        // Get existing tasks to avoid re-creating duplicates
-        let existing = self
-            .registry
-            .list(sid, None, true)
-            .unwrap_or_default();
+        let existing = self.registry.list(sid, None, true).map_err(terr)?;
+        let mut matched: Vec<String> = Vec::new();
 
-        // If there are no existing tasks, create from the list
-        if existing.is_empty() {
-            for item in todos {
-                let summary = item
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if summary.is_empty() {
-                    continue;
+        for (summary, status) in &items {
+            let key = normalize(summary);
+            let found = existing
+                .iter()
+                .find(|t| !matched.contains(&t.id) && normalize(&t.summary) == key);
+            match found {
+                Some(task) => {
+                    matched.push(task.id.clone());
+                    if task.status != *status {
+                        self.registry
+                            .set_status(sid, &task.id, status.clone())
+                            .map_err(terr)?;
+                    }
                 }
-                let status_str = item
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("pending");
-
-                let task = self
-                    .registry
-                    .create(sid, &summary, None, None)
-                    .map_err(|e| RustyError::Tool(format!("Failed to create task: {e}")))?;
-
-                // Apply status if not default "pending"
-                match status_str {
-                    "in_progress" => {
-                        let _ = self.registry.start(sid, &task.id, None);
+                None => {
+                    let task = self.registry.create(sid, summary, None, None).map_err(terr)?;
+                    matched.push(task.id.clone());
+                    if *status != TaskStatus::Open {
+                        self.registry
+                            .set_status(sid, &task.id, status.clone())
+                            .map_err(terr)?;
                     }
-                    "completed" | "done" => {
-                        let _ = self.registry.done(sid, &task.id, None);
-                    }
-                    "cancelled" | "canceled" => {
-                        let _ = self.registry.abandon(sid, &task.id, None);
-                    }
-                    _ => {} // "pending" is the default
                 }
             }
-        } else {
-            // Tasks already exist — update statuses based on the todos list
-            // Match by summary text (best effort)
-            for item in todos {
-                let summary = item
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let status_str = item
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("pending");
+        }
 
-                if let Some(task) = existing.iter().find(|t| t.summary == summary) {
-                    match status_str {
-                        "in_progress" if task.status != rusty_core::task::TaskStatus::InProgress => {
-                            let _ = self.registry.start(sid, &task.id, None);
-                        }
-                        "completed" | "done" if !task.status.is_terminal() => {
-                            let _ = self.registry.done(sid, &task.id, None);
-                        }
-                        "cancelled" | "canceled" if !task.status.is_terminal() => {
-                            let _ = self.registry.abandon(sid, &task.id, None);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    // New task not in registry — create it
-                    let task = self
-                        .registry
-                        .create(sid, &summary, None, None)
-                        .map_err(|e| RustyError::Tool(format!("Failed to create task: {e}")))?;
-                    match status_str {
-                        "in_progress" => {
-                            let _ = self.registry.start(sid, &task.id, None);
-                        }
-                        "completed" | "done" => {
-                            let _ = self.registry.done(sid, &task.id, None);
-                        }
-                        "cancelled" | "canceled" => {
-                            let _ = self.registry.abandon(sid, &task.id, None);
-                        }
-                        _ => {}
-                    }
-                }
+        // Full replacement: abandon live tasks that were left out
+        for task in &existing {
+            if !task.status.is_terminal() && !matched.contains(&task.id) {
+                self.registry
+                    .abandon(sid, &task.id, Some("removed from todo list"))
+                    .map_err(terr)?;
             }
         }
 
         let rendered = self.registry.render_for_tool_output(sid);
         Ok(ToolResult::success(format!("Todo list updated.\n{}", rendered)))
     }
+}
+
+fn normalize(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 fn require_id(op: &Value) -> Result<&str, RustyError> {
@@ -471,10 +481,146 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_no_operation_lists_tasks() {
+    async fn test_empty_input_lists_tasks() {
         let (tool, _dir) = make_tool();
         let result = tool.execute(json!({}), &ctx()).await.unwrap();
         assert!(result.content.contains("No tasks"));
+    }
+
+    #[tokio::test]
+    async fn test_unrecognised_input_is_error() {
+        let (tool, _dir) = make_tool();
+        let err = tool
+            .execute(json!({"foo": "bar"}), &ctx())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Expected"));
+    }
+
+    #[tokio::test]
+    async fn test_flat_args() {
+        let (tool, _dir) = make_tool();
+        let r = tool
+            .execute(json!({"action": "add", "summary": "Flat task"}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.content.contains("T1"));
+        let r = tool
+            .execute(json!({"action": "done", "id": "T1"}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.content.contains("T1 (done)"));
+        let r = tool
+            .execute(json!({"id": "T1", "status": "in_progress"}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.content.contains("T1 (in_progress)"));
+        // Errors surface clearly
+        let err = tool
+            .execute(json!({"action": "start", "id": "T9"}), &ctx())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No task T9 in this session"));
+    }
+
+    #[tokio::test]
+    async fn test_done_twice_errors_and_reopen() {
+        let (tool, _dir) = make_tool();
+        tool.execute(json!({"action": "create", "summary": "A"}), &ctx())
+            .await
+            .unwrap();
+        tool.execute(json!({"action": "done", "id": "T1"}), &ctx())
+            .await
+            .unwrap();
+        let err = tool
+            .execute(json!({"action": "done", "id": "T1"}), &ctx())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("T1 is already done"));
+        let r = tool
+            .execute(json!({"action": "reopen", "id": "T1"}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.content.contains("T1 (open)"));
+    }
+
+    #[tokio::test]
+    async fn test_session_handle_swap() {
+        let (tool, _dir) = make_tool();
+        tool.execute(json!({"action": "create", "summary": "A"}), &ctx())
+            .await
+            .unwrap();
+        *tool.session_handle().write().unwrap() = "other".to_string();
+        let r = tool.execute(json!({}), &ctx()).await.unwrap();
+        assert!(r.content.contains("No tasks"));
+        let r = tool
+            .execute(json!({"action": "create", "summary": "B"}), &ctx())
+            .await
+            .unwrap();
+        assert!(r.content.contains("Created T1"));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_status_synonyms_and_unknown() {
+        let (tool, _dir) = make_tool();
+        let r = tool
+            .execute(
+                json!({"todos": [
+                    {"content": "A", "status": "todo"},
+                    {"content": "B", "status": "active"},
+                    {"content": "C", "status": "done"},
+                    {"content": "D", "status": "canceled"},
+                    {"content": "E", "status": "blocked"}
+                ]}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert!(r.content.contains("T1 (open)"));
+        assert!(r.content.contains("T2 (in_progress)"));
+        assert!(r.content.contains("T3 (done)"));
+        assert!(r.content.contains("T4 (abandoned)"));
+        assert!(r.content.contains("T5 (blocked)"));
+
+        let err = tool
+            .execute(json!({"todos": [{"content": "A", "status": "wat"}]}), &ctx())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Unknown status 'wat'"));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_matching_and_replacement() {
+        let (tool, _dir) = make_tool();
+        tool.execute(
+            json!({"todos": [
+                {"content": "Write code", "status": "pending"},
+                {"content": "Old item", "status": "pending"}
+            ]}),
+            &ctx(),
+        )
+        .await
+        .unwrap();
+        let r = tool
+            .execute(
+                json!({"todos": [
+                    {"content": "  write   CODE ", "status": "completed"},
+                    {"content": "New item", "status": "pending"}
+                ]}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        // Matched case/whitespace-insensitively, not duplicated
+        assert!(r.content.contains("T1 (done)"));
+        // Omitted task abandoned, new one created
+        assert!(r.content.contains("T2 (abandoned)"));
+        assert!(r.content.contains("T3 (open)"));
+        assert!(!r.content.contains("T4"));
     }
 
     #[tokio::test]

@@ -557,6 +557,7 @@ async fn main() -> Result<()> {
     tools.push(Box::new(memory_tool));
 
     let task_tool = rusty_tools::todowrite::TodoWriteTool::new(task_registry.clone(), session_id.clone());
+    let session_handle = task_tool.session_handle();
     tools.push(Box::new(task_tool));
 
     // Note scratchpad tool — session-scoped file for recording observations
@@ -644,7 +645,7 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir, keymap, task_registry.clone(), session_id).await?;
+        run_tui(agent, &config.model, permanent_allowlist, &config, &working_dir, &log_path, settings, &sessions_dir, keymap, session_handle).await?;
         return Ok(());
     }
 
@@ -1015,8 +1016,7 @@ async fn run_tui(
     mut settings: Settings,
     sessions_dir: &Path,
     keymap: Option<keymap_lib::KeyMap>,
-    _task_registry: Arc<rusty_core::task::TaskRegistry>,
-    session_id: String,
+    session_handle: Arc<std::sync::RwLock<String>>,
 ) -> Result<()> {
     use rusty_core::Message;
 
@@ -1092,6 +1092,8 @@ async fn run_tui(
     let update_event_tx = event_tx.clone(); // clone before move into agent task
     let agent_handle = tokio::spawn({
         let agent_arc = agent.clone();
+        let session_handle = session_handle.clone();
+        let sessions_dir_buf = sessions_dir.to_path_buf();
         async move {
             let mut agent = agent_arc.lock().await;
             agent.set_permission_mode(perm_mode);
@@ -1129,6 +1131,10 @@ async fn run_tui(
                 })
             });
             agent.set_question_callback(question_cb);
+            // Show any existing tasks (e.g. when started with --resume)
+            let _ = event_tx.send(AgentTaskEvent::Event(
+                rusty_tui::app::AgentEvent::Tasks(agent.render_tasks()),
+            ));
             drop(agent);
 
             let agent_arc = agent_arc;
@@ -1229,6 +1235,10 @@ async fn run_tui(
                     let plan_mode = agent.plan_mode;
                     let _ = event_tx.send(AgentTaskEvent::Event(
                         rusty_tui::app::AgentEvent::PlanMode(plan_mode),
+                    ));
+                    // Refresh the task panel from the registry (catches sub-agent changes too)
+                    let _ = event_tx.send(AgentTaskEvent::Event(
+                        rusty_tui::app::AgentEvent::Tasks(agent.render_tasks()),
                     ));
 
                     // Generate a contextual follow-up suggestion via a non-streaming LLM call.
@@ -1346,12 +1356,23 @@ async fn run_tui(
                                 ));
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
-                            Some(rusty_tui::app::TuiCommand::ResumeSession(_id, messages)) => {
+                            Some(rusty_tui::app::TuiCommand::ResumeSession(id, messages)) => {
                                 let mut agent = agent_arc.lock().await;
                                 agent.messages_mut().clear();
                                 for msg in messages {
                                     agent.messages_mut().push(msg);
                                 }
+                                // Switch tasks, notes, checkpoint and the save target to the
+                                // resumed session.
+                                if let Ok(mut sid) = session_handle.write() {
+                                    *sid = id.clone();
+                                }
+                                agent.set_session_id(id.clone());
+                                agent.set_notes_path(rusty_core::ConversationSession::notes_path(&sessions_dir_buf, &id));
+                                agent.set_checkpoint_path(rusty_core::ConversationSession::checkpoint_path(&sessions_dir_buf, &id));
+                                let _ = event_tx.send(AgentTaskEvent::Event(
+                                    rusty_tui::app::AgentEvent::Tasks(agent.render_tasks()),
+                                ));
                                 let _ = event_tx.send(AgentTaskEvent::Event(
                                     rusty_tui::app::AgentEvent::ResponseComplete(String::new()),
                                 ));
@@ -1611,7 +1632,7 @@ async fn run_tui(
     let messages = msg_return_rx.await.unwrap_or_default();
 
     let session = rusty_core::ConversationSession {
-        id: session_id,
+        id: session_handle.read().map(|s| s.clone()).unwrap_or_default(),
         name: tui_app.session_name.clone(),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -1997,6 +2018,9 @@ async fn tui_main_loop(
                         rusty_tui::app::AgentEvent::PlanMode(mode) => {
                             app.plan_mode = mode;
                             app.needs_redraw = true;
+                        }
+                        rusty_tui::app::AgentEvent::Tasks(rendered) => {
+                            app.set_task_panel(&rendered);
                         }
                         rusty_tui::app::AgentEvent::Suggestion(suggestion) => {
                             // Ignore the LLM suggestion if the user has typed anything
