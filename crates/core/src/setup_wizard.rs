@@ -427,6 +427,8 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
     }
 
     // --- Store API key ---
+    // Only reassigned by the keyring read-back fallback.
+    #[cfg_attr(not(feature = "os-keyring"), allow(unused_mut))]
     let mut actual_store = credential_store;
     if let Some(ref key) = api_key_value {
         match credential_store {
@@ -461,6 +463,7 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
                 {
                     // Unreachable: without the os-keyring feature, is_keyring_available()
                     // always returns false, so the wizard never offers Keyring as a choice.
+                    let _ = key;
                     unreachable!("Keyring credential store selected without os-keyring feature");
                 }
             }

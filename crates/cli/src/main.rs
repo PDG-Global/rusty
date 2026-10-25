@@ -636,7 +636,7 @@ async fn main() -> Result<()> {
         run_headless(&mut agent, &prompt).await?;
     } else if args.headless {
         // Headless mode with stdin
-        run_headless_stdin(&mut agent, &config.model, &sessions_dir).await?;
+        run_headless_stdin(&mut agent, &config.model, &sessions_dir, &session_handle).await?;
     } else {
         // Interactive TUI mode — moves agent into spawned task, handles session save internally
         // Load keymap if --keymap was specified
@@ -649,9 +649,10 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Save session (headless modes only — TUI saves internally)
+    // Save session (headless modes only — TUI saves internally).
+    // /resume in stdin mode may have switched the session.
     let session = rusty_core::ConversationSession {
-        id: session_id,
+        id: session_handle.read().map(|s| s.clone()).unwrap_or(session_id),
         name: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -690,7 +691,12 @@ async fn run_headless(agent: &mut Agent, prompt: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path) -> Result<()> {
+async fn run_headless_stdin(
+    agent: &mut Agent,
+    model: &str,
+    sessions_dir: &Path,
+    session_handle: &std::sync::RwLock<String>,
+) -> Result<()> {
     use std::io::{self, BufRead};
     let stdin = io::stdin();
     let mut _session_name: Option<String> = None;
@@ -862,7 +868,15 @@ async fn run_headless_stdin(agent: &mut Agent, model: &str, sessions_dir: &Path)
                                 for msg in &sessions[idx].messages {
                                     agent.messages_mut().push(msg.clone());
                                 }
-                                println!("Resumed session {}.", &sessions[idx].id[..8]);
+                                // Switch tasks, notes, checkpoint and the save target.
+                                let id = sessions[idx].id.clone();
+                                if let Ok(mut sid) = session_handle.write() {
+                                    *sid = id.clone();
+                                }
+                                agent.set_session_id(id.clone());
+                                agent.set_notes_path(ConversationSession::notes_path(sessions_dir, &id));
+                                agent.set_checkpoint_path(ConversationSession::checkpoint_path(sessions_dir, &id));
+                                println!("Resumed session {}.", &id[..8]);
                             }
                         }
                     }
