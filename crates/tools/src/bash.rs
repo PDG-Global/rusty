@@ -318,21 +318,49 @@ impl Tool for BashTool {
 
         debug!("Executing bash command: {command}");
 
-        let output = Command::new("bash")
-            .arg("-c")
+        let mut cmd = Command::new("bash");
+        cmd.arg("-c")
             .arg(command)
             .current_dir(&ctx.working_dir)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output();
+            .kill_on_drop(true);
+        // Own process group, so a timeout or cancel can kill the whole tree
+        // (dev servers, sleeps, pipelines), not just the top-level bash.
+        #[cfg(unix)]
+        cmd.process_group(0);
 
-        let output = tokio::time::timeout(
+        let child = cmd
+            .spawn()
+            .map_err(|e| RustyError::Tool(format!("Failed to execute command: {e}")))?;
+        let pid = child.id();
+        let wait = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
-            output,
-        )
-        .await
-        .map_err(|_| RustyError::Tool(format!("Command timed out after {timeout_secs}s")))?
-        .map_err(|e| RustyError::Tool(format!("Failed to execute command: {e}")))?;
+            child.wait_with_output(),
+        );
+
+        let outcome = match &ctx.cancel {
+            Some(cancel) => tokio::select! {
+                r = wait => Some(r),
+                _ = cancel.cancelled() => None,
+            },
+            None => Some(wait.await),
+        };
+
+        let output = match outcome {
+            Some(Ok(result)) => {
+                result.map_err(|e| RustyError::Tool(format!("Failed to execute command: {e}")))?
+            }
+            Some(Err(_)) => {
+                kill_process_group(pid);
+                return Err(RustyError::Tool(format!("Command timed out after {timeout_secs}s")));
+            }
+            None => {
+                kill_process_group(pid);
+                return Err(RustyError::Cancelled);
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -363,9 +391,50 @@ impl Tool for BashTool {
     }
 }
 
+/// Kill a command's whole process group (it was spawned as group leader).
+fn kill_process_group(pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pid) = pid {
+        // SAFETY: plain syscall; a negative pid targets the process group.
+        unsafe {
+            libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timeout_kills_background_children() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext {
+            working_dir: dir.path().to_path_buf(),
+            permission_mode: rusty_core::PermissionMode::BypassPermissions,
+            cancel: None,
+            on_question: None,
+        };
+        let input = serde_json::json!({
+            "command": "sleep 30 & echo $! > child.pid; wait",
+            "timeout": 1
+        });
+        let err = BashTool.execute(input, &ctx).await.unwrap_err();
+        assert!(err.to_string().contains("timed out"));
+
+        let pid: i32 = std::fs::read_to_string(dir.path().join("child.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // kill(pid, 0) fails once the process is gone.
+        let alive = unsafe { libc::kill(pid, 0) } == 0;
+        assert!(!alive, "background child {pid} survived the timeout");
+    }
 
     #[test]
     fn extract_path_tokens_absolute() {

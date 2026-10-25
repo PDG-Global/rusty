@@ -344,17 +344,19 @@ pub async fn maybe_compact(
 
         // Also read any remaining notes
         let notes_context = if let Some(n_path) = notes_path {
-            let content = read_file_content(n_path).await;
-            // Clear notes after reading
-            if content.is_some() {
-                clear_file(n_path).await;
-            }
-            content
+            read_file_content(n_path).await
         } else {
             None
         };
 
         let split_point = messages.len().saturating_sub(KEEP_RECENT);
+        let split_point = match find_clean_split(messages, split_point) {
+            Some(sp) => sp,
+            None => {
+                debug!("Tier 3 skipped: no clean turn boundary");
+                return Ok(last_tier);
+            }
+        };
         let old_messages = &messages[..split_point];
         let recent_messages = &messages[split_point..];
 
@@ -420,6 +422,11 @@ pub async fn maybe_compact(
             }
         }
 
+        if summary.trim().is_empty() {
+            return Err(RustyError::Other(
+                "Compaction aborted: summary was empty".to_string(),
+            ));
+        }
         debug!("Compacted {} messages into summary", split_point);
 
         let summary_with_plan = if let Some(plan) = plan_text {
@@ -437,6 +444,11 @@ pub async fn maybe_compact(
         new_messages.extend_from_slice(recent_messages);
 
         *messages = new_messages;
+        if notes_context.is_some() {
+            if let Some(n_path) = notes_path {
+                clear_file(n_path).await;
+            }
+        }
 
         let new_tokens = estimate_tokens(messages);
         info!(
@@ -455,13 +467,9 @@ pub async fn maybe_compact(
             estimated_tokens, t2_threshold
         );
 
-        // Read and clear notes
+        // Read notes (cleared only after the checkpoint is written)
         let notes_content = if let Some(n_path) = notes_path {
-            let content = read_file_content(n_path).await;
-            if content.is_some() {
-                clear_file(n_path).await;
-            }
-            content
+            read_file_content(n_path).await
         } else {
             None
         };
@@ -475,6 +483,11 @@ pub async fn maybe_compact(
                 notes_content.as_deref(),
             )
             .await?;
+            if notes_content.is_some() {
+                if let Some(n_path) = notes_path {
+                    clear_file(n_path).await;
+                }
+            }
         }
 
         // Also run micro-compaction at this tier
@@ -522,16 +535,18 @@ pub async fn force_compact(
         None
     };
     let notes_context = if let Some(n_path) = notes_path {
-        let content = read_file_content(n_path).await;
-        if content.is_some() {
-            clear_file(n_path).await;
-        }
-        content
+        read_file_content(n_path).await
     } else {
         None
     };
 
-    let split_point = messages.len().saturating_sub(KEEP_RECENT);
+    let split_point = match find_clean_split(messages, messages.len().saturating_sub(KEEP_RECENT)) {
+        Some(sp) => sp,
+        None => {
+            debug!("Force compact skipped: no clean turn boundary");
+            return Ok(false);
+        }
+    };
     let old_messages = &messages[..split_point];
     let recent_messages = &messages[split_point..];
 
@@ -586,6 +601,11 @@ pub async fn force_compact(
         }
     }
 
+    if summary.trim().is_empty() {
+        return Err(RustyError::Other(
+            "Compaction aborted: summary was empty".to_string(),
+        ));
+    }
     debug!("Force compacted {} messages into summary", split_point);
 
     let summary_with_plan = if let Some(plan) = plan_text {
@@ -603,10 +623,49 @@ pub async fn force_compact(
     new_messages.extend_from_slice(recent_messages);
 
     *messages = new_messages;
+    if notes_context.is_some() {
+        if let Some(n_path) = notes_path {
+            clear_file(n_path).await;
+        }
+    }
     Ok(true)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Truncate `s` to at most `max_bytes` bytes, backing up to a char boundary.
+fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// True if `msg` is a user message with no tool-result blocks (a clean turn start).
+fn is_clean_boundary(msg: &Message) -> bool {
+    msg.role == Role::User
+        && match &msg.content {
+            rusty_core::MessageContent::Text(_) => true,
+            rusty_core::MessageContent::Blocks(blocks) => !blocks
+                .iter()
+                .any(|b| matches!(b, rusty_core::ContentBlock::ToolResult { .. })),
+        }
+}
+
+/// Adjust a desired split index to a clean turn boundary: the first index at or
+/// after `desired` holding a user message without tool results; otherwise the
+/// nearest such index before it. Index 0 is never returned (nothing to summarise).
+/// Returns None if no clean boundary exists.
+fn find_clean_split(messages: &[Message], desired: usize) -> Option<usize> {
+    let desired = desired.max(1);
+    (desired..messages.len())
+        .find(|&i| is_clean_boundary(&messages[i]))
+        .or_else(|| (1..desired.min(messages.len())).rev().find(|&i| is_clean_boundary(&messages[i])))
+}
 
 /// Read file content, returning None if the file doesn't exist or is empty.
 pub async fn read_file_content(path: &Path) -> Option<String> {
@@ -786,7 +845,7 @@ pub async fn render_rebuild_context(
         lines.push("## Recent user input (verbatim)".to_string());
         for msg in &recent {
             if msg.len() > 2000 {
-                lines.push(format!("> {}...(truncated)", &msg[..2000]));
+                lines.push(format!("> {}...(truncated)", truncate_str(msg, 2000)));
             } else {
                 lines.push(format!("> {msg}"));
             }
@@ -822,6 +881,69 @@ pub async fn render_rebuild_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── find_clean_split / truncate_str ──────────────────────────────
+
+    fn tool_result_msg() -> Message {
+        Message::user_blocks(vec![rusty_core::ContentBlock::ToolResult {
+            tool_use_id: "t1".into(),
+            content: "ok".into(),
+            is_error: Some(false),
+        }])
+    }
+
+    #[test]
+    fn split_moves_forward_past_tool_results() {
+        let msgs = vec![
+            Message::user("a"),
+            Message::assistant("b"),
+            tool_result_msg(),
+            Message::assistant("c"),
+            Message::user("d"),
+            Message::assistant("e"),
+        ];
+        assert_eq!(find_clean_split(&msgs, 2), Some(4));
+    }
+
+    #[test]
+    fn split_moves_forward_past_assistant() {
+        let msgs = vec![
+            Message::user("a"),
+            Message::assistant("b"),
+            Message::user("c"),
+            Message::assistant("d"),
+            Message::user("e"),
+        ];
+        assert_eq!(find_clean_split(&msgs, 3), Some(4));
+        assert_eq!(find_clean_split(&msgs, 2), Some(2));
+    }
+
+    #[test]
+    fn split_falls_back_then_none() {
+        let msgs = vec![
+            Message::user("a"),
+            Message::assistant("b"),
+            Message::user("c"),
+            Message::assistant("d"),
+            tool_result_msg(),
+            Message::assistant("e"),
+        ];
+        assert_eq!(find_clean_split(&msgs, 4), Some(2));
+        let none = vec![Message::user("a"), Message::assistant("b"), tool_result_msg()];
+        assert_eq!(find_clean_split(&none, 2), None);
+    }
+
+    #[test]
+    fn truncate_str_respects_char_boundary() {
+        let s = "é".repeat(1500); // 3000 bytes, 2 bytes per char
+        assert_eq!(truncate_str(&s, 2001).len(), 2000);
+        let s = "a".repeat(10);
+        assert_eq!(truncate_str(&s, 4), "aaaa");
+        assert_eq!(truncate_str("abc", 10), "abc");
+        let s = "🦀".repeat(600);
+        assert_eq!(truncate_str(&s, 2000).len(), 2000);
+        assert_eq!(truncate_str(&s, 1999).len(), 1996);
+    }
 
     // ── estimate_tokens ──────────────────────────────────────────────
 

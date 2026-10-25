@@ -817,7 +817,9 @@ impl Agent {
             let needs_t3 = self.messages.len() >= 40 || estimated_tokens >= t3_threshold;
             if needs_t3 && self.last_checkpoint_tier.as_u8() < crate::compact::CheckpointTier::Compacted.as_u8() {
                 debug!("Tier 3 full compaction: {} messages (~{} tokens)", self.messages.len(), estimated_tokens);
-                let new_tier = maybe_compact(
+                // Auto-compaction is best-effort: on failure history is left untouched,
+                // so keep going rather than aborting the user's run.
+                let new_tier = match maybe_compact(
                     &mut self.messages,
                     &*self.provider,
                     &self.system_prompt,
@@ -826,7 +828,13 @@ impl Agent {
                     self.last_checkpoint_tier,
                     self.notes_path.as_deref(),
                     self.checkpoint_path.as_deref(),
-                ).await?;
+                ).await {
+                    Ok(tier) => tier,
+                    Err(e) => {
+                        warn!("Auto-compaction failed, continuing without it: {e}");
+                        self.last_checkpoint_tier
+                    }
+                };
                 if new_tier.as_u8() > self.last_checkpoint_tier.as_u8() {
                     self.last_checkpoint_tier = new_tier;
                     // After full compaction, reset tier so the cycle can start fresh
