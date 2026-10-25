@@ -72,14 +72,18 @@ impl CredentialManager {
     /// Note: The CLI's `--api-key` argument is handled by clap *before* this
     /// method is called — it arrives via the settings merge in `main.rs`.
     /// This method adds keyring as a higher-priority source.
+    /// API key from `RUSTY_API_KEY`, then `OPENAI_API_KEY`. Empty values are ignored.
+    pub fn env_api_key() -> Option<String> {
+        ["RUSTY_API_KEY", "OPENAI_API_KEY"]
+            .iter()
+            .filter_map(|var| std::env::var(var).ok())
+            .find(|val| !val.is_empty())
+    }
+
     pub fn resolve_api_key(settings: &Settings) -> Option<String> {
         // Priority 1: Environment variables (check directly, clap only captures OPENAI_API_KEY)
-        for var in &["RUSTY_API_KEY", "OPENAI_API_KEY"] {
-            if let Ok(val) = std::env::var(var) {
-                if !val.is_empty() {
-                    return Some(val);
-                }
-            }
+        if let Some(key) = Self::env_api_key() {
+            return Some(key);
         }
 
         // Priority 2: OS Keyring (only available with os-keyring feature)

@@ -253,6 +253,17 @@ impl Agent {
         self.session_id = session_id;
     }
 
+    /// True when the session has a task list and every task in it is finished.
+    /// The model has then tracked the work to completion, so a "keep going"
+    /// nudge would only cost an extra turn.
+    fn all_tasks_complete(&self) -> bool {
+        let Some(registry) = &self.task_registry else {
+            return false;
+        };
+        let tasks = registry.list(&self.session_id, None, true).unwrap_or_default();
+        !tasks.is_empty() && tasks.iter().all(|t| t.status.is_terminal())
+    }
+
     /// The current session's task list, rendered as `T1 (open) — summary` lines.
     pub fn render_tasks(&self) -> String {
         self.task_registry
@@ -1420,12 +1431,13 @@ impl Agent {
                     }
 
                     // Fallback continuation: the model used tools this run but stopped
-                    // without todowrite tasks. Nudge it to keep going (bounded) if it
+                    // without incomplete todowrite tasks (and not with a fully completed list). Nudge it to keep going (bounded) if it
                     // wrote/executed since its last stop, or if its text announces more
                     // work ("Next, I'll..."). This catches the common case where the model
                     // does partial work without creating a task list.
                     if !self.exited_plan_mode_this_turn
                         && made_progress_this_run
+                        && !self.all_tasks_complete()
                         && (wrote_since_last_stop || announces_more_work(&assistant_text))
                         && auto_continues < MAX_AUTO_CONTINUES
                         && !asking_question

@@ -435,10 +435,12 @@ async fn main() -> Result<()> {
     }
     // Build provider — resolve API key in priority order:
     //   1. --api-key CLI flag (highest priority)
-    //   2. Per-model key from registry (model_registry[name].api_keys)
-    //   3. CredentialManager (env var → keyring → settings.api_key)
-    //   4. Auto-launch setup wizard if nothing found
+    //   2. RUSTY_API_KEY / OPENAI_API_KEY env vars
+    //   3. Per-model key from registry (model_registry[name].api_keys)
+    //   4. CredentialManager (keyring → settings.api_key)
+    //   5. Auto-launch setup wizard if nothing found
     let api_key = args.api_key
+        .or_else(CredentialManager::env_api_key)
         .or_else(|| if active_entry.is_some() { settings.resolve_active_api_key() } else { None })
         .or_else(|| CredentialManager::resolve_api_key(&settings));
     let api_base = config.resolve_api_base();
