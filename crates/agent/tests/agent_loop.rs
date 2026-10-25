@@ -1,0 +1,426 @@
+// Copyright (C) 2026 PDG Global Limited
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+//! Integration tests for `Agent::run`, driven by a scripted fake provider.
+
+use async_trait::async_trait;
+use futures::Stream;
+use rusty_agent::{Agent, AgentCallbacks};
+use rusty_core::task::TaskRegistry;
+use rusty_core::{
+    Config, ContentBlock, Message, PermissionLevel, PermissionMode, Role, RustyError,
+};
+use rusty_provider::{LlmProvider, MessageRequest, MessageResponse, StreamEvent};
+use rusty_tools::{Tool, ToolContext, ToolResult};
+use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+
+// ---------------------------------------------------------------------------
+// Fakes
+// ---------------------------------------------------------------------------
+
+struct FakeProvider {
+    script: Mutex<VecDeque<Vec<StreamEvent>>>,
+    requests: Arc<Mutex<Vec<MessageRequest>>>,
+}
+
+impl FakeProvider {
+    fn new(script: Vec<Vec<StreamEvent>>) -> (Arc<Self>, Arc<Mutex<Vec<MessageRequest>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let p = Arc::new(Self {
+            script: Mutex::new(script.into()),
+            requests: requests.clone(),
+        });
+        (p, requests)
+    }
+}
+
+#[async_trait]
+impl LlmProvider for FakeProvider {
+    fn name(&self) -> &str {
+        "fake"
+    }
+    fn model(&self) -> &str {
+        "fake-model"
+    }
+    async fn create_message(&self, _r: MessageRequest) -> Result<MessageResponse, RustyError> {
+        panic!("FakeProvider: create_message (non-streaming) is not scripted");
+    }
+    async fn create_message_stream(
+        &self,
+        request: MessageRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, RustyError>> + Send>>, RustyError>
+    {
+        let n = {
+            let mut reqs = self.requests.lock().unwrap();
+            reqs.push(request);
+            reqs.len()
+        };
+        let events = self.script.lock().unwrap().pop_front().unwrap_or_else(|| {
+            panic!("FakeProvider script exhausted: unexpected extra API call #{n}")
+        });
+        Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
+    }
+}
+
+struct FakeTool {
+    name: &'static str,
+    level: PermissionLevel,
+    inputs: Arc<Mutex<Vec<Value>>>,
+    /// Optional side effect run on execute.
+    on_exec: Option<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl FakeTool {
+    fn new(name: &'static str, level: PermissionLevel) -> (Box<dyn Tool>, Arc<Mutex<Vec<Value>>>) {
+        let inputs = Arc::new(Mutex::new(Vec::new()));
+        (
+            Box::new(Self { name, level, inputs: inputs.clone(), on_exec: None }),
+            inputs,
+        )
+    }
+}
+
+#[async_trait]
+impl Tool for FakeTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "fake tool"
+    }
+    fn input_schema(&self) -> Value {
+        json!({"type": "object", "properties": {}})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        self.level
+    }
+    async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolResult, RustyError> {
+        self.inputs.lock().unwrap().push(input);
+        if let Some(f) = &self.on_exec {
+            f();
+        }
+        Ok(ToolResult::success("ok"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn text(t: &str, stop: &str) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::TextDelta(t.to_string()),
+        StreamEvent::Done { stop_reason: Some(stop.to_string()) },
+    ]
+}
+
+fn end(t: &str) -> Vec<StreamEvent> {
+    text(t, "end_turn")
+}
+
+fn call(name: &str, args: &str) -> Vec<StreamEvent> {
+    vec![
+        StreamEvent::ToolCallDelta {
+            index: 0,
+            id: Some("call_1".into()),
+            name: Some(name.into()),
+            arguments_delta: args.to_string(),
+        },
+        StreamEvent::Done { stop_reason: Some("tool_calls".into()) },
+    ]
+}
+
+fn make_agent(provider: Arc<FakeProvider>, tools: Vec<Box<dyn Tool>>) -> Agent {
+    let mut agent = Agent::new(
+        provider,
+        tools,
+        Config::default(),
+        std::env::temp_dir(),
+        "test system prompt".to_string(),
+    );
+    agent.set_permission_mode(PermissionMode::BypassPermissions);
+    agent
+}
+
+async fn run(agent: &mut Agent) -> Result<String, RustyError> {
+    agent
+        .run(vec![ContentBlock::Text { text: "go".into() }], AgentCallbacks::default())
+        .await
+}
+
+fn user_texts(req: &MessageRequest) -> Vec<String> {
+    req.messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .map(Message::get_all_text)
+        .collect()
+}
+
+fn count_user_msgs_containing(req: &MessageRequest, needle: &str) -> usize {
+    user_texts(req).iter().filter(|t| t.contains(needle)).count()
+}
+
+fn tool_results(req: &MessageRequest) -> Vec<(String, Option<bool>)> {
+    req.messages
+        .iter()
+        .flat_map(|m| m.content_blocks().to_vec())
+        .filter_map(|b| match b {
+            ContentBlock::ToolResult { content, is_error, .. } => Some((content, is_error)),
+            _ => None,
+        })
+        .collect()
+}
+
+const NUDGE: &str = "continue now";
+
+// ---------------------------------------------------------------------------
+// Scenarios
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn s1_plain_text_answer_ends_after_one_call() {
+    let (p, reqs) = FakeProvider::new(vec![end("Hello there.")]);
+    let mut agent = make_agent(p, vec![]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Hello there.");
+    assert_eq!(reqs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn s2_write_tool_then_text_gets_nudged() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("fake_write", "{\"path\":\"a\"}"),
+        end("Done."),
+        end("Confirmed complete."),
+    ]);
+    let (w, inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![w]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Confirmed complete.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(inputs.lock().unwrap().as_slice(), &[json!({"path": "a"})]);
+    assert_eq!(count_user_msgs_containing(&reqs[1], NUDGE), 0);
+    assert_eq!(count_user_msgs_containing(&reqs[2], NUDGE), 1);
+}
+
+#[tokio::test]
+async fn s3_readonly_tool_then_announced_work_nudges() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("fake_read", "{}"),
+        end("Now let me update the tests:"),
+        end("All done."),
+    ]);
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    assert_eq!(run(&mut agent).await.unwrap(), "All done.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(count_user_msgs_containing(&reqs[2], NUDGE), 1);
+}
+
+#[tokio::test]
+async fn s4_readonly_tool_then_completion_text_no_nudge() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_read", "{}"), end("All changes are complete.")]);
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    assert_eq!(run(&mut agent).await.unwrap(), "All changes are complete.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(count_user_msgs_containing(&reqs[1], NUDGE), 0);
+}
+
+#[tokio::test]
+async fn s5_nudge_cap_is_three() {
+    // Each cycle: write tool call, then a stop with text. Cap = 3 nudges, so the
+    // 4th stop terminates: 4 cycles = 8 calls.
+    let mut script = Vec::new();
+    for i in 0..4 {
+        script.push(call("fake_write", &format!("{{\"n\":{i}}}")));
+        script.push(end(&format!("stopped {i}")));
+    }
+    let (p, reqs) = FakeProvider::new(script);
+    let (w, inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![w]);
+    assert_eq!(run(&mut agent).await.unwrap(), "stopped 3");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 8);
+    assert_eq!(inputs.lock().unwrap().len(), 4);
+    let last = reqs.last().unwrap();
+    assert_eq!(count_user_msgs_containing(last, NUDGE), 3);
+}
+
+#[tokio::test]
+async fn s6_empty_response_retried_once_then_text() {
+    let (p, reqs) = FakeProvider::new(vec![
+        vec![StreamEvent::Done { stop_reason: Some("end_turn".into()) }],
+        end("Recovered."),
+    ]);
+    let mut agent = make_agent(p, vec![]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Recovered.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(count_user_msgs_containing(&reqs[0], "Your last response was empty"), 0);
+    assert_eq!(count_user_msgs_containing(&reqs[1], "Your last response was empty"), 1);
+}
+
+#[tokio::test]
+async fn s6b_empty_response_cap() {
+    let empty = || vec![StreamEvent::Done { stop_reason: Some("end_turn".into()) }];
+    let (p, reqs) = FakeProvider::new(vec![empty(), empty(), empty()]);
+    let mut agent = make_agent(p, vec![]);
+    assert_eq!(run(&mut agent).await.unwrap(), "");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 3); // 1 + MAX_EMPTY_RESPONSE_RETRIES
+    assert_eq!(count_user_msgs_containing(&reqs[2], "Your last response was empty"), 2);
+}
+
+#[tokio::test]
+async fn s7_max_tokens_truncation_continues() {
+    let (p, reqs) = FakeProvider::new(vec![text("Hello wor", "max_tokens"), end("ld.")]);
+    let mut agent = make_agent(p, vec![]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Hello world.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(count_user_msgs_containing(&reqs[1], "cut off by the output token limit"), 1);
+}
+
+#[tokio::test]
+async fn s8_malformed_args_not_executed() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_read", "{\"path\": "), end("Finished.")]);
+    let (r, inputs) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Finished.");
+    assert!(inputs.lock().unwrap().is_empty(), "tool must not run on invalid JSON");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    let results = tool_results(&reqs[1]);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1, Some(true));
+    assert!(results[0].0.contains("Invalid JSON arguments"), "got: {}", results[0].0);
+}
+
+#[tokio::test]
+async fn s8b_empty_args_execute_with_empty_object() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_read", ""), end("Finished.")]);
+    let (r, inputs) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Finished.");
+    assert_eq!(inputs.lock().unwrap().as_slice(), &[json!({})]);
+    assert_eq!(reqs.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn s9_question_after_write_is_not_nudged() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_write", "{}"), end("I made the edit. Should I proceed?")]);
+    let (w, _) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![w]);
+    assert_eq!(run(&mut agent).await.unwrap(), "I made the edit. Should I proceed?");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(count_user_msgs_containing(&reqs[1], NUDGE), 0);
+}
+
+#[tokio::test]
+async fn s10_stream_error_returns_err() {
+    let (p, reqs) = FakeProvider::new(vec![vec![
+        StreamEvent::TextDelta("partial".into()),
+        StreamEvent::Error("boom".into()),
+    ]]);
+    let mut agent = make_agent(p, vec![]);
+    let err = run(&mut agent).await.unwrap_err();
+    assert!(err.to_string().contains("boom"), "got: {err}");
+    assert_eq!(reqs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn s11_tool_use_stop_reason_without_calls_behaves_like_end_turn() {
+    // Consistent with scenario 2: write, then stop(tool_use) text -> nudge.
+    let (p, reqs) = FakeProvider::new(vec![
+        call("fake_write", "{}"),
+        text("Done.", "tool_use"),
+        text("Confirmed complete.", "tool_use"),
+    ]);
+    let (w, _) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![w]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Confirmed complete.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(count_user_msgs_containing(&reqs[2], NUDGE), 1);
+}
+
+#[tokio::test]
+async fn s11b_tool_use_stop_reason_completion_text_no_nudge() {
+    // Consistent with scenario 4.
+    let (p, reqs) = FakeProvider::new(vec![call("fake_read", "{}"), text("All changes are complete.", "tool_use")]);
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    assert_eq!(run(&mut agent).await.unwrap(), "All changes are complete.");
+    assert_eq!(reqs.lock().unwrap().len(), 2);
+}
+
+fn registry_agent(
+    script: Vec<Vec<StreamEvent>>,
+    tools: Vec<Box<dyn Tool>>,
+    reg: Arc<TaskRegistry>,
+) -> (Agent, Arc<Mutex<Vec<MessageRequest>>>) {
+    let (p, reqs) = FakeProvider::new(script);
+    let mut agent = make_agent(p, tools);
+    agent.set_task_registry(reg, "s1".to_string());
+    (agent, reqs)
+}
+
+#[tokio::test]
+async fn s12_all_tasks_done_suppresses_nudge() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let reg = Arc::new(TaskRegistry::open(&dir.path().join("t.db")).unwrap());
+    reg.create("s1", "only task", None, None).unwrap();
+    reg.done("s1", "T1", None).unwrap();
+    let (w, _) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let (mut agent, reqs) = registry_agent(vec![call("fake_write", "{}"), end("Done.")], vec![w], reg);
+    assert_eq!(run(&mut agent).await.unwrap(), "Done.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(count_user_msgs_containing(&reqs[1], NUDGE), 0);
+}
+
+#[tokio::test]
+async fn s12b_incomplete_task_reenters_until_completed() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let reg = Arc::new(TaskRegistry::open(&dir.path().join("t.db")).unwrap());
+    reg.create("s1", "finish the thing", None, None).unwrap();
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let reg2 = reg.clone();
+    let finisher: Box<dyn Tool> = Box::new(FakeTool {
+        name: "finish_task",
+        level: PermissionLevel::ReadOnly,
+        inputs,
+        on_exec: Some(Box::new(move || {
+            reg2.done("s1", "T1", None).unwrap();
+        })),
+    });
+    let (mut agent, reqs) = registry_agent(
+        vec![end("Working on it."), call("finish_task", "{}"), end("All finished.")],
+        vec![finisher],
+        reg,
+    );
+    assert_eq!(run(&mut agent).await.unwrap(), "All finished.");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(count_user_msgs_containing(&reqs[0], "You are about to finish"), 0);
+    assert_eq!(count_user_msgs_containing(&reqs[1], "You are about to finish"), 1);
+    assert_eq!(count_user_msgs_containing(&reqs[1], "finish the thing"), 1);
+}
+
+#[tokio::test]
+async fn s12c_task_gate_cap() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let reg = Arc::new(TaskRegistry::open(&dir.path().join("t.db")).unwrap());
+    reg.create("s1", "never done", None, None).unwrap();
+    // MAX_TASK_GATE_REENTRIES = 6, so the 7th stop is allowed.
+    let script = (0..7).map(|i| end(&format!("stop {i}"))).collect();
+    let (mut agent, reqs) = registry_agent(script, vec![], reg);
+    assert_eq!(run(&mut agent).await.unwrap(), "stop 6");
+    assert_eq!(reqs.lock().unwrap().len(), 7);
+}
