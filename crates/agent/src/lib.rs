@@ -295,9 +295,9 @@ pub async fn build_system_prompt(
     // Task tracking and work-to-completion behaviour
     parts.push(
         "## Task Tracking\n\n\
-        Use `todowrite` proactively and often when progress tracking helps the current work. \
-        This is especially useful for multi-step tasks, large codebase searches, and sequences \
-        of edits.\n\n\
+        Use `todowrite` for multi-step work where progress tracking helps. Keep it cheap: \
+        create all tasks in one call, and batch state changes (e.g. mark one task done and \
+        start the next) with `{\"operations\": [...]}` instead of one call per change.\n\n\
         Guidelines:\n\
         - Update the list only after real progress. Do not re-call the tool when nothing meaningful has changed.\n\
         - Keep exactly one task in_progress when work is underway.\n\

@@ -301,8 +301,8 @@ impl Agent {
                 prompt.push_str("\n\n");
                 prompt.push_str(&tasks);
                 prompt.push_str(
-                    "\nKeep this list current with todowrite: mark a task in_progress before \
-                     starting it and done as soon as it is finished.",
+                    "\nUpdate this list with todowrite when a task changes state, batching \
+                     changes into one call.",
                 );
             }
         }
