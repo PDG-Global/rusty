@@ -500,8 +500,16 @@ impl LlmProvider for AnthropicProvider {
 
         let stream = resp.bytes_stream();
         let events = futures::stream::unfold(
-            (stream, String::new(), Vec::<ToolCallTracker>::new()),
-            |(mut stream, mut line_buf, mut tool_calls)| async move {
+            (
+                stream,
+                String::new(),
+                Vec::<ToolCallTracker>::new(),
+                AnthropicStreamState::default(),
+            ),
+            |(mut stream, mut line_buf, mut tool_calls, mut st)| async move {
+                if st.done {
+                    return None;
+                }
                 loop {
                     // Try to find a complete line in the buffer
                     if let Some(newline_pos) = line_buf.find('\n') {
@@ -516,11 +524,14 @@ impl LlmProvider for AnthropicProvider {
                             match serde_json::from_str::<AnthropicStreamEvent>(data) {
                                 Ok(event) => {
                                     if let Some(stream_event) =
-                                        convert_anthropic_event(event, &mut tool_calls)
+                                        convert_anthropic_event(event, &mut tool_calls, &mut st)
                                     {
+                                        if matches!(stream_event, StreamEvent::Done { .. }) {
+                                            st.done = true;
+                                        }
                                         return Some((
                                             Ok(stream_event),
-                                            (stream, line_buf, tool_calls),
+                                            (stream, line_buf, tool_calls, st),
                                         ));
                                     }
                                     // Events that don't produce output (ping, block stop, etc.)
@@ -541,14 +552,21 @@ impl LlmProvider for AnthropicProvider {
                             Some(Err(e)) => {
                                 return Some((
                                     Err(RustyError::Http(e.to_string())),
-                                    (stream, line_buf, tool_calls),
+                                    (stream, line_buf, tool_calls, st),
                                 ));
                             }
                             None => {
                                 if !line_buf.trim().is_empty() {
                                     debug!("Stream ended with remaining buffer: {line_buf}");
                                 }
-                                return None;
+                                // Stream ended without message_stop: still emit one Done.
+                                st.done = true;
+                                return Some((
+                                    Ok(StreamEvent::Done {
+                                        stop_reason: st.stop_reason.take(),
+                                    }),
+                                    (stream, line_buf, tool_calls, st),
+                                ));
                             }
                         }
                     }
@@ -566,10 +584,19 @@ struct ToolCallTracker {
     json_buf: String,
 }
 
+/// Per-stream state: stop_reason arrives in `message_delta`, but `Done` is
+/// emitted at `message_stop`.
+#[derive(Default)]
+struct AnthropicStreamState {
+    stop_reason: Option<String>,
+    done: bool,
+}
+
 /// Convert an Anthropic SSE event into a Rusty `StreamEvent`.
 fn convert_anthropic_event(
     event: AnthropicStreamEvent,
     tool_calls: &mut Vec<ToolCallTracker>,
+    state: &mut AnthropicStreamState,
 ) -> Option<StreamEvent> {
     match event {
         AnthropicStreamEvent::MessageStart { message } => {
@@ -637,19 +664,22 @@ fn convert_anthropic_event(
         },
         AnthropicStreamEvent::ContentBlockStop { .. } => None,
         AnthropicStreamEvent::MessageDelta { delta, usage } => {
-            let stop_reason = delta.stop_reason;
-            if let Some(usage) = usage {
-                // Emit final usage update
-                return Some(StreamEvent::Usage(UsageInfo {
+            if delta.stop_reason.is_some() {
+                state.stop_reason = delta.stop_reason;
+            }
+            // Done is deferred to message_stop; emit final usage if present.
+            usage.map(|usage| {
+                StreamEvent::Usage(UsageInfo {
                     input_tokens: usage.input_tokens,
                     output_tokens: usage.output_tokens,
                     cached_tokens: usage.cache_read_input_tokens
                         + usage.cache_creation_input_tokens,
-                }));
-            }
-            Some(StreamEvent::Done { stop_reason })
+                })
+            })
         }
-        AnthropicStreamEvent::MessageStop => Some(StreamEvent::Done { stop_reason: None }),
+        AnthropicStreamEvent::MessageStop => Some(StreamEvent::Done {
+            stop_reason: state.stop_reason.take(),
+        }),
         AnthropicStreamEvent::Ping => None,
         AnthropicStreamEvent::Error { error } => Some(StreamEvent::Error(format!(
             "{}: {}",
@@ -756,7 +786,7 @@ mod tests {
         let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#;
         let event: AnthropicStreamEvent = serde_json::from_str(data).unwrap();
         let mut tool_calls = vec![];
-        let result = convert_anthropic_event(event, &mut tool_calls);
+        let result = convert_anthropic_event(event, &mut tool_calls, &mut AnthropicStreamState::default());
         assert!(matches!(result, Some(StreamEvent::TextDelta(ref s)) if s == "Hello"));
     }
 
@@ -765,9 +795,43 @@ mod tests {
         let data = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}"#;
         let event: AnthropicStreamEvent = serde_json::from_str(data).unwrap();
         let mut tool_calls = vec![];
-        let result = convert_anthropic_event(event, &mut tool_calls);
+        let result = convert_anthropic_event(event, &mut tool_calls, &mut AnthropicStreamState::default());
         // Should emit Usage first
         assert!(matches!(result, Some(StreamEvent::Usage(_))));
+    }
+
+    #[test]
+    fn max_tokens_stop_reason_survives_to_done() {
+        let mut tc = vec![];
+        let mut st = AnthropicStreamState::default();
+        let mut out = Vec::new();
+        for data in [
+            r#"{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}"#,
+            r#"{"type":"message_stop"}"#,
+        ] {
+            let ev: AnthropicStreamEvent = serde_json::from_str(data).unwrap();
+            out.extend(convert_anthropic_event(ev, &mut tc, &mut st));
+        }
+        assert_eq!(out.len(), 2);
+        assert!(matches!(out[0], StreamEvent::Usage(_)));
+        assert!(
+            matches!(out[1], StreamEvent::Done { stop_reason: Some(ref r) } if r == "max_tokens")
+        );
+    }
+
+    #[test]
+    fn message_delta_without_usage_defers_done() {
+        let mut tc = vec![];
+        let mut st = AnthropicStreamState::default();
+        let ev: AnthropicStreamEvent =
+            serde_json::from_str(r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"}}"#)
+                .unwrap();
+        assert!(convert_anthropic_event(ev, &mut tc, &mut st).is_none());
+        let stop: AnthropicStreamEvent = serde_json::from_str(r#"{"type":"message_stop"}"#).unwrap();
+        assert!(matches!(
+            convert_anthropic_event(stop, &mut tc, &mut st),
+            Some(StreamEvent::Done { stop_reason: Some(ref r) }) if r == "tool_use"
+        ));
     }
 
     #[test]
@@ -775,7 +839,7 @@ mod tests {
         let data = r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"bash","input":{}}}"#;
         let event: AnthropicStreamEvent = serde_json::from_str(data).unwrap();
         let mut tool_calls = vec![];
-        let result = convert_anthropic_event(event, &mut tool_calls);
+        let result = convert_anthropic_event(event, &mut tool_calls, &mut AnthropicStreamState::default());
         assert!(matches!(
             result,
             Some(StreamEvent::ToolCallDelta {
@@ -791,7 +855,7 @@ mod tests {
         let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#;
         let event: AnthropicStreamEvent = serde_json::from_str(data).unwrap();
         let mut tool_calls = vec![];
-        let result = convert_anthropic_event(event, &mut tool_calls);
+        let result = convert_anthropic_event(event, &mut tool_calls, &mut AnthropicStreamState::default());
         assert!(
             matches!(result, Some(StreamEvent::ThinkingDelta(ref s)) if s == "Let me think...")
         );
@@ -802,7 +866,7 @@ mod tests {
         let data = r#"{"type":"ping"}"#;
         let event: AnthropicStreamEvent = serde_json::from_str(data).unwrap();
         let mut tool_calls = vec![];
-        let result = convert_anthropic_event(event, &mut tool_calls);
+        let result = convert_anthropic_event(event, &mut tool_calls, &mut AnthropicStreamState::default());
         assert!(result.is_none());
     }
 
@@ -811,7 +875,7 @@ mod tests {
         let data = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
         let event: AnthropicStreamEvent = serde_json::from_str(data).unwrap();
         let mut tool_calls = vec![];
-        let result = convert_anthropic_event(event, &mut tool_calls);
+        let result = convert_anthropic_event(event, &mut tool_calls, &mut AnthropicStreamState::default());
         assert!(matches!(result, Some(StreamEvent::Error(ref s)) if s.contains("overloaded")));
     }
 

@@ -351,7 +351,7 @@ impl Default for Config {
             max_tokens: 16384,
             permission_mode: PermissionMode::Default,
             verbose: false,
-            max_turns: 50,
+            max_turns: 200,
             system_prompt: None,
             append_system_prompt: None,
             no_claude_md: false,
@@ -776,7 +776,7 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.model, "mimo-v2.5-pro");
         assert_eq!(cfg.max_tokens, 16384);
-        assert_eq!(cfg.max_turns, 50);
+        assert_eq!(cfg.max_turns, 200);
         assert!(cfg.api_key.is_none());
         assert!(cfg.api_base.is_none());
         assert!(!cfg.verbose);
