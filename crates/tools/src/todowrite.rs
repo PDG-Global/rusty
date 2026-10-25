@@ -38,7 +38,7 @@ impl TodoWriteTool {
 
 const FORMAT_HELP: &str = "Expected {\"operation\": {\"action\": ..., \"id\": ..., \"summary\": ...}}, \
 flat args like {\"action\": \"done\", \"id\": \"T2\"}, or legacy {\"todos\": [...]}. \
-Actions: create, list, start, block, unblock, done, abandon, rename, reopen.";
+Batch with {\"operations\": [...]}. Actions: create, list, start, block, unblock, done, abandon, rename, reopen.";
 
 fn terr<E: std::fmt::Display>(e: E) -> RustyError {
     RustyError::Tool(e.to_string())
@@ -75,7 +75,9 @@ impl Tool for TodoWriteTool {
          - abandon: drop a task without completing. id required. optional: reason.\n\
          - rename: change a task's summary. id + summary required.\n\
          - reopen: reopen a done/abandoned task. id required.\n\n\
-         Keep one task in_progress when work is underway. Only mark done when fully complete.\n\
+         Batch related changes in one call with {\"operations\": [...]}, e.g. create all tasks \
+         up front, or mark T1 done and start T2 together. Update the list when a task changes \
+         state, not after every edit. Only mark done when fully complete.\n\
          Legacy: {\"todos\": [...]} replaces the whole list (tasks omitted from it are abandoned)."
     }
 
@@ -110,6 +112,11 @@ impl Tool for TodoWriteTool {
                         }
                     },
                     "required": ["action"]
+                },
+                "operations": {
+                    "type": "array",
+                    "description": "Batch: several operations (same fields as operation), applied in order in one call.",
+                    "items": {"type": "object"}
                 },
                 "action": {"type": "string", "description": "Flat alternative to operation.action."},
                 "id": {"type": "string", "description": "Flat alternative to operation.id."},
@@ -148,6 +155,11 @@ impl Tool for TodoWriteTool {
     async fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<ToolResult, RustyError> {
         let sid = self.current_session();
 
+        // Batch: several operations in one call
+        if let Some(ops) = input.get("operations").and_then(|v| v.as_array()) {
+            return self.execute_batch(&sid, ops);
+        }
+
         // Nested operation object
         if let Some(op) = input.get("operation").filter(|v| v.is_object()) {
             return self.execute_operation(&sid, op);
@@ -182,6 +194,40 @@ impl Tool for TodoWriteTool {
 }
 
 impl TodoWriteTool {
+    /// Apply operations in order, reporting one line per change and the task
+    /// list once. Stops at the first failure; earlier operations stay applied.
+    fn execute_batch(&self, sid: &str, ops: &[Value]) -> Result<ToolResult, RustyError> {
+        if ops.is_empty() {
+            return Err(RustyError::Tool("'operations' is empty.".into()));
+        }
+        let mut applied = Vec::new();
+        for (i, op) in ops.iter().enumerate() {
+            match self.execute_operation(sid, op) {
+                Ok(result) => {
+                    // Single-op output is "<change line>\n\n<task list>"; keep the change line.
+                    if op.get("action").and_then(|v| v.as_str()).map(canonical_action).as_deref() != Some("list") {
+                        if let Some(line) = result.content.split("\n\n").next() {
+                            applied.push(line.to_string());
+                        }
+                    }
+                }
+                Err(e) => {
+                    let done = if applied.is_empty() {
+                        "none".to_string()
+                    } else {
+                        applied.join("; ")
+                    };
+                    return Err(RustyError::Tool(format!(
+                        "Operation {} failed: {e}. Applied before failure: {done}.",
+                        i + 1
+                    )));
+                }
+            }
+        }
+        let rendered = self.registry.render_for_tool_output(sid);
+        Ok(ToolResult::success(format!("{}\n\n{rendered}", applied.join("\n"))))
+    }
+
     fn execute_operation(&self, sid: &str, op: &Value) -> Result<ToolResult, RustyError> {
         let raw_action = op.get("action").and_then(|v| v.as_str());
         let action = match raw_action {
@@ -388,6 +434,68 @@ mod tests {
             cancel: None,
             on_question: None,
         }
+    }
+
+    #[tokio::test]
+    async fn test_batch_operations() {
+        let (tool, _dir) = make_tool();
+        let result = tool
+            .execute(
+                json!({"operations": [
+                    {"action": "create", "summary": "Task A"},
+                    {"action": "create", "summary": "Task B"},
+                    {"action": "start", "id": "T1"}
+                ]}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert!(result.content.contains("Created T1"));
+        assert!(result.content.contains("Created T2"));
+        assert!(result.content.contains("T1 (in_progress)"));
+        // Task list appears once, after the change lines.
+        assert_eq!(result.content.matches("T2 (open)").count(), 1);
+
+        let result = tool
+            .execute(
+                json!({"operations": [
+                    {"action": "done", "id": "T1"},
+                    {"action": "start", "id": "T2"}
+                ]}),
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert!(result.content.contains("T1 (done)"));
+        assert!(result.content.contains("T2 (in_progress)"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_stops_at_first_failure() {
+        let (tool, _dir) = make_tool();
+        let err = tool
+            .execute(
+                json!({"operations": [
+                    {"action": "create", "summary": "Task A"},
+                    {"action": "done", "id": "T9"},
+                    {"action": "create", "summary": "Never created"}
+                ]}),
+                &ctx(),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Operation 2 failed"));
+        assert!(err.contains("Created T1"));
+        let list = tool.execute(json!({}), &ctx()).await.unwrap().content;
+        assert!(list.contains("Task A"));
+        assert!(!list.contains("Never created"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_empty_is_error() {
+        let (tool, _dir) = make_tool();
+        assert!(tool.execute(json!({"operations": []}), &ctx()).await.is_err());
     }
 
     #[tokio::test]
