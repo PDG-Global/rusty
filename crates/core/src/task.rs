@@ -14,7 +14,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -49,6 +49,18 @@ impl TaskStatus {
             "done" | "completed" => Self::Done,
             "abandoned" | "cancelled" | "canceled" => Self::Abandoned,
             _ => Self::Open,
+        }
+    }
+
+    /// Strict parse accepting common synonyms. Returns None for unknown values.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().replace('-', "_").replace(' ', "_").as_str() {
+            "open" | "pending" | "todo" => Some(Self::Open),
+            "in_progress" | "inprogress" | "active" => Some(Self::InProgress),
+            "blocked" => Some(Self::Blocked),
+            "done" | "completed" | "complete" => Some(Self::Done),
+            "abandoned" | "cancelled" | "canceled" => Some(Self::Abandoned),
+            _ => None,
         }
     }
 
@@ -91,7 +103,7 @@ pub struct TaskRegistry {
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS tasks (
-    id           TEXT PRIMARY KEY,
+    id           TEXT NOT NULL,
     session_id   TEXT NOT NULL,
     parent_task_id TEXT,
     status       TEXT NOT NULL DEFAULT 'open',
@@ -100,7 +112,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at   INTEGER NOT NULL,
     last_event_at INTEGER NOT NULL,
     ended_at     INTEGER,
-    cleanup_after INTEGER
+    cleanup_after INTEGER,
+    PRIMARY KEY (session_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS task_events (
@@ -125,6 +138,7 @@ impl TaskRegistry {
         }
         let conn = Connection::open(db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        migrate_legacy_schema(&conn)?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -152,7 +166,19 @@ impl TaskRegistry {
         let now = chrono::Utc::now().timestamp();
 
         // Generate hierarchical ID
-        let id = next_child_id(&conn, parent_id)?;
+        if let Some(pid) = parent_id {
+            let exists: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM tasks WHERE session_id = ?1 AND id = ?2",
+                    params![session_id, pid],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if exists.is_none() {
+                return Err(not_found(pid));
+            }
+        }
+        let id = next_child_id(&conn, session_id, parent_id)?;
 
         conn.execute(
             "INSERT INTO tasks (id, session_id, parent_task_id, status, summary, owner, created_at, last_event_at)
@@ -251,7 +277,23 @@ impl TaskRegistry {
         id: &str,
         owner: Option<&str>,
     ) -> Result<Task, rusqlite::Error> {
-        self.transition(session_id, id, TaskStatus::InProgress, "started", owner)
+        self.transition(session_id, id, TaskStatus::InProgress, "started", owner, true)
+    }
+
+    /// Reopen a done or abandoned task (back to `open`).
+    pub fn reopen(&self, session_id: &str, id: &str) -> Result<Task, rusqlite::Error> {
+        self.transition(session_id, id, TaskStatus::Open, "reopened", None, true)
+    }
+
+    /// Set a task to an arbitrary status (reopening terminal tasks if needed).
+    pub fn set_status(
+        &self,
+        session_id: &str,
+        id: &str,
+        status: TaskStatus,
+    ) -> Result<Task, rusqlite::Error> {
+        let kind = status.as_str();
+        self.transition(session_id, id, status, kind, None, true)
     }
 
     /// Transition a task to `blocked`.
@@ -261,7 +303,7 @@ impl TaskRegistry {
         id: &str,
         reason: Option<&str>,
     ) -> Result<Task, rusqlite::Error> {
-        self.transition(session_id, id, TaskStatus::Blocked, "blocked", None)
+        self.transition(session_id, id, TaskStatus::Blocked, "blocked", None, false)
             .map(|t| {
                 if let Some(r) = reason {
                     let conn = self.conn.lock().unwrap();
@@ -279,7 +321,7 @@ impl TaskRegistry {
         id: &str,
         reason: Option<&str>,
     ) -> Result<Task, rusqlite::Error> {
-        self.transition(session_id, id, TaskStatus::Open, "unblocked", None)
+        self.transition(session_id, id, TaskStatus::Open, "unblocked", None, false)
             .map(|t| {
                 if let Some(r) = reason {
                     let conn = self.conn.lock().unwrap();
@@ -297,7 +339,7 @@ impl TaskRegistry {
         id: &str,
         summary: Option<&str>,
     ) -> Result<Task, rusqlite::Error> {
-        let task = self.transition(session_id, id, TaskStatus::Done, "done", None)?;
+        let task = self.transition(session_id, id, TaskStatus::Done, "done", None, false)?;
         if let Some(s) = summary {
             let conn = self.conn.lock().unwrap();
             let now = chrono::Utc::now().timestamp();
@@ -313,7 +355,7 @@ impl TaskRegistry {
         id: &str,
         reason: Option<&str>,
     ) -> Result<Task, rusqlite::Error> {
-        let task = self.transition(session_id, id, TaskStatus::Abandoned, "abandoned", None)?;
+        let task = self.transition(session_id, id, TaskStatus::Abandoned, "abandoned", None, false)?;
         if let Some(r) = reason {
             let conn = self.conn.lock().unwrap();
             let now = chrono::Utc::now().timestamp();
@@ -336,12 +378,11 @@ impl TaskRegistry {
             params![new_summary, now, session_id, id],
         )?;
         if updated == 0 {
-            return Err(rusqlite::Error::QueryReturnedNoRows);
+            return Err(not_found(id));
         }
         insert_event(&conn, id, session_id, now, "renamed", Some(new_summary))?;
         drop(conn);
-        self.get(session_id, id)?
-            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+        self.get(session_id, id)?.ok_or_else(|| not_found(id))
     }
 
     /// Get incomplete tasks as (status, content) pairs. Used by the task gate.
@@ -412,31 +453,27 @@ impl TaskRegistry {
         new_status: TaskStatus,
         event_kind: &str,
         owner: Option<&str>,
+        allow_reopen: bool,
     ) -> Result<Task, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
 
-        // Check current status
-        let current: String = conn.query_row(
-            "SELECT status FROM tasks WHERE session_id = ?1 AND id = ?2",
-            params![session_id, id],
-            |row| row.get(0),
-        )?;
-
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT status FROM tasks WHERE session_id = ?1 AND id = ?2",
+                params![session_id, id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current = current.ok_or_else(|| not_found(id))?;
         let current_status = TaskStatus::from_str(&current);
 
-        // Don't resurrect terminal tasks
-        if current_status.is_terminal() {
-            debug!(
-                "Task {} is already {}, ignoring transition to {}",
-                id,
-                current_status.as_str(),
-                new_status.as_str()
-            );
-            drop(conn);
-            return self
-                .get(session_id, id)?
-                .ok_or(rusqlite::Error::QueryReturnedNoRows);
+        // Terminal tasks only change when explicitly reopened/started
+        if current_status.is_terminal() && !allow_reopen {
+            return Err(task_error(format!(
+                "{id} is already {}",
+                current_status.as_str()
+            )));
         }
 
         let ended_at = if new_status.is_terminal() {
@@ -470,45 +507,87 @@ impl TaskRegistry {
         debug!("Task {} transitioned to {}", id, new_status.as_str());
 
         drop(conn);
-        self.get(session_id, id)?
-            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+        self.get(session_id, id)?.ok_or_else(|| not_found(id))
     }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/// Generate the next child ID under a parent.
+/// Build a user-facing error carried in a rusqlite::Error (Display shows the message only).
+fn task_error(msg: String) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(msg.into())
+}
+
+fn not_found(id: &str) -> rusqlite::Error {
+    task_error(format!("No task {id} in this session"))
+}
+
+/// Rebuild a pre-per-session `tasks` table (id as sole primary key) so the
+/// key becomes (session_id, id). Rows are copied unchanged.
+fn migrate_legacy_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT name, pk FROM pragma_table_info('tasks')")?;
+    let cols: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    drop(stmt);
+    if cols.is_empty() {
+        return Ok(()); // fresh DB
+    }
+    let session_pk = cols.iter().any(|(n, pk)| n == "session_id" && *pk > 0);
+    if session_pk {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "BEGIN;
+         DROP INDEX IF EXISTS idx_tasks_session;
+         DROP INDEX IF EXISTS idx_tasks_parent;
+         ALTER TABLE tasks RENAME TO tasks_old;",
+    )?;
+    let res = (|| -> Result<(), rusqlite::Error> {
+        conn.execute_batch(SCHEMA)?;
+        let has_cleanup = cols.iter().any(|(n, _)| n == "cleanup_after");
+        let cleanup = if has_cleanup { "cleanup_after" } else { "NULL" };
+        conn.execute_batch(&format!(
+            "INSERT OR IGNORE INTO tasks (id, session_id, parent_task_id, status, summary, owner, created_at, last_event_at, ended_at, cleanup_after)
+             SELECT id, session_id, parent_task_id, status, summary, owner, created_at, last_event_at, ended_at, {cleanup} FROM tasks_old;
+             DROP TABLE tasks_old;"
+        ))?;
+        Ok(())
+    })();
+    match res {
+        Ok(()) => conn.execute_batch("COMMIT;"),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK;");
+            Err(e)
+        }
+    }
+}
+
+/// Generate the next child ID under a parent, within one session.
 /// Root tasks: `T1`, `T2`, ...
 /// Subtasks: `T1.1`, `T1.2`, ...
-fn next_child_id(conn: &Connection, parent_id: Option<&str>) -> Result<String, rusqlite::Error> {
+fn next_child_id(
+    conn: &Connection,
+    session_id: &str,
+    parent_id: Option<&str>,
+) -> Result<String, rusqlite::Error> {
     let prefix = match parent_id {
         Some(pid) => format!("{pid}."),
         None => "T".to_string(),
     };
-
-    let pattern = if parent_id.is_some() {
-        format!("{prefix}%")
-    } else {
-        "T%".to_string()
-    };
-
-    // Find existing siblings
-    let mut stmt = conn.prepare(
-        "SELECT id FROM tasks WHERE id LIKE ?1 AND id NOT LIKE ?2",
-    )?;
-    // For root: LIKE 'T%' AND NOT LIKE 'T%.%'
-    // For child: LIKE 'T1.%' AND NOT LIKE 'T1.%.%'
+    let pattern = format!("{prefix}%");
     let child_pattern = format!("{prefix}%.%");
+
+    let mut stmt = conn.prepare(
+        "SELECT id FROM tasks WHERE session_id = ?1 AND id LIKE ?2 AND id NOT LIKE ?3",
+    )?;
     let siblings: Vec<String> = stmt
-        .query_map(params![pattern, child_pattern], |row| row.get(0))?
+        .query_map(params![session_id, pattern, child_pattern], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
 
     let next_num = siblings
         .iter()
-        .filter_map(|s| {
-            let tail = s.strip_prefix(&prefix)?;
-            tail.parse::<u32>().ok()
-        })
+        .filter_map(|s| s.strip_prefix(&prefix)?.parse::<u32>().ok())
         .max()
         .unwrap_or(0)
         + 1;
@@ -598,12 +677,83 @@ mod tests {
     }
 
     #[test]
-    fn terminal_tasks_not_resurrected() {
+    fn terminal_tasks_error_unless_reopened() {
         let (reg, _dir) = make_registry();
         reg.create("s1", "Task", None, None).unwrap();
         reg.done("s1", "T1", None).unwrap();
+        let err = reg.done("s1", "T1", None).unwrap_err().to_string();
+        assert_eq!(err, "T1 is already done");
+        assert!(reg.block("s1", "T1", None).is_err());
+        assert_eq!(reg.get("s1", "T1").unwrap().unwrap().status, TaskStatus::Done);
+
+        // Explicit start reopens
         let t = reg.start("s1", "T1", None).unwrap();
-        assert_eq!(t.status, TaskStatus::Done); // still done
+        assert_eq!(t.status, TaskStatus::InProgress);
+        assert!(t.ended_at.is_none());
+
+        reg.abandon("s1", "T1", None).unwrap();
+        let t = reg.reopen("s1", "T1").unwrap();
+        assert_eq!(t.status, TaskStatus::Open);
+    }
+
+    #[test]
+    fn unknown_id_is_clear_error() {
+        let (reg, _dir) = make_registry();
+        reg.create("s1", "Task", None, None).unwrap();
+        assert_eq!(
+            reg.start("s1", "T9", None).unwrap_err().to_string(),
+            "No task T9 in this session"
+        );
+        assert_eq!(
+            reg.rename("s1", "T9", "x").unwrap_err().to_string(),
+            "No task T9 in this session"
+        );
+        assert!(reg.create("s1", "child", Some("T9"), None).is_err());
+    }
+
+    #[test]
+    fn ids_are_per_session() {
+        let (reg, _dir) = make_registry();
+        reg.create("s1", "A", None, None).unwrap();
+        reg.create("s1", "B", None, None).unwrap();
+        let t = reg.create("s2", "C", None, None).unwrap();
+        assert_eq!(t.id, "T1");
+        let c = reg.create("s2", "C child", Some("T1"), None).unwrap();
+        assert_eq!(c.id, "T1.1");
+        // Operations are session-scoped
+        reg.done("s2", "T1", None).unwrap();
+        assert_eq!(reg.get("s1", "T1").unwrap().unwrap().status, TaskStatus::Open);
+        assert!(reg.start("s2", "T2", None).is_err());
+    }
+
+    #[test]
+    fn migrates_legacy_global_pk_schema() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("old.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY, session_id TEXT NOT NULL, parent_task_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'open', summary TEXT NOT NULL, owner TEXT,
+                    created_at INTEGER NOT NULL, last_event_at INTEGER NOT NULL,
+                    ended_at INTEGER, cleanup_after INTEGER);
+                 CREATE INDEX idx_tasks_session ON tasks(session_id);
+                 INSERT INTO tasks (id, session_id, status, summary, created_at, last_event_at)
+                   VALUES ('T1','old','done','Old one',1,1), ('T2','old','open','Old two',2,2);",
+            )
+            .unwrap();
+        }
+        let reg = TaskRegistry::open(&db_path).unwrap();
+        assert_eq!(reg.list("old", None, true).unwrap().len(), 2);
+        assert_eq!(reg.get("old", "T1").unwrap().unwrap().status, TaskStatus::Done);
+        // New session starts at T1 and may reuse ids
+        assert_eq!(reg.create("new", "X", None, None).unwrap().id, "T1");
+        assert_eq!(reg.create("old", "Y", None, None).unwrap().id, "T3");
+        // Reopening is idempotent
+        drop(reg);
+        let reg = TaskRegistry::open(&db_path).unwrap();
+        assert_eq!(reg.list("old", None, true).unwrap().len(), 3);
     }
 
     #[test]

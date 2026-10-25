@@ -7,7 +7,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use rusty_core::{RustyError, UsageInfo};
 use std::pin::Pin;
 use std::time::Duration;
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 
 use crate::types::*;
 use crate::{LlmProvider, MessageRequest, MessageResponse, ProviderConfig, StreamEvent};
@@ -224,30 +224,108 @@ impl LlmProvider for OpenAiProvider {
 
         let stream = resp.bytes_stream();
         let events = futures::stream::unfold(
-            (stream, String::new(), Vec::<(usize, OaiStreamToolCall)>::new()),
-            |(mut stream, mut line_buf, mut tool_calls)| async move {
+            (
+                stream,
+                String::new(),
+                OaiStreamState::default(),
+                std::collections::VecDeque::<Result<StreamEvent, RustyError>>::new(),
+            ),
+            |(mut stream, mut line_buf, mut state, mut pending)| async move {
                 loop {
-                    // Try to find a complete line in the buffer
+                    if let Some(ev) = pending.pop_front() {
+                        return Some((ev, (stream, line_buf, state, pending)));
+                    }
+                    if state.done {
+                        return None;
+                    }
                     if let Some(newline_pos) = line_buf.find('\n') {
                         let line = line_buf[..newline_pos].trim().to_string();
                         line_buf = line_buf[newline_pos + 1..].to_string();
-
-                        if line.is_empty() {
-                            continue;
+                        pending.extend(state.process_line(&line));
+                    } else {
+                        match stream.next().await {
+                            Some(Ok(bytes)) => {
+                                line_buf.push_str(&String::from_utf8_lossy(&bytes));
+                            }
+                            Some(Err(e)) => {
+                                return Some((
+                                    Err(RustyError::Http(e.to_string())),
+                                    (stream, line_buf, state, pending),
+                                ));
+                            }
+                            None => {
+                                if !line_buf.trim().is_empty() {
+                                    debug!("Stream ended with remaining buffer: {line_buf}");
+                                    let rest = std::mem::take(&mut line_buf);
+                                    pending.extend(state.process_line(rest.trim()));
+                                }
+                                // End of stream: emit the single Done.
+                                pending.extend(state.done_event());
+                                if pending.is_empty() {
+                                    return None;
+                                }
+                            }
                         }
+                    }
+                }
+            },
+        );
 
-                        if line == "data: [DONE]" || line == "data:[DONE]" {
-                            return Some((
-                                Ok(StreamEvent::Done {
-                                    stop_reason: Some("end_turn".to_string()),
-                                }),
-                                (stream, line_buf, tool_calls),
-                            ));
-                        }
+        Ok(Box::pin(events))
+    }
+}
 
-                        if let Some(data) = line.strip_prefix("data:").map(|s| s.trim_start()) {
-                            match serde_json::from_str::<OaiStreamChunk>(data) {
-                                Ok(chunk) => {
+/// Per-stream state for OpenAI SSE parsing.
+#[derive(Default)]
+struct OaiStreamState {
+    tool_calls: Vec<(usize, OaiStreamToolCall)>,
+    finish: Option<String>,
+    done: bool,
+}
+
+fn map_finish_reason(finish: &str) -> &'static str {
+    match finish {
+        "tool_calls" => "tool_use",
+        "length" => "max_tokens",
+        _ => "end_turn",
+    }
+}
+
+impl OaiStreamState {
+    /// Emit the single terminal `Done` (once).
+    fn done_event(&mut self) -> Option<Result<StreamEvent, RustyError>> {
+        if self.done {
+            return None;
+        }
+        self.done = true;
+        Some(Ok(StreamEvent::Done {
+            stop_reason: Some(
+                self.finish
+                    .take()
+                    .unwrap_or_else(|| "end_turn".to_string()),
+            ),
+        }))
+    }
+
+    /// Process one trimmed SSE line, returning the events it produces.
+    fn process_line(&mut self, line: &str) -> Vec<Result<StreamEvent, RustyError>> {
+        if line.is_empty() || self.done {
+            return Vec::new();
+        }
+        if line == "data: [DONE]" || line == "data:[DONE]" {
+            return self.done_event().into_iter().collect();
+        }
+        if let Some(data) = line.strip_prefix("data:").map(|s| s.trim_start()) {
+            match serde_json::from_str::<OaiStreamChunk>(data) {
+                Ok(chunk) => return self.handle_chunk(chunk),
+                Err(e) => debug!("Failed to parse SSE chunk: {e}: {data}"),
+            }
+        }
+        Vec::new()
+    }
+
+    fn handle_chunk(&mut self, chunk: OaiStreamChunk) -> Vec<Result<StreamEvent, RustyError>> {
+        let tool_calls = &mut self.tool_calls;
                                     let choice = chunk.choices.first();
                                     let mut events = Vec::new();
 
@@ -365,19 +443,12 @@ impl LlmProvider for OpenAiProvider {
                                     }
                                     }
 
-                                    // Finish reason
+                                    // Finish reason: remember it; Done is emitted at
+                                    // [DONE] / end of stream so a trailing usage chunk is read.
                                     if let Some(c) = choice {
-                                    if let Some(finish) = &c.finish_reason {
-                                        let stop_reason = match finish.as_str() {
-                                            "tool_calls" => "tool_use",
-                                            "stop" => "end_turn",
-                                            "length" => "max_tokens",
-                                            _ => "end_turn",
-                                        };
-                                        events.push(Ok(StreamEvent::Done {
-                                            stop_reason: Some(stop_reason.to_string()),
-                                        }));
-                                    }
+                                        if let Some(finish) = &c.finish_reason {
+                                            self.finish = Some(map_finish_reason(finish).to_string());
+                                        }
                                     }
 
                                     // Usage data (sent on final chunk when stream_options is used)
@@ -389,52 +460,7 @@ impl LlmProvider for OpenAiProvider {
                                         })));
                                     }
 
-                                    if events.is_empty() {
-                                        continue;
-                                    }
-
-                                    // Return first event, buffer the rest
-                                    let first = events.remove(0);
-                                    if let Ok(ref ev) = first {
-                                        trace!("SSE event: {:?}", ev);
-                                    } else {
-                                        trace!("SSE error: {:?}", first);
-                                    }
-                                    // For simplicity, just return the first event per chunk
-                                    // (Most chunks have exactly one event)
-                                    return Some((first, (stream, line_buf, tool_calls)));
-                                }
-                                Err(e) => {
-                                    debug!("Failed to parse SSE chunk: {e}: {data}");
-                                    continue;
-                                }
-                            }
-                        }
-                    } else {
-                        // Need more data
-                        match stream.next().await {
-                            Some(Ok(bytes)) => {
-                                line_buf.push_str(&String::from_utf8_lossy(&bytes));
-                            }
-                            Some(Err(e)) => {
-                                return Some((
-                                    Err(RustyError::Http(e.to_string())),
-                                    (stream, line_buf, tool_calls),
-                                ));
-                            }
-                            None => {
-                                if !line_buf.trim().is_empty() {
-                                    debug!("Stream ended with remaining buffer: {line_buf}");
-                                }
-                                return None;
-                            }
-                        }
-                    }
-                }
-            },
-        );
-
-        Ok(Box::pin(events))
+        events
     }
 }
 
@@ -532,6 +558,61 @@ mod tests {
     fn endpoint_strips_multiple_trailing_slashes() {
         let provider = make_provider("https://api.example.com/v1///");
         assert_eq!(provider.endpoint(), "https://api.example.com/v1/chat/completions");
+    }
+
+    // ── stream state ─────────────────────────────────────────────────
+
+    fn run_lines(lines: &[&str]) -> Vec<StreamEvent> {
+        let mut st = OaiStreamState::default();
+        let mut out = Vec::new();
+        for l in lines {
+            out.extend(st.process_line(l).into_iter().map(|e| e.unwrap()));
+        }
+        out.extend(st.done_event().into_iter().map(|e| e.unwrap()));
+        out
+    }
+
+    fn done_reasons(evs: &[StreamEvent]) -> Vec<Option<String>> {
+        evs.iter()
+            .filter_map(|e| match e {
+                StreamEvent::Done { stop_reason } => Some(stop_reason.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn finish_then_usage_then_done_marker() {
+        let evs = run_lines(&[
+            r#"data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#,
+            r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"#,
+            r#"data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":7}}"#,
+            "data: [DONE]",
+        ]);
+        assert!(matches!(evs[0], StreamEvent::TextDelta(ref s) if s == "hi"));
+        assert!(matches!(evs[1], StreamEvent::Usage(_)));
+        assert_eq!(evs.len(), 3);
+        assert_eq!(done_reasons(&evs), vec![Some("max_tokens".to_string())]);
+    }
+
+    #[test]
+    fn end_of_stream_without_done_marker_emits_single_done() {
+        let evs = run_lines(&[
+            r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+        ]);
+        assert_eq!(done_reasons(&evs), vec![Some("tool_use".to_string())]);
+    }
+
+    #[test]
+    fn no_finish_reason_defaults_to_end_turn() {
+        let evs = run_lines(&["data: [DONE]"]);
+        assert_eq!(done_reasons(&evs), vec![Some("end_turn".to_string())]);
+    }
+
+    #[test]
+    fn done_marker_after_done_is_not_duplicated() {
+        let evs = run_lines(&["data: [DONE]", "data: [DONE]"]);
+        assert_eq!(done_reasons(&evs).len(), 1);
     }
 
     fn make_provider(api_base: &str) -> OpenAiProvider {

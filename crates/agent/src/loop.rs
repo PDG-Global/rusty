@@ -139,6 +139,19 @@ pub struct Agent {
 /// more room to complete.
 const MAX_TASK_GATE_REENTRIES: u32 = 6;
 
+/// Max "keep going" nudges per run when the model stops after making progress.
+const MAX_AUTO_CONTINUES: u32 = 3;
+
+/// Max retries per run when the model returns an empty (or reasoning-only) response.
+const MAX_EMPTY_RESPONSE_RETRIES: u32 = 2;
+
+/// Max automatic continuations per run when a text response is cut off by max_tokens.
+const MAX_TRUNCATION_CONTINUES: u32 = 3;
+
+/// Abort a turn if the stream produces no content (text, thinking or tool deltas)
+/// for this long. Guards against keepalive-only streams without capping long generations.
+const MAX_NO_PROGRESS_DURATION: Duration = Duration::from_secs(300);
+
 #[derive(Default)]
 pub struct AgentCallbacks<'a> {
     pub on_text: Option<&'a TextCallback>,
@@ -235,6 +248,19 @@ impl Agent {
         self.session_id = session_id;
     }
 
+    /// Switch the session this agent tracks tasks under (e.g. after /resume).
+    pub fn set_session_id(&mut self, session_id: String) {
+        self.session_id = session_id;
+    }
+
+    /// The current session's task list, rendered as `T1 (open) — summary` lines.
+    pub fn render_tasks(&self) -> String {
+        self.task_registry
+            .as_ref()
+            .map(|r| r.render_for_tool_output(&self.session_id))
+            .unwrap_or_default()
+    }
+
     /// Set the path to the session-scoped notes scratchpad file.
     pub fn set_notes_path(&mut self, path: PathBuf) {
         self.notes_path = Some(path);
@@ -245,9 +271,8 @@ impl Agent {
         self.checkpoint_path = Some(path);
     }
 
-    /// Refresh the system prompt. The plan is no longer injected here —
-    /// it is returned by the todowrite tool so the model sees it in
-    /// conversation history instead of bloating the system prompt every turn.
+    /// Refresh the system prompt, including the current task list so the model
+    /// always sees up-to-date task state (it survives compaction and resume).
     async fn refresh_system_prompt(&mut self) {
         let mut prompt = self.base_system_prompt.clone();
         // Inject permission-mode guidance so the model knows whether it should
@@ -257,6 +282,18 @@ impl Agent {
         {
             prompt.push_str("\n\n");
             prompt.push_str(mode_text);
+        }
+
+        if let Some(registry) = &self.task_registry {
+            let tasks = registry.format_for_prompt(&self.session_id);
+            if !tasks.is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&tasks);
+                prompt.push_str(
+                    "\nKeep this list current with todowrite: mark a task in_progress before \
+                     starting it and done as soon as it is finished.",
+                );
+            }
         }
 
         // Checkpoint context is injected as a synthetic user message at the
@@ -651,8 +688,12 @@ impl Agent {
 
         // Track whether any tools were used at all (for fallback continuation).
         let mut made_progress_this_run = false;
-        // Limit fallback continuation to once per run to avoid loops.
-        let mut auto_continued_once = false;
+        // Bounded counters for automatic continuation, to avoid loops.
+        let mut auto_continues: u32 = 0;
+        let mut empty_response_retries: u32 = 0;
+        let mut truncation_continues: u32 = 0;
+        // Text from earlier turns that were cut off by max_tokens and auto-continued.
+        let mut truncated_prefix = String::new();
         // Track if plan mode blocked a write/execute tool this turn.
         let mut plan_mode_blocked_this_turn = false;
 
@@ -689,16 +730,15 @@ impl Agent {
                 if let Some(registry) = &self.task_registry {
                     let incomplete = registry.incomplete_details(&self.session_id);
                     if !incomplete.is_empty() {
-                        let reminder = format!(
+                        let reminder = concat!(
                             "\n\nThe todo list has not been updated recently. \
                              If you are working on tasks that benefit from progress tracking, \
                              consider using todowrite to update task status. \
                              Also consider clearing or renaming tasks if they have become stale. \
                              This is a gentle reminder; ignore it if not applicable. \
-                             Make sure that you NEVER mention this reminder to the user.\n\n{}",
-                            registry.render_for_tool_output(&self.session_id)
+                             Make sure that you NEVER mention this reminder to the user."
                         );
-                        self.system_prompt.push_str(&reminder);
+                        self.system_prompt.push_str(reminder);
                     }
                 }
             }
@@ -777,7 +817,9 @@ impl Agent {
             let needs_t3 = self.messages.len() >= 40 || estimated_tokens >= t3_threshold;
             if needs_t3 && self.last_checkpoint_tier.as_u8() < crate::compact::CheckpointTier::Compacted.as_u8() {
                 debug!("Tier 3 full compaction: {} messages (~{} tokens)", self.messages.len(), estimated_tokens);
-                let new_tier = maybe_compact(
+                // Auto-compaction is best-effort: on failure history is left untouched,
+                // so keep going rather than aborting the user's run.
+                let new_tier = match maybe_compact(
                     &mut self.messages,
                     &*self.provider,
                     &self.system_prompt,
@@ -786,7 +828,13 @@ impl Agent {
                     self.last_checkpoint_tier,
                     self.notes_path.as_deref(),
                     self.checkpoint_path.as_deref(),
-                ).await?;
+                ).await {
+                    Ok(tier) => tier,
+                    Err(e) => {
+                        warn!("Auto-compaction failed, continuing without it: {e}");
+                        self.last_checkpoint_tier
+                    }
+                };
                 if new_tier.as_u8() > self.last_checkpoint_tier.as_u8() {
                     self.last_checkpoint_tier = new_tier;
                     // After full compaction, reset tier so the cycle can start fresh
@@ -860,26 +908,24 @@ impl Agent {
             let mut tool_calls: Vec<ToolCallState> = Vec::new();
             let mut got_api_usage = false;
 
-            // Enforce a 5-minute ceiling on the entire turn, in addition to the 120s
-            // per-event timeout.  This catches APIs that keep the connection alive with
-            // SSE keepalives but never produce any real content.
+            // In addition to the 120s per-event timeout, abort if no real content
+            // arrives for MAX_NO_PROGRESS_DURATION. This catches APIs that keep the
+            // connection alive with events that carry no content, without capping
+            // long generations that are making progress.
             let turn_start = std::time::Instant::now();
             let api_call_start = turn_start;
             let mut first_event_time: Option<std::time::Instant> = None;
-            let max_turn_duration = Duration::from_secs(300);
+            let mut last_progress = turn_start;
 
             let stop_reason = loop {
-                let elapsed = turn_start.elapsed();
-                let remaining = if elapsed > max_turn_duration {
-                    Duration::from_secs(0)
-                } else {
-                    max_turn_duration - elapsed
-                };
+                let remaining = MAX_NO_PROGRESS_DURATION.saturating_sub(last_progress.elapsed());
                 let per_event_timeout = Duration::from_secs(120).min(remaining);
                 if per_event_timeout.is_zero() {
-                    warn!("LLM stream exceeded maximum turn duration of 5 minutes; aborting turn");
+                    warn!("LLM stream produced no content for {:?}; aborting turn", MAX_NO_PROGRESS_DURATION);
                     self.finalize_plan();
-                    return Ok("Turn timed out — maximum duration exceeded.".to_string());
+                    return Err(RustyError::Api(
+                        "Model stream stalled: no content received for 5 minutes.".to_string(),
+                    ));
                 }
 
                 let next_event = if let Some(c) = cancel {
@@ -902,7 +948,16 @@ impl Agent {
                             debug!("LLM first token received after {:?}", ttft);
                         }
                         trace!("Agent received stream event: {:?}", event);
-                        match event? {
+                        let event = event?;
+                        if matches!(
+                            event,
+                            StreamEvent::TextDelta(_)
+                                | StreamEvent::ThinkingDelta(_)
+                                | StreamEvent::ToolCallDelta { .. }
+                        ) {
+                            last_progress = std::time::Instant::now();
+                        }
+                        match event {
                             StreamEvent::TextDelta(text) => {
                                 assistant_text.push_str(&text);
                                 if let Some(cb) = on_text {
@@ -962,7 +1017,10 @@ impl Agent {
                         warn!("LLM stream timed out after {}s with no events; aborting turn", per_event_timeout.as_secs());
                         trace!("Agent stream timed out after {}s", per_event_timeout.as_secs());
                         self.finalize_plan();
-                        return Ok("Turn timed out — no response from model.".to_string());
+                        return Err(RustyError::Api(format!(
+                            "Model stream timed out: no events for {}s.",
+                            per_event_timeout.as_secs()
+                        )));
                     }
                 }
             };
@@ -1193,10 +1251,7 @@ impl Agent {
                         let Some(tool) = tool_arc else {
                             return Err(RustyError::Tool(format!("Unknown tool: {tool_name}")));
                         };
-                        let input: serde_json::Value = serde_json::from_str(&tool_args)
-                            .ok()
-                            .filter(|v: &serde_json::Value| v.is_object())
-                            .unwrap_or(serde_json::json!({}));
+                        let input = parse_tool_arguments(&tool_name, &tool_args)?;
                         tool.execute(input, &tool_ctx).await
                     });
                     spawn_handles.push(Some(handle));
@@ -1323,7 +1378,24 @@ impl Agent {
 
             // Check stop reason
             match stop_reason.as_deref() {
-                Some("end_turn") | None => {
+                Some("end_turn") | Some("tool_use") | Some("stop") | None => {
+                    // Empty or reasoning-only response: the model produced nothing
+                    // actionable. Ask it to continue rather than silently ending the run.
+                    if assistant_text.trim().is_empty()
+                        && empty_response_retries < MAX_EMPTY_RESPONSE_RETRIES
+                    {
+                        empty_response_retries += 1;
+                        warn!("Model returned an empty response; asking it to continue ({empty_response_retries}/{MAX_EMPTY_RESPONSE_RETRIES})");
+                        self.messages.push(Message::user(
+                            "Your last response was empty. Continue working on the request, \
+                             or if it is complete, briefly confirm what was done."
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+
+                    // Capture before resetting: the fallback nudge below depends on it.
+                    let wrote_since_last_stop = had_write_or_execute_this_run;
                     if had_write_or_execute_this_run {
                         self.consecutive_read_turns = 0;
                         had_write_or_execute_this_run = false;
@@ -1348,33 +1420,44 @@ impl Agent {
                     }
 
                     // Fallback continuation: the model used tools this run but stopped
-                    // without todowrite tasks. Give it one nudge to keep going, in case
-                    // it stopped mid-request. This catches the common case where the model
+                    // without todowrite tasks. Nudge it to keep going (bounded) if it
+                    // wrote/executed since its last stop, or if its text announces more
+                    // work ("Next, I'll..."). This catches the common case where the model
                     // does partial work without creating a task list.
                     if !self.exited_plan_mode_this_turn
                         && made_progress_this_run
-                        && had_write_or_execute_this_run
-                        && !auto_continued_once
+                        && (wrote_since_last_stop || announces_more_work(&assistant_text))
+                        && auto_continues < MAX_AUTO_CONTINUES
                         && !asking_question
                     {
-                        auto_continued_once = true;
-                        warn!("Model stopped after write/execute with no incomplete tasks; nudging once");
+                        auto_continues += 1;
+                        warn!("Model stopped mid-run with no incomplete tasks; nudging ({auto_continues}/{MAX_AUTO_CONTINUES})");
                         self.messages.push(Message::user(
-                            "If you have more work to do to fully complete the request, continue. \
-                             Otherwise, confirm the task is complete."
+                            "If you have more work to do to fully complete the request, continue now \
+                             without waiting for confirmation. Otherwise, confirm the task is complete."
                                 .to_string(),
                         ));
                         continue;
                     }
 
                     self.finalize_plan();
-                    return Ok(assistant_text);
+                    return Ok(truncated_prefix + &assistant_text);
                 }
                 Some("max_tokens") => {
-                    warn!("Hit max_tokens limit");
+                    if truncation_continues < MAX_TRUNCATION_CONTINUES {
+                        truncation_continues += 1;
+                        warn!("Hit max_tokens limit; auto-continuing ({truncation_continues}/{MAX_TRUNCATION_CONTINUES})");
+                        truncated_prefix.push_str(&assistant_text);
+                        self.messages.push(Message::user(
+                            "Your previous response was cut off by the output token limit. \
+                             Continue exactly where you left off, without repeating anything."
+                                .to_string(),
+                        ));
+                        continue;
+                    }
+                    warn!("Hit max_tokens limit; auto-continue budget exhausted");
                     let warning = format!(
-                        "{}\n\n[Response truncated: hit max_tokens limit. Consider using /compact if context is full.]",
-                        assistant_text
+                        "{truncated_prefix}{assistant_text}\n\n[Response truncated: hit max_tokens limit. Consider using /compact if context is full.]"
                     );
                     self.finalize_plan();
                     return Ok(warning);
@@ -1382,7 +1465,7 @@ impl Agent {
                 Some(other) => {
                     debug!("Unexpected stop reason: {other}");
                     self.finalize_plan();
-                    return Ok(assistant_text);
+                    return Ok(truncated_prefix + &assistant_text);
                 }
             }
         }
@@ -1696,6 +1779,64 @@ fn task_gate_decide(incomplete: &[(String, String)]) -> Option<String> {
 /// Detect whether the model's response text is asking the user a question.
 /// When this returns true, the continuation system should NOT nudge the model
 /// to keep going — the model is waiting for user input.
+/// Return roughly the last `max_bytes` bytes of `text`, cut on a char boundary.
+fn tail_chars(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut start = text.len() - max_bytes;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
+}
+
+/// Parse streamed tool-call arguments. Empty arguments mean "no arguments" (`{}`);
+/// anything else must be a JSON object, otherwise the model gets an explicit error
+/// instead of the tool silently running with empty input.
+fn parse_tool_arguments(tool_name: &str, arguments: &str) -> Result<serde_json::Value, RustyError> {
+    if arguments.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    match serde_json::from_str::<serde_json::Value>(arguments) {
+        Ok(v) if v.is_object() => Ok(v),
+        Ok(_) => Err(RustyError::Tool(format!(
+            "Invalid arguments for {tool_name}: expected a JSON object. Retry the call with valid arguments."
+        ))),
+        Err(e) => Err(RustyError::Tool(format!(
+            "Invalid JSON arguments for {tool_name}: {e}. Retry the call with valid JSON."
+        ))),
+    }
+}
+
+/// Heuristic: does the model's final text announce work it hasn't done yet?
+fn announces_more_work(text: &str) -> bool {
+    let tail = tail_chars(text.trim(), 300).to_lowercase();
+    if tail.is_empty() {
+        return false;
+    }
+    let patterns = [
+        "i'll now",
+        "i will now",
+        "let me now",
+        "now i'll",
+        "now i will",
+        "now let me",
+        "next, i'll",
+        "next i'll",
+        "next, i will",
+        "next i will",
+        "next, let me",
+        "i'll proceed",
+        "i will proceed",
+        "proceeding to",
+        "moving on to",
+    ];
+    // Only consider text that ends mid-intent (e.g. "Now let me update the tests:")
+    let ends_like_intent = tail.ends_with(':') || tail.ends_with("...") || tail.ends_with('…');
+    patterns.iter().any(|p| tail.contains(p)) || ends_like_intent
+}
+
 fn asks_user_question(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -1718,12 +1859,7 @@ fn asks_user_question(text: &str) -> bool {
     }
 
     // Check for question patterns in the last ~200 chars
-    let tail = if trimmed.len() > 200 {
-        &trimmed[trimmed.len() - 200..]
-    } else {
-        trimmed
-    };
-    let tail_lower = tail.to_lowercase();
+    let tail_lower = tail_chars(trimmed, 200).to_lowercase();
 
     let patterns = [
         "would you like",
@@ -1900,6 +2036,39 @@ mod tests {
     fn question_detection_empty_text() {
         assert!(!asks_user_question(""));
         assert!(!asks_user_question("   "));
+    }
+
+    #[test]
+    fn question_detection_multibyte_tail_does_not_panic() {
+        // Multibyte chars straddling the 200-byte tail cut must not panic.
+        let text = "é".repeat(150);
+        assert!(!asks_user_question(&text));
+    }
+
+    #[test]
+    fn parse_tool_arguments_empty_is_empty_object() {
+        assert_eq!(parse_tool_arguments("t", "").unwrap(), serde_json::json!({}));
+        assert_eq!(parse_tool_arguments("t", "  ").unwrap(), serde_json::json!({}));
+    }
+
+    #[test]
+    fn parse_tool_arguments_valid_object() {
+        let v = parse_tool_arguments("t", r#"{"path":"a.rs"}"#).unwrap();
+        assert_eq!(v["path"], "a.rs");
+    }
+
+    #[test]
+    fn parse_tool_arguments_rejects_malformed() {
+        assert!(parse_tool_arguments("t", r#"{"path":"a.rs""#).is_err());
+        assert!(parse_tool_arguments("t", "[1,2]").is_err());
+    }
+
+    #[test]
+    fn announces_more_work_detects_intent() {
+        assert!(announces_more_work("Updated the config. Now let me update the tests:"));
+        assert!(announces_more_work("Done with step 1. Next, I'll wire up the CLI."));
+        assert!(!announces_more_work("All changes are complete and tests pass."));
+        assert!(!announces_more_work(""));
     }
 
     #[test]

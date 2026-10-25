@@ -306,8 +306,8 @@ pub async fn build_system_prompt(
           or required files/dependencies could not be found.\n\
         - If no available tool can move any task forward, stop and report where you are stuck \
           instead of repeatedly re-ordering the same todos.\n\n\
-        The todo list lives in the conversation history (returned by the todowrite tool), not in \
-        the system prompt. You can query it by calling todowrite with no arguments.\n\n\
+        The current task list is shown at the end of this system prompt each turn (when non-empty). \
+        You can also query it by calling todowrite with no arguments.\n\n\
         ## Working to Completion\n\n\
         Work through multi-step requests in one continuous flow. Do not stop after the first step \
         and do not ask the user to confirm the next obvious action. Only stop when the task is \

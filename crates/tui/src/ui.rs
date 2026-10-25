@@ -192,15 +192,7 @@ fn draw_sidebar_tasks(app: &mut AppState, area: Rect, buf: &mut Buffer) {
                 if lines.len() >= visible_height {
                     break;
                 }
-                let style = if line.contains("[completed]") {
-                    Style::default().fg(Color::Green)
-                } else if line.contains("[in_progress]") {
-                    Style::default().fg(Color::Yellow)
-                } else if line.contains("[pending]") {
-                    Style::default().fg(Color::White)
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
+                let style = todo_line_style(line);
                 let truncated = truncate_str(line, max_width);
                 lines.push(Line::from(Span::styled(truncated, style)));
             }
@@ -1735,27 +1727,10 @@ fn draw_todos(app: &AppState, area: Rect, buf: &mut Buffer) {
     if let Some(ref todos) = app.pinned_todos {
         let mut lines: Vec<Line> = Vec::new();
         for todo_line in todos.lines() {
-            let styled = if todo_line.contains("[completed]") {
-                Line::from(Span::styled(
-                    format!("  {todo_line}"),
-                    Style::default().fg(Color::Green),
-                ))
-            } else if todo_line.contains("[in_progress]") {
-                Line::from(Span::styled(
-                    format!("  {todo_line}"),
-                    Style::default().fg(Color::Yellow),
-                ))
-            } else if todo_line.contains("[pending]") {
-                Line::from(Span::styled(
-                    format!("  {todo_line}"),
-                    Style::default().fg(Color::White),
-                ))
-            } else {
-                Line::from(Span::styled(
-                    format!("  {todo_line}"),
-                    Style::default().fg(Color::DarkGray),
-                ))
-            };
+            let styled = Line::from(Span::styled(
+                format!("  {todo_line}"),
+                todo_line_style(todo_line),
+            ));
             lines.push(styled);
         }
 
@@ -3083,5 +3058,19 @@ fn draw_autocomplete(
                 buf[(area.x + col, row_y)].set_char(ch).set_style(desc_style);
             }
         }
+    }
+}
+
+/// Colour a task line rendered by `TaskRegistry::render_for_tool_output`
+/// (e.g. `T1 (in_progress) — summary`).
+fn todo_line_style(line: &str) -> Style {
+    if line.contains("(done)") {
+        Style::default().fg(Color::Green)
+    } else if line.contains("(in_progress)") {
+        Style::default().fg(Color::Yellow)
+    } else if line.contains("(open)") || line.contains("(blocked)") {
+        Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(Color::DarkGray)
     }
 }

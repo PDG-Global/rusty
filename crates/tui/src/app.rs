@@ -166,6 +166,8 @@ pub enum InputEvent {
 
 /// Messages from the agent to display
 pub enum AgentEvent {
+    /// Current task list (rendered by the task registry) for the pinned panel.
+    Tasks(String),
     TextDelta(String),
     ThinkingDelta(String),
     ToolStart { name: String, arguments: String },
@@ -2322,6 +2324,19 @@ impl AppState {
         self.needs_redraw = true;
     }
 
+    /// Update the pinned task panel from a rendered task list
+    /// (`T1 (open) — summary` lines). Hidden when no task is still active.
+    pub fn set_task_panel(&mut self, rendered: &str) {
+        let has_active = rendered.contains("(open)")
+            || rendered.contains("(in_progress)")
+            || rendered.contains("(blocked)");
+        let new = has_active.then(|| rendered.trim().to_string());
+        if new != self.pinned_todos {
+            self.pinned_todos = new;
+            self.needs_redraw = true;
+        }
+    }
+
     pub fn push_error(&mut self, msg: &str) {
         // Flush any partial streaming content as an assistant message before the error
         if !self.streaming_text.is_empty() {
@@ -2438,13 +2453,9 @@ impl AppState {
         }
 
         // For todowrite, update the pinned panel only (don't duplicate inline)
+        // (the CLI also refreshes it straight from the task registry after each turn).
         if name == "todowrite" && !output.trim().is_empty() {
-            let has_active = output.contains("[pending]") || output.contains("[in_progress]");
-            if has_active {
-                self.pinned_todos = Some(output.trim().to_string());
-            } else {
-                self.pinned_todos = None;
-            }
+            self.set_task_panel(output);
         }
 
         self.needs_redraw = true;
