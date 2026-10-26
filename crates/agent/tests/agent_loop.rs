@@ -892,14 +892,51 @@ async fn pm_f_no_nudges_or_task_gate_while_planning() {
 }
 
 #[tokio::test]
-async fn pm_g_bypass_is_restored_after_approval() {
+async fn pm_g_ask_before_edits_is_honoured_even_from_bypass() {
     let (p, _) = FakeProvider::new(vec![exit_call(PLAN), end("Done.")]);
     let mut agent = make_agent(p, plan_tools()); // starts in bypass
     agent.enter_plan_mode();
     assert_eq!(agent.pre_plan_mode(), PermissionMode::BypassPermissions);
     let (q, _) = scripted_questions(vec!["2"]);
     run_with_questions(&mut agent, &q).await.unwrap();
+    assert_eq!(agent.permission_mode(), PermissionMode::Default);
+}
+
+#[tokio::test]
+async fn pm_g3_bypass_restored_only_by_its_explicit_option() {
+    let (p, _) = FakeProvider::new(vec![exit_call(PLAN), end("Done.")]);
+    let mut agent = make_agent(p, plan_tools()); // starts in bypass
+    agent.enter_plan_mode();
+    let (q, _) = scripted_questions(vec!["4"]);
+    run_with_questions(&mut agent, &q).await.unwrap();
     assert_eq!(agent.permission_mode(), PermissionMode::BypassPermissions);
+}
+
+#[tokio::test]
+async fn pm_g4_bypass_option_rejected_when_not_offered() {
+    // Started in Default: "4" is not on offer, so planning continues.
+    let (p, _) = FakeProvider::new(vec![exit_call(PLAN), end("Revising.")]);
+    let mut agent = make_agent(p, plan_tools());
+    agent.set_permission_mode(PermissionMode::Default);
+    agent.enter_plan_mode();
+    let (q, _) = scripted_questions(vec!["4"]);
+    run_with_questions(&mut agent, &q).await.unwrap();
+    assert!(agent.is_planning());
+}
+
+#[tokio::test]
+async fn pm_g5_leaving_plan_mode_forgets_stale_bypass() {
+    // Bypass -> Plan -> (Shift+Tab) Default: a later exit_plan_mode can't restore bypass.
+    let (p, _) = FakeProvider::new(vec![exit_call(PLAN), end("Done.")]);
+    let mut agent = make_agent(p, plan_tools());
+    agent.enter_plan_mode();
+    agent.set_permission_mode(PermissionMode::Default);
+    assert_eq!(agent.pre_plan_mode(), PermissionMode::Default);
+    let (q, asked) = scripted_questions(vec!["4"]);
+    run_with_questions(&mut agent, &q).await.unwrap();
+    // Not planning, so no approval prompt and no mode change.
+    assert!(asked.lock().unwrap().is_empty(), "approval prompt shown outside plan mode");
+    assert_eq!(agent.permission_mode(), PermissionMode::Default);
 }
 
 #[tokio::test]

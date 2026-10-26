@@ -228,6 +228,10 @@ impl Agent {
     pub fn set_permission_mode(&mut self, mode: PermissionMode) {
         if mode == PermissionMode::Plan && self.permission_mode != PermissionMode::Plan {
             self.pre_plan_mode = self.permission_mode;
+        } else if mode != PermissionMode::Plan {
+            // Leaving plan mode other than through approval forgets the earlier
+            // mode, so a later approval can't restore a stale bypass.
+            self.pre_plan_mode = PermissionMode::Default;
         }
         self.permission_mode = mode;
     }
@@ -637,6 +641,15 @@ impl Agent {
         on_text: Option<&TextCallback>,
         on_question: Option<&QuestionCallback>,
     ) -> (ToolResult, Option<String>) {
+        if !self.is_planning() {
+            return (
+                ToolResult::error(
+                    "Not in plan mode. exit_plan_mode only presents a plan for approval while planning."
+                        .to_string(),
+                ),
+                None,
+            );
+        }
         let input: serde_json::Value = serde_json::from_str(arguments).unwrap_or_default();
         let plan = input["plan"].as_str().unwrap_or("").trim().to_string();
         if plan.is_empty() {
@@ -660,14 +673,19 @@ impl Agent {
             );
         };
 
-        let answer = ask(
-            "Plan approval",
+        // Returning to bypass is only offered, explicitly, to a session that was in
+        // bypass before planning; the other choices are always honoured as chosen.
+        let bypass_offered = self.pre_plan_mode == PermissionMode::BypassPermissions;
+        let mut prompt = String::from(
             "Approve this plan?\n\
              1. Approve and auto-accept edits\n\
              2. Approve and ask before edits\n\
              3. Keep planning (type feedback)",
-        )
-        .await;
+        );
+        if bypass_offered {
+            prompt.push_str("\n4. Approve and return to bypass mode (no approvals)");
+        }
+        let answer = ask("Plan approval", &prompt).await;
 
         let new_mode = match parse_plan_answer(&answer) {
             PlanAnswer::Feedback(feedback) => {
@@ -686,14 +704,20 @@ impl Agent {
             }
             PlanAnswer::AutoAcceptEdits => PermissionMode::AcceptEdits,
             PlanAnswer::AskBeforeEdits => PermissionMode::Default,
-        };
-        // A session that bypassed permissions before planning goes back to bypass.
-        let new_mode = if self.pre_plan_mode == PermissionMode::BypassPermissions {
-            PermissionMode::BypassPermissions
-        } else {
-            new_mode
+            PlanAnswer::ReturnToBypass if bypass_offered => PermissionMode::BypassPermissions,
+            PlanAnswer::ReturnToBypass => {
+                return (
+                    ToolResult::success(
+                        "The user's answer was not one of the offered options. Stay in plan mode \
+                         and call exit_plan_mode again."
+                            .to_string(),
+                    ),
+                    None,
+                );
+            }
         };
         self.permission_mode = new_mode;
+        self.pre_plan_mode = PermissionMode::Default;
         self.create_tasks_from_plan(&plan);
         debug!("Plan approved; permission mode is now {:?}", new_mode);
         (
@@ -1978,6 +2002,8 @@ impl FollowupJob {
 pub enum PlanAnswer {
     AutoAcceptEdits,
     AskBeforeEdits,
+    /// Only honoured when the session was in bypass before planning.
+    ReturnToBypass,
     /// Anything else: stay in plan mode and revise (empty when no detail given).
     Feedback(String),
 }
@@ -1993,6 +2019,7 @@ pub fn parse_plan_answer(answer: &str) -> PlanAnswer {
         | "auto-accept" | "auto accept" => PlanAnswer::AutoAcceptEdits,
         "2" | "approve and ask before edits" | "ask before edits" => PlanAnswer::AskBeforeEdits,
         "3" | "keep planning" | "" => PlanAnswer::Feedback(String::new()),
+        "4" | "bypass" | "approve and return to bypass mode" => PlanAnswer::ReturnToBypass,
         _ => PlanAnswer::Feedback(trimmed.to_string()),
     }
 }

@@ -815,7 +815,9 @@ async fn run_headless_stdin(
     let stdin = io::stdin();
     let mut _session_name: Option<String> = None;
 
-    // Plan approval (and the question tool) read the answer from stdin.
+    // Plan approval (and the question tool) read the answer from stdin, but only on
+    // an interactive terminal: with piped input a scripted line could approve a plan.
+    // Without it, plan mode stops and prints the plan instead.
     let ask_cb: rusty_agent::QuestionCallback = Arc::new(|header, prompt| {
         let text = format!("\n[{header}]\n{prompt}\n> ");
         Box::pin(async move {
@@ -862,6 +864,11 @@ async fn run_headless_stdin(
             agent.set_permission_callback(perm_cb);
         }
     }
+
+    let ask_cb_if_tty = {
+        use std::io::IsTerminal;
+        io::stdin().is_terminal().then_some(ask_cb)
+    };
 
     println!("rusty (headless mode). Type 'exit' or Ctrl-D to quit.");
     println!("Slash commands: /help, /init, /plan, /resume, /sessions, /compact, /clear, /copy, /model, /rename, /quit");
@@ -923,7 +930,7 @@ async fn run_headless_stdin(
                             vec![ContentBlock::Text { text: init_prompt }],
                             AgentCallbacks {
                                 on_text: Some(&text_cb),
-                                on_question: Some(&ask_cb),
+                                on_question: ask_cb_if_tty.as_ref(),
                                 ..Default::default()
                             },
                         )
@@ -1083,7 +1090,7 @@ async fn run_headless_stdin(
                             vec![ContentBlock::Text { text: task }],
                             AgentCallbacks {
                                 on_text: Some(&text_cb),
-                                on_question: Some(&ask_cb),
+                                on_question: ask_cb_if_tty.as_ref(),
                                 ..Default::default()
                             },
                         )
@@ -1117,7 +1124,7 @@ async fn run_headless_stdin(
                 vec![ContentBlock::Text { text: line.to_string() }],
                 AgentCallbacks {
                     on_text: Some(&text_cb),
-                    on_question: Some(&ask_cb),
+                    on_question: ask_cb_if_tty.as_ref(),
                     ..Default::default()
                 },
             )
