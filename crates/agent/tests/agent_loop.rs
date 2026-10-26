@@ -424,3 +424,57 @@ async fn s12c_task_gate_cap() {
     assert_eq!(run(&mut agent).await.unwrap(), "stop 6");
     assert_eq!(reqs.lock().unwrap().len(), 7);
 }
+
+// ---------------------------------------------------------------------------
+// Plan mode: never left implicitly, so the user can review the plan.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn p1_plan_mode_blocks_writes_and_stops_after_two_blocked_turns() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("fake_write", "{\"path\":\"a\"}"),
+        call("fake_write", "{\"path\":\"b\"}"),
+    ]);
+    let (w, inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![w]);
+    agent.enter_plan_mode();
+    let out = run(&mut agent).await.unwrap();
+    assert!(out.starts_with("Stopped: still in plan mode"), "got {out:?}");
+    assert_eq!(reqs.lock().unwrap().len(), 2);
+    assert!(inputs.lock().unwrap().is_empty(), "write tool ran in plan mode");
+    assert!(agent.plan_mode, "plan mode was left without exit_plan_mode");
+}
+
+#[tokio::test]
+async fn p2_plan_mode_stays_on_after_a_single_blocked_write() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("fake_write", "{\"path\":\"a\"}"),
+        end("Here is the plan."),
+    ]);
+    let (w, inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![w]);
+    agent.enter_plan_mode();
+    assert_eq!(run(&mut agent).await.unwrap(), "Here is the plan.");
+    assert_eq!(reqs.lock().unwrap().len(), 2);
+    assert!(inputs.lock().unwrap().is_empty());
+    assert!(agent.plan_mode);
+}
+
+#[tokio::test]
+async fn p3_non_consecutive_plan_blocks_do_not_stop_the_run() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("fake_write", "{\"path\":\"a\"}"),
+        call("fake_read", "{\"path\":\"a\"}"),
+        call("fake_write", "{\"path\":\"b\"}"),
+        end("Here is the plan."),
+    ]);
+    let (w, w_inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let (r, r_inputs) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![w, r]);
+    agent.enter_plan_mode();
+    assert_eq!(run(&mut agent).await.unwrap(), "Here is the plan.");
+    assert_eq!(reqs.lock().unwrap().len(), 4);
+    assert!(w_inputs.lock().unwrap().is_empty());
+    assert_eq!(r_inputs.lock().unwrap().len(), 1);
+    assert!(agent.plan_mode);
+}

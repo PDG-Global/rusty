@@ -705,19 +705,30 @@ impl Agent {
         let mut truncation_continues: u32 = 0;
         // Text from earlier turns that were cut off by max_tokens and auto-continued.
         let mut truncated_prefix = String::new();
-        // Track if plan mode blocked a write/execute tool this turn.
+        // Track if plan mode blocked a write/execute tool this turn, and for how many
+        // turns in a row.
         let mut plan_mode_blocked_this_turn = false;
+        let mut consecutive_plan_blocks: u32 = 0;
 
         for turn in 0..self.max_turns {
             // Reset per-turn deduplication tracking.
             self.dedup_keys_this_turn.clear();
 
-            // If plan mode blocked progress last turn, auto-exit so the model can execute.
-            // Don't set exited_plan_mode_this_turn — we want the model to keep working,
-            // not hand control back to the user.
+            // Plan mode is never left implicitly: exit_plan_mode hands control back so
+            // the user can review the plan before anything is written. If the model
+            // keeps trying write/execute tools instead, stop and let the user decide.
             if plan_mode_blocked_this_turn && self.plan_mode {
-                warn!("Plan mode blocked progress last turn; auto-exiting plan mode");
-                self.plan_mode = false;
+                consecutive_plan_blocks += 1;
+                if consecutive_plan_blocks >= 2 {
+                    warn!("Plan mode blocked write/execute tools on consecutive turns; stopping for user review");
+                    self.finalize_plan();
+                    return Ok(
+                        "Stopped: still in plan mode. Review the plan, then ask me to proceed."
+                            .to_string(),
+                    );
+                }
+            } else {
+                consecutive_plan_blocks = 0;
             }
             plan_mode_blocked_this_turn = false;
             if let Some(c) = cancel {
