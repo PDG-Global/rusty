@@ -1377,22 +1377,20 @@ async fn run_tui(
                         rusty_tui::app::AgentEvent::Tasks(agent.render_tasks()),
                     ));
 
-                    // Generate a contextual follow-up suggestion via a non-streaming LLM call.
-                    // Best-effort: failures yield None and fall back to the heuristic in the TUI.
-                    tracing::debug!("[start_run] agent.run() complete, generating suggestion...");
-                    let suggestion = if plan_mode {
-                        tracing::debug!("[start_run] plan mode, skipping suggestion");
-                        None
-                    } else {
-                        tracing::debug!("[start_run] calling generate_followup_suggestion...");
-                        let s = agent.generate_followup_suggestion().await;
-                        tracing::debug!("[start_run] suggestion result: {:?}", s);
-                        s
-                    };
-                    let _ = event_tx.send(AgentTaskEvent::Event(
-                        rusty_tui::app::AgentEvent::Suggestion(suggestion),
-                    ));
-                    tracing::debug!("[start_run] suggestion event sent");
+                    // Follow-up suggestion (best effort, on the fast model). Build the
+                    // request, release the agent, and run it in its own task so the
+                    // next message can start straight away instead of waiting up to 15s.
+                    let job = if plan_mode { None } else { agent.followup_suggestion_job() };
+                    drop(agent);
+                    if let Some(job) = job {
+                        tokio::spawn(async move {
+                            let suggestion = job.run().await;
+                            tracing::debug!("[start_run] suggestion result: {:?}", suggestion);
+                            let _ = event_tx.send(AgentTaskEvent::Event(
+                                rusty_tui::app::AgentEvent::Suggestion(suggestion),
+                            ));
+                        });
+                    }
                 })
             }
 
@@ -2173,8 +2171,8 @@ async fn tui_main_loop(
                         rusty_tui::app::AgentEvent::Suggestion(suggestion) => {
                             // Ignore the LLM suggestion if the user has typed anything
                             // since the response completed (it's now stale).
-                            if app.input != app.input_at_response_complete {
-                                // stale: drop silently
+                            if app.input != app.input_at_response_complete || app.is_streaming {
+                                // stale (user typed or a new run started): drop silently
                             } else if let Some(s) = suggestion {
                                 if !s.is_empty() {
                                     app.input_suggestion = Some(s);

@@ -485,7 +485,14 @@ impl Agent {
     /// Makes a lightweight non-streaming LLM call with only the last user +
     /// assistant pair. Returns `None` if the call fails, times out, or produces
     /// nothing usable. Matches MiMo Code's predict() architecture.
+    /// Generate a short prediction of the user's next message (best effort).
     pub async fn generate_followup_suggestion(&self) -> Option<String> {
+        self.followup_suggestion_job()?.run().await
+    }
+
+    /// Build the follow-up suggestion request without running it, so callers can
+    /// release the agent before the (slow) background call.
+    pub fn followup_suggestion_job(&self) -> Option<FollowupJob> {
         debug!("[suggest] generate_followup_suggestion called, messages={}", self.messages.len());
 
         // Find the last user message and its answering assistant message.
@@ -503,7 +510,7 @@ impl Agent {
             "Based on the conversation above, write the user's most likely next message:",
         );
 
-        let provider = self.background_provider();
+        let provider = self.fast_provider.clone().unwrap_or_else(|| self.provider.clone());
         // Use the background provider's own model name, never the main model.
         let request = MessageRequest {
             model: provider.model().to_string(),
@@ -514,89 +521,7 @@ impl Agent {
             temperature: Some(0.4),
             thinking_budget: None,
         };
-
-        debug!("[suggest] calling LLM for prediction...");
-        // Wrap in a timeout to prevent blocking the UI.
-        let response = match tokio::time::timeout(
-            Duration::from_secs(15),
-            provider.create_message(request),
-        )
-        .await
-        {
-            Ok(Ok(r)) => {
-                debug!("[suggest] LLM response received");
-                r
-            }
-            Ok(Err(e)) => {
-                debug!("[suggest] LLM call failed: {e}");
-                return None;
-            }
-            Err(_) => {
-                debug!("[suggest] LLM call timed out after 15s");
-                return None;
-            }
-        };
-
-        let mut text = response
-            .content
-            .iter()
-            .filter_map(|b| match b {
-                ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        // Strip thinking blocks (some models wrap reasoning in <think> tags).
-        if let Some(start) = text.find("<think>") {
-            if let Some(end) = text.find("</think>") {
-                let after = &text[end + 7..];
-                text = after.trim().to_string();
-            } else {
-                // No closing tag — strip everything from <think> onward.
-                text = text[..start].trim().to_string();
-            }
-        }
-
-        // Take only the first non-empty line (MiMo pattern).
-        let first_line = text
-            .lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty())
-            .unwrap_or("")
-            .to_string();
-        text = first_line;
-
-        if text.is_empty() || text.eq_ignore_ascii_case("NONE") {
-            debug!("[suggest] empty or NONE, returning None");
-            return None;
-        }
-
-        // Strip surrounding quotes if the model added them.
-        if (text.starts_with('"') && text.ends_with('"'))
-            || (text.starts_with('\'') && text.ends_with('\''))
-            || (text.starts_with('\u{201C}') && text.ends_with('\u{201D}'))
-            || (text.starts_with('\u{2018}') && text.ends_with('\u{2019}'))
-        {
-            if text.chars().count() > 2 {
-                text = text[1..text.chars().count() - 1].trim().to_string();
-            }
-        }
-
-        // Cap to a reasonable length for the input line.
-        const MAX_LEN: usize = 120;
-        let count = text.chars().count();
-        if count > MAX_LEN {
-            let truncated: String = text.chars().take(MAX_LEN.saturating_sub(1)).collect();
-            text = format!("{truncated}\u{2026}");
-        }
-
-        debug!("[suggest] returning prediction: {}", text);
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        Some(FollowupJob { provider, request })
     }
 
     /// Extract details of incomplete tasks from the most recent `todowrite` call.
@@ -855,7 +780,9 @@ impl Agent {
 
             // Tier 3: Full compaction (inline, blocking)
             let t3_threshold = (context_window as f64 * 0.75) as usize;
-            let needs_t3 = self.messages.len() >= 40 || estimated_tokens >= t3_threshold;
+            // Token-based only: a message-count trigger forced a blocking summary call
+            // on conversations that were long but nowhere near the context limit.
+            let needs_t3 = estimated_tokens >= t3_threshold;
             if needs_t3 && self.last_checkpoint_tier.as_u8() < crate::compact::CheckpointTier::Compacted.as_u8() {
                 debug!("Tier 3 full compaction: {} messages (~{} tokens)", self.messages.len(), estimated_tokens);
                 // Auto-compaction is best-effort: on failure history is left untouched,
@@ -901,7 +828,10 @@ impl Agent {
                 }
             }
 
-            let tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();
+            // Sorted so the request prefix is identical across turns and sessions,
+            // which keeps provider prompt caches warm (HashMap order is random).
+            let mut tool_defs: Vec<_> = self.tools.values().map(|t| t.definition()).collect();
+            tool_defs.sort_by(|a, b| a.name.cmp(&b.name));
 
             // Only send thinking budget when the model explicitly supports it
             // (i.e. the model entry declared a thinking_budget).
@@ -1809,6 +1739,101 @@ impl Agent {
 /// continuations), when any trailing tool result failed, or in plan mode. The
 /// minimal budget is used only when the trailing messages are purely successful
 /// tool results. It never drops to `None`, as some models are thinking-only.
+/// A prepared follow-up suggestion request; see `Agent::followup_suggestion_job`.
+pub struct FollowupJob {
+    provider: Arc<dyn LlmProvider>,
+    request: MessageRequest,
+}
+
+impl FollowupJob {
+    pub async fn run(self) -> Option<String> {
+        debug!("[suggest] calling LLM for prediction...");
+        // Wrap in a timeout to prevent blocking the UI.
+        let response = match tokio::time::timeout(
+            Duration::from_secs(15),
+            self.provider.create_message(self.request),
+        )
+        .await
+        {
+            Ok(Ok(r)) => {
+                debug!("[suggest] LLM response received");
+                r
+            }
+            Ok(Err(e)) => {
+                debug!("[suggest] LLM call failed: {e}");
+                return None;
+            }
+            Err(_) => {
+                debug!("[suggest] LLM call timed out after 15s");
+                return None;
+            }
+        };
+
+        let mut text = response
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        // Strip thinking blocks (some models wrap reasoning in <think> tags).
+        if let Some(start) = text.find("<think>") {
+            if let Some(end) = text.find("</think>") {
+                let after = &text[end + 7..];
+                text = after.trim().to_string();
+            } else {
+                // No closing tag — strip everything from <think> onward.
+                text = text[..start].trim().to_string();
+            }
+        }
+
+        // Take only the first non-empty line (MiMo pattern).
+        let first_line = text
+            .lines()
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty())
+            .unwrap_or("")
+            .to_string();
+        text = first_line;
+
+        if text.is_empty() || text.eq_ignore_ascii_case("NONE") {
+            debug!("[suggest] empty or NONE, returning None");
+            return None;
+        }
+
+        // Strip surrounding quotes if the model added them.
+        if (text.starts_with('"') && text.ends_with('"'))
+            || (text.starts_with('\'') && text.ends_with('\''))
+            || (text.starts_with('\u{201C}') && text.ends_with('\u{201D}'))
+            || (text.starts_with('\u{2018}') && text.ends_with('\u{2019}'))
+        {
+            let count = text.chars().count();
+            if count > 2 {
+                // Slice by chars: curly quotes are multi-byte.
+                text = text.chars().skip(1).take(count - 2).collect::<String>().trim().to_string();
+            }
+        }
+
+        // Cap to a reasonable length for the input line.
+        const MAX_LEN: usize = 120;
+        let count = text.chars().count();
+        if count > MAX_LEN {
+            let truncated: String = text.chars().take(MAX_LEN.saturating_sub(1)).collect();
+            text = format!("{truncated}\u{2026}");
+        }
+
+        debug!("[suggest] returning prediction: {}", text);
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+}
+
 fn turn_thinking_budget(configured: Option<u32>, messages: &[Message], plan_mode: bool) -> Option<u32> {
     let full = configured?;
     if plan_mode {

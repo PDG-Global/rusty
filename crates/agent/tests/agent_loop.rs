@@ -669,3 +669,56 @@ async fn e3_resumed_agent_call_counts_as_write_even_if_labelled_explore() {
     let blocked = tool_results(&reqs[1]).iter().any(|(c, e)| *e == Some(true) && c.contains("plan mode"));
     assert!(blocked, "resumed agent call was not blocked in plan mode");
 }
+
+// ---------------------------------------------------------------------------
+// Speed and caching.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn c1_tool_definitions_are_sent_sorted_by_name() {
+    let (p, reqs) = FakeProvider::new(vec![end("ok")]);
+    let (z, _) = FakeTool::new("zeta_tool", PermissionLevel::ReadOnly);
+    let (a, _) = FakeTool::new("alpha_tool", PermissionLevel::ReadOnly);
+    let (m, _) = FakeTool::new("mid_tool", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![z, a, m]);
+    run(&mut agent).await.unwrap();
+    let names: Vec<String> = reqs.lock().unwrap()[0].tools.iter().map(|t| t.name.clone()).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted);
+}
+
+/// Replies to `create_message` with a fixed text (for suggestion parsing).
+struct ReplyProvider(&'static str);
+
+#[async_trait]
+impl LlmProvider for ReplyProvider {
+    fn name(&self) -> &str {
+        "reply"
+    }
+    fn model(&self) -> &str {
+        "reply-model"
+    }
+    async fn create_message(&self, _r: MessageRequest) -> Result<MessageResponse, RustyError> {
+        Ok(MessageResponse {
+            content: vec![ContentBlock::Text { text: self.0.into() }],
+            usage: Default::default(),
+            stop_reason: Some("end_turn".into()),
+        })
+    }
+    async fn create_message_stream(
+        &self,
+        _r: MessageRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, RustyError>> + Send>>, RustyError> {
+        Ok(Box::pin(futures::stream::empty()))
+    }
+}
+
+#[tokio::test]
+async fn c2_suggestion_strips_curly_quotes_without_panicking() {
+    let (p, _) = FakeProvider::new(vec![end("Done.")]);
+    let mut agent = make_agent(p, vec![]);
+    run(&mut agent).await.unwrap();
+    agent.set_fast_provider(Some(Arc::new(ReplyProvider("\u{201C}run the tests\u{201D}"))));
+    assert_eq!(agent.generate_followup_suggestion().await.as_deref(), Some("run the tests"));
+}
