@@ -35,6 +35,8 @@ pub struct ProviderPreset {
     pub context_window: Option<u32>,
     /// Thinking/reasoning token budget. None means thinking is not supported.
     pub thinking_budget: Option<u32>,
+    /// Cheaper model of the same provider for background work (None disables routing).
+    pub fast_model: Option<&'static str>,
 }
 
 impl ProviderPreset {
@@ -55,6 +57,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: Some(4096),
+                fast_model: None,
             },
             Self {
                 name: "Xiaomi MiMo (China)",
@@ -70,6 +73,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: Some(4096),
+                fast_model: None,
             },
             Self {
                 name: "Kimi (Global)",
@@ -85,6 +89,7 @@ impl ProviderPreset {
                 extra_headers: Some(vec![("X-Title", "Rusty")]),
                 temperature: Some(1.0),
                 thinking_budget: Some(4096),
+                fast_model: Some("kimi-for-coding-highspeed"),
             },
             Self {
                 name: "Kimi (China)",
@@ -100,6 +105,7 @@ impl ProviderPreset {
                 extra_headers: Some(vec![("X-Title", "Rusty")]),
                 temperature: Some(1.0),
                 thinking_budget: Some(4096),
+                fast_model: Some("kimi-for-coding-highspeed"),
             },
             Self {
                 name: "DeepSeek (Global)",
@@ -115,6 +121,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: Some(4096),
+                fast_model: Some("deepseek-flash"),
             },
             Self {
                 name: "DeepSeek (China)",
@@ -130,6 +137,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: Some(4096),
+                fast_model: Some("deepseek-flash"),
             },
             Self {
                 name: "Zhipu GLM (Global)",
@@ -145,6 +153,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: Some("glm-5.3-flash"),
             },
             Self {
                 name: "Zhipu GLM (China)",
@@ -160,6 +169,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: Some("glm-5.3-flash"),
             },
             Self {
                 name: "MiniMax (Global)",
@@ -175,6 +185,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: Some("MiniMax-M3.1-Flash"),
             },
             Self {
                 name: "MiniMax (China)",
@@ -190,6 +201,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: Some("MiniMax-M3.1-Flash"),
             },
             Self {
                 name: "OpenAI",
@@ -205,6 +217,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: Some("gpt-6-luna"),
             },
             Self {
                 name: "Anthropic",
@@ -225,6 +238,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: Some("claude-haiku-5-5"),
             },
             Self {
                 name: "Ollama (local)",
@@ -240,6 +254,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: None,
             },
             Self {
                 name: "Custom (OpenAI-compatible)",
@@ -255,6 +270,7 @@ impl ProviderPreset {
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
+                fast_model: None,
             },
         ]
     }
@@ -549,6 +565,7 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
         max_tokens: 16_384,
         temperature: Some(preset.temperature.unwrap_or(0.7)),
         thinking_budget: preset.thinking_budget,
+        fast_model: preset.fast_model.map(|m| m.to_string()),
         extra_headers: preset.extra_headers.clone().map(|h| h.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()),
         context_window: preset.context_window,
     };

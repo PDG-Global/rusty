@@ -81,6 +81,9 @@ pub type PermissionCallback = Arc<
 
 pub struct Agent {
     provider: Arc<dyn LlmProvider>,
+    /// Cheaper model of the same provider for background work (follow-up
+    /// suggestions, checkpoints, compaction summaries). Main turns never use it.
+    fast_provider: Option<Arc<dyn LlmProvider>>,
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Config,
     working_dir: PathBuf,
@@ -180,6 +183,7 @@ impl Agent {
 
         Self {
             provider,
+            fast_provider: None,
             tools: tool_map,
             config,
             working_dir,
@@ -315,6 +319,19 @@ impl Agent {
         self.system_prompt = prompt;
     }
 
+    /// Set (or clear) the fast provider used for background work.
+    pub fn set_fast_provider(&mut self, provider: Option<Arc<dyn LlmProvider>>) {
+        self.fast_provider = provider;
+    }
+
+    /// Provider for background work: the fast one if set, else the main provider.
+    fn background_provider(&self) -> &dyn LlmProvider {
+        match &self.fast_provider {
+            Some(p) => &**p,
+            None => &*self.provider,
+        }
+    }
+
     /// Replace the LLM provider at runtime (used for model switching).
     pub fn set_provider(&mut self, provider: Arc<dyn LlmProvider>) {
         self.provider = provider;
@@ -358,7 +375,7 @@ impl Agent {
         };
         let result = crate::compact::force_compact(
             &mut msgs,
-            &*self.provider,
+            self.background_provider(),
             &self.system_prompt,
             plan_text.as_deref(),
             self.notes_path.as_deref(),
@@ -486,8 +503,10 @@ impl Agent {
             "Based on the conversation above, write the user's most likely next message:",
         );
 
+        let provider = self.background_provider();
+        // Use the background provider's own model name, never the main model.
         let request = MessageRequest {
-            model: self.config.model.clone(),
+            model: provider.model().to_string(),
             system: Some(system.to_string()),
             messages: vec![last_user.clone(), last_assistant.clone(), nudge],
             tools: vec![],
@@ -500,7 +519,7 @@ impl Agent {
         // Wrap in a timeout to prevent blocking the UI.
         let response = match tokio::time::timeout(
             Duration::from_secs(15),
-            self.provider.create_message(request),
+            provider.create_message(request),
         )
         .await
         {
@@ -821,7 +840,7 @@ impl Agent {
                 debug!("Tier 2: spawning background checkpoint writer (~{} tokens)", estimated_tokens);
                 let spawned = crate::checkpoint_writer::spawn_checkpoint_writer(
                     self.messages.clone(),
-                    self.provider.clone(),
+                    self.fast_provider.clone().unwrap_or_else(|| self.provider.clone()),
                     self.system_prompt.clone(),
                     self.checkpoint_path.clone().unwrap_or_else(|| PathBuf::from("/dev/null")),
                     self.notes_path.clone(),
@@ -843,7 +862,10 @@ impl Agent {
                 // so keep going rather than aborting the user's run.
                 let new_tier = match maybe_compact(
                     &mut self.messages,
-                    &*self.provider,
+                    match &self.fast_provider {
+                        Some(p) => &**p,
+                        None => &*self.provider,
+                    },
                     &self.system_prompt,
                     context_window,
                     plan_text.as_deref(),
@@ -884,7 +906,11 @@ impl Agent {
             // Only send thinking budget when the model explicitly supports it
             // (i.e. the model entry declared a thinking_budget).
             // This prevents sending reasoning_budget to providers that don't support it (e.g. Kimi).
-            let thinking_budget = self.config.thinking_budget;
+            let thinking_budget = turn_thinking_budget(
+                self.config.thinking_budget,
+                &self.messages,
+                self.plan_mode,
+            );
             let level = thinking_budget
                 .map(rusty_core::budget_to_level)
                 .unwrap_or(rusty_core::ThinkingLevel::Minimal);
@@ -893,7 +919,7 @@ impl Agent {
                 cb(if thinking_budget.is_some() { Some(level) } else { None });
             }
 
-            // Ensure max_tokens always exceeds thinking_budget + headroom to prevent API hangs.
+            // Ensure max_tokens always exceeds the per-turn thinking budget + headroom to prevent API hangs.
             let max_tokens = self.config.max_tokens.max(thinking_budget.map(|b| b + 4096).unwrap_or(0));
             let request = MessageRequest {
                 model: self.config.model.clone(),
@@ -1224,8 +1250,8 @@ impl Agent {
                         warn!("Tool {} denied: {}", tc.name, reason);
                         // Track if plan mode blocked a write/execute tool
                         if self.plan_mode {
-                            if let Some(tool) = self.tools.get(&tc.name) {
-                                let level = tool.permission_level();
+                            if self.tools.contains_key(&tc.name) {
+                                let level = self.effective_level(&tc.name, &tc.arguments);
                                 if level == PermissionLevel::Write || level == PermissionLevel::Execute {
                                     plan_mode_blocked_this_turn = true;
                                 }
@@ -1250,8 +1276,8 @@ impl Agent {
                     made_progress_this_run = true;
 
                     // Track write/execute usage for research-loop detection
-                    if let Some(tool) = self.tools.get(&tc.name) {
-                        let level = tool.permission_level();
+                    if self.tools.contains_key(&tc.name) {
+                        let level = self.effective_level(&tc.name, &tc.arguments);
                         if level == PermissionLevel::Write || level == PermissionLevel::Execute {
                             had_write_or_execute_this_run = true;
                         }
@@ -1293,7 +1319,7 @@ impl Agent {
                     })
                 ).await;
 
-                for (((tc, _decision), result), dup) in permission_results.iter().zip(results).zip(is_duplicate) {
+                for (((tc, decision), result), dup) in permission_results.iter().zip(results).zip(is_duplicate) {
                     // Duplicate calls get a synthetic result instead of re-executing.
                     if dup {
                         let dup_result = ToolResult::success(format!(
@@ -1322,16 +1348,23 @@ impl Agent {
                             ToolResult::error(e.to_string())
                         }
                         None => {
-                            // Permission denied — already logged
+                            // Permission denied (already logged). Pass the reason on so the
+                            // model knows what to do instead (e.g. call exit_plan_mode).
+                            let content = match decision {
+                                PermissionDecision::Deny(reason) if !reason.is_empty() => {
+                                    format!("Permission denied: {reason}")
+                                }
+                                _ => "Permission denied".to_string(),
+                            };
                             if let Some(cb) = on_tool {
                                 cb(&tc.name, ToolStatus::Error {
-                                    output: format!("Permission denied"),
+                                    output: content.clone(),
                                 });
                             }
                             self.messages.push(Message::user_blocks(vec![
                                 ContentBlock::ToolResult {
                                     tool_use_id: tc.id.clone(),
-                                    content: format!("Permission denied"),
+                                    content,
                                     is_error: Some(true),
                                 },
                             ]));
@@ -1636,25 +1669,37 @@ impl Agent {
         tc: &ToolCallState,
         _ctx: &ToolContext,
     ) -> PermissionDecision {
-        let normalized = normalize_tool_name(&tc.name);
-        let effective_level = if normalized == "bash" {
-            let input: serde_json::Value = serde_json::from_str(&tc.arguments)
-                .unwrap_or(serde_json::Value::Null);
-            let cmd = input["command"].as_str().unwrap_or("");
-            match classify_bash_command(cmd) {
-                BashClassification::ReadOnly => PermissionLevel::ReadOnly,
-                BashClassification::Write => PermissionLevel::Execute,
-                BashClassification::Execute => PermissionLevel::Execute,
-            }
-        } else {
-            self.tools
-                .get(&normalized)
-                .map(|t| t.permission_level())
-                .unwrap_or(PermissionLevel::Execute)
-        };
-
+        let effective_level = self.effective_level(&tc.name, &tc.arguments);
         self.check_permission_tiered(&tc.name, &tc.arguments, effective_level)
             .await
+    }
+
+    /// Permission level of a specific call: read-only bash commands and explore
+    /// sub-agents (which only get read-only tools) count as read-only.
+    fn effective_level(&self, name: &str, arguments: &str) -> PermissionLevel {
+        let normalized = normalize_tool_name(name);
+        let input = || -> serde_json::Value {
+            serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null)
+        };
+        match normalized.as_str() {
+            "bash" => match classify_bash_command(input()["command"].as_str().unwrap_or("")) {
+                BashClassification::ReadOnly => PermissionLevel::ReadOnly,
+                BashClassification::Write | BashClassification::Execute => PermissionLevel::Execute,
+            },
+            // Resuming runs the stored sub-agent with its original type, ignoring
+            // `subagent_type`, so only a fresh explore sub-agent is read-only.
+            "agent"
+                if input()["resume"].as_str().unwrap_or("").is_empty()
+                    && input()["subagent_type"].as_str().unwrap_or("explore") == "explore" =>
+            {
+                PermissionLevel::ReadOnly
+            }
+            _ => self
+                .tools
+                .get(&normalized)
+                .map(|t| t.permission_level())
+                .unwrap_or(PermissionLevel::Execute),
+        }
     }
 
     async fn check_permission_tiered(
@@ -1757,6 +1802,46 @@ impl Agent {
 }
 
 /// Extract the target file path from tool arguments, if applicable.
+/// Choose the thinking budget for the next request.
+///
+/// With no configured budget this stays `None`. Otherwise the full budget is used
+/// when the model is reacting to the user's own input (first turn, nudges, gates,
+/// continuations), when any trailing tool result failed, or in plan mode. The
+/// minimal budget is used only when the trailing messages are purely successful
+/// tool results. It never drops to `None`, as some models are thinking-only.
+fn turn_thinking_budget(configured: Option<u32>, messages: &[Message], plan_mode: bool) -> Option<u32> {
+    let full = configured?;
+    if plan_mode {
+        return Some(full);
+    }
+    let is_result_only = |m: &Message| {
+        m.role == Role::User
+            && matches!(&m.content, rusty_core::MessageContent::Blocks(b)
+                if !b.is_empty() && b.iter().all(|c| matches!(c, ContentBlock::ToolResult { .. })))
+    };
+    // Each tool result is stored as its own message, so examine the whole trailing run.
+    let mut seen_result = false;
+    for m in messages.iter().rev() {
+        if !is_result_only(m) {
+            break;
+        }
+        seen_result = true;
+        if let rusty_core::MessageContent::Blocks(blocks) = &m.content {
+            if blocks
+                .iter()
+                .any(|c| matches!(c, ContentBlock::ToolResult { is_error: Some(true), .. }))
+            {
+                return Some(full);
+            }
+        }
+    }
+    if seen_result {
+        Some(full.min(level_to_budget(ThinkingLevel::Minimal)))
+    } else {
+        Some(full)
+    }
+}
+
 fn extract_path_from_tool_args(tool_name: &str, arguments: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(arguments).ok()?;
     match tool_name {

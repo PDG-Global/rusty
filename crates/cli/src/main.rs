@@ -48,6 +48,14 @@ struct Args {
     #[arg(long)]
     preset: Option<String>,
 
+    /// Fast model ID for background work (suggestions, checkpoints, compaction, explore sub-agents)
+    #[arg(long, conflicts_with = "no_fast_model")]
+    fast_model: Option<String>,
+
+    /// Disable fast-model routing; all background work uses the main model
+    #[arg(long)]
+    no_fast_model: bool,
+
     /// API key
     #[arg(long, env = "OPENAI_API_KEY")]
     api_key: Option<String>,
@@ -107,6 +115,63 @@ struct Args {
     /// Path to a JSON keymap file for custom key bindings
     #[arg(long)]
     keymap: Option<PathBuf>,
+}
+
+/// Maximum output tokens for background (fast model) requests.
+const FAST_MODEL_MAX_TOKENS: u32 = 4096;
+
+/// Build the fast provider used for background work. Returns `None` when no fast
+/// model is set, it matches the main model, or the provider cannot be created.
+/// The fast model for a registry entry. Entries saved before `fast_model`
+/// existed fall back to the matching built-in preset (same name and endpoint).
+fn entry_fast_model(entry: &rusty_core::ModelEntry) -> Option<String> {
+    entry.fast_model.clone().or_else(|| {
+        rusty_tui::model_registry::default_model_list()
+            .into_iter()
+            .find(|d| d.name == entry.name && d.api_base == entry.api_base)
+            .and_then(|d| d.fast_model)
+    })
+}
+
+/// Wrap a fast provider so a failing fast model falls back to the main one.
+fn with_fallback(
+    fast: Option<Arc<dyn rusty_provider::LlmProvider>>,
+    main: &Arc<dyn rusty_provider::LlmProvider>,
+) -> Option<Arc<dyn rusty_provider::LlmProvider>> {
+    fast.map(|f| {
+        Arc::new(rusty_provider::FallbackProvider::new(f, main.clone()))
+            as Arc<dyn rusty_provider::LlmProvider>
+    })
+}
+
+fn build_fast_provider(
+    provider_type: rusty_core::ProviderType,
+    api_key: String,
+    api_base: String,
+    extra_headers: Option<std::collections::HashMap<String, String>>,
+    main_model: &str,
+    fast_model: Option<&str>,
+    temperature: Option<f32>,
+) -> Option<Arc<dyn rusty_provider::LlmProvider>> {
+    let fast = fast_model.filter(|m| !m.is_empty() && *m != main_model)?;
+    match rusty_provider::create_provider(
+        provider_type,
+        ProviderConfig {
+            api_key,
+            api_base,
+            model: fast.to_string(),
+            max_tokens: FAST_MODEL_MAX_TOKENS,
+            temperature,
+            thinking_budget: None,
+            extra_headers,
+        },
+    ) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            tracing::warn!("Could not create fast-model provider, using main model: {e}");
+            None
+        }
+    }
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -340,6 +405,7 @@ async fn main() -> Result<()> {
                 }
             }
             "kimi" | "moonshot" => {
+                config.fast_model = Some("kimi-for-coding-highspeed".to_string());
                 config.api_base = Some("https://api.kimi.com/coding/v1".to_string());
                 config.temperature = Some(1.0);
                 if args.model.is_none() {
@@ -347,30 +413,35 @@ async fn main() -> Result<()> {
                 }
             }
             "openai" => {
+                config.fast_model = Some("gpt-6-luna".to_string());
                 config.api_base = Some("https://api.openai.com/v1".to_string());
                 if args.model.is_none() {
                     config.model = "gpt-6.1-sol".to_string();
                 }
             }
             "deepseek" => {
+                config.fast_model = Some("deepseek-flash".to_string());
                 config.api_base = Some("https://api.deepseek.com".to_string());
                 if args.model.is_none() {
                     config.model = "deepseek-v4-pro".to_string();
                 }
             }
             "zhipu" | "glm" => {
+                config.fast_model = Some("glm-5.3-flash".to_string());
                 config.api_base = Some("https://api.z.ai/api/coding/paas/v4".to_string());
                 if args.model.is_none() {
                     config.model = "glm-5.3".to_string();
                 }
             }
             "minimax" => {
+                config.fast_model = Some("MiniMax-M3.1-Flash".to_string());
                 config.api_base = Some("https://api.minimax.io/v1".to_string());
                 if args.model.is_none() {
                     config.model = "MiniMax-M3".to_string();
                 }
             }
             "anthropic" | "claude" => {
+                config.fast_model = Some("claude-haiku-5-5".to_string());
                 config.api_base = Some("https://api.anthropic.com/v1".to_string());
                 config.provider_type = rusty_core::ProviderType::Anthropic;
                 if args.model.is_none() {
@@ -419,6 +490,7 @@ async fn main() -> Result<()> {
         if config.context_window.is_none() {
             config.context_window = entry.context_window;
         }
+        config.fast_model = entry_fast_model(entry);
     } else {
         // Legacy flat settings — only fill gaps not set by preset/CLI
         if config.api_base.is_none() {
@@ -436,6 +508,11 @@ async fn main() -> Result<()> {
     // CLI overrides (always win over presets, registry, and legacy settings)
     if let Some(model) = args.model {
         config.model = model;
+    }
+    if args.no_fast_model {
+        config.fast_model = None;
+    } else if let Some(fast) = args.fast_model.clone() {
+        config.fast_model = Some(fast);
     }
     if let Some(max_tokens) = args.max_tokens {
         config.max_tokens = max_tokens;
@@ -503,6 +580,7 @@ async fn main() -> Result<()> {
     // based on the model entry's ProviderType.
     // We use `config` (not the raw entry) so that CLI overrides (--model, --api-base)
     // are respected even when a registry entry is active.
+    let fast_api_key = api_key.clone();
     let provider: Arc<dyn rusty_provider::LlmProvider> = if let Some(ref entry) = active_entry {
         rusty_provider::create_provider(
             entry.provider,
@@ -533,6 +611,19 @@ async fn main() -> Result<()> {
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?
     };
+
+    // Second provider for background work: same type, base URL, key and headers,
+    // but the fast model, no thinking budget and a small output cap.
+    let fast_provider = build_fast_provider(
+        active_entry.as_ref().map(|e| e.provider).unwrap_or(config.provider_type),
+        fast_api_key,
+        config.api_base.clone().or_else(|| active_entry.as_ref().map(|e| e.api_base.clone())).unwrap_or_default(),
+        active_entry.as_ref().and_then(|e| e.extra_headers.clone()),
+        &config.model,
+        config.fast_model.as_deref(),
+        config.temperature,
+    );
+    let fast_provider = with_fallback(fast_provider, &provider);
 
     // Build system prompt (must happen before make_agent_tool so sub-agents
     // receive the full context including AGENTS.md/CLAUDE.md, platform info, etc.)
@@ -604,6 +695,7 @@ async fn main() -> Result<()> {
         system_prompt.clone(),
         config.clone(),
         Some(background_manager.clone()),
+        fast_provider.clone(),
     );
     tools.push(Box::new(agent_tool));
 
@@ -654,6 +746,7 @@ async fn main() -> Result<()> {
             system_prompt,
         )
     };
+    agent.set_fast_provider(fast_provider);
     agent.set_permission_mode(config.permission_mode);
     agent.set_task_registry(task_registry.clone(), session_id.clone());
     agent.set_notes_path(notes_path);
@@ -1440,10 +1533,22 @@ async fn run_tui(
                                                     thinking_budget: entry.thinking_budget,
                                                     extra_headers: entry.extra_headers.clone(),
                                                 };
+                                                let new_fast = build_fast_provider(
+                                                    entry.provider,
+                                                    provider_config.api_key.clone(),
+                                                    entry.api_base.clone(),
+                                                    entry.extra_headers.clone(),
+                                                    &entry.model,
+                                                    entry_fast_model(&entry).as_deref(),
+                                                    entry.temperature,
+                                                );
                                                 match rusty_provider::create_provider(entry.provider, provider_config) {
                                                     Ok(new_provider) => {
+                                                        let new_fast = with_fallback(new_fast, &new_provider);
                                                         let mut agent = agent_arc.lock().await;
                                                         agent.set_provider(new_provider);
+                                                        agent.set_fast_provider(new_fast);
+                                                        agent.config_mut().fast_model = entry_fast_model(&entry);
                                                         agent.config_mut().model = entry.model.clone();
                                                         agent.config_mut().api_base = Some(entry.api_base.clone());
                                                         agent.config_mut().max_tokens = entry.max_tokens;

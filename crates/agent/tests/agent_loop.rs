@@ -22,14 +22,24 @@ use std::sync::{Arc, Mutex};
 // ---------------------------------------------------------------------------
 
 struct FakeProvider {
+    model: String,
     script: Mutex<VecDeque<Vec<StreamEvent>>>,
     requests: Arc<Mutex<Vec<MessageRequest>>>,
 }
 
 impl FakeProvider {
     fn new(script: Vec<Vec<StreamEvent>>) -> (Arc<Self>, Arc<Mutex<Vec<MessageRequest>>>) {
+        Self::named("fake-model", script)
+    }
+
+    /// A fake provider reporting a custom `model()` name.
+    fn named(
+        model: &str,
+        script: Vec<Vec<StreamEvent>>,
+    ) -> (Arc<Self>, Arc<Mutex<Vec<MessageRequest>>>) {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let p = Arc::new(Self {
+            model: model.to_string(),
             script: Mutex::new(script.into()),
             requests: requests.clone(),
         });
@@ -43,10 +53,15 @@ impl LlmProvider for FakeProvider {
         "fake"
     }
     fn model(&self) -> &str {
-        "fake-model"
+        &self.model
     }
-    async fn create_message(&self, _r: MessageRequest) -> Result<MessageResponse, RustyError> {
-        panic!("FakeProvider: create_message (non-streaming) is not scripted");
+    async fn create_message(&self, r: MessageRequest) -> Result<MessageResponse, RustyError> {
+        self.requests.lock().unwrap().push(r);
+        Ok(MessageResponse {
+            content: vec![ContentBlock::Text { text: "run the tests".into() }],
+            usage: Default::default(),
+            stop_reason: Some("end_turn".into()),
+        })
     }
     async fn create_message_stream(
         &self,
@@ -71,15 +86,21 @@ struct FakeTool {
     inputs: Arc<Mutex<Vec<Value>>>,
     /// Optional side effect run on execute.
     on_exec: Option<Box<dyn Fn() + Send + Sync>>,
+    /// When true, execute returns an error result.
+    fail: bool,
 }
 
 impl FakeTool {
     fn new(name: &'static str, level: PermissionLevel) -> (Box<dyn Tool>, Arc<Mutex<Vec<Value>>>) {
         let inputs = Arc::new(Mutex::new(Vec::new()));
         (
-            Box::new(Self { name, level, inputs: inputs.clone(), on_exec: None }),
+            Box::new(Self { name, level, inputs: inputs.clone(), on_exec: None, fail: false }),
             inputs,
         )
+    }
+
+    fn failing(name: &'static str, level: PermissionLevel) -> Box<dyn Tool> {
+        Box::new(Self { name, level, inputs: Arc::default(), on_exec: None, fail: true })
     }
 }
 
@@ -101,6 +122,9 @@ impl Tool for FakeTool {
         self.inputs.lock().unwrap().push(input);
         if let Some(f) = &self.on_exec {
             f();
+        }
+        if self.fail {
+            return Ok(ToolResult::error("boom"));
         }
         Ok(ToolResult::success("ok"))
     }
@@ -396,6 +420,7 @@ async fn s12b_incomplete_task_reenters_until_completed() {
         name: "finish_task",
         level: PermissionLevel::ReadOnly,
         inputs,
+        fail: false,
         on_exec: Some(Box::new(move || {
             reg2.done("s1", "T1", None).unwrap();
         })),
@@ -477,4 +502,170 @@ async fn p3_non_consecutive_plan_blocks_do_not_stop_the_run() {
     assert!(w_inputs.lock().unwrap().is_empty());
     assert_eq!(r_inputs.lock().unwrap().len(), 1);
     assert!(agent.plan_mode);
+}
+
+// ---------------------------------------------------------------------------
+// Fast-model routing and per-turn thinking budgets
+// ---------------------------------------------------------------------------
+
+const FAST: &str = "fast-model-x";
+
+fn seed_history(agent: &mut Agent) {
+    for i in 0..30 {
+        let m = if i % 2 == 0 {
+            Message::user(format!("question {i}"))
+        } else {
+            Message::assistant(format!("answer {i}"))
+        };
+        agent.messages_mut().push(m);
+    }
+}
+
+#[tokio::test]
+async fn f1_forced_compaction_goes_to_fast_provider_with_fast_model_name() {
+    let (main, main_reqs) = FakeProvider::new(vec![]);
+    let (fast, fast_reqs) = FakeProvider::named(FAST, vec![end("summary of the work")]);
+    let mut agent = make_agent(main, vec![]);
+    agent.set_fast_provider(Some(fast));
+    seed_history(&mut agent);
+    assert!(agent.compact().await.unwrap());
+    assert!(main_reqs.lock().unwrap().is_empty());
+    let fast_reqs = fast_reqs.lock().unwrap();
+    assert_eq!(fast_reqs.len(), 1);
+    assert_eq!(fast_reqs[0].model, FAST);
+    assert_eq!(fast_reqs[0].thinking_budget, None);
+}
+
+#[tokio::test]
+async fn f2_suggestion_goes_to_fast_provider_with_fast_model_name() {
+    let (main, main_reqs) = FakeProvider::new(vec![end("Done.")]);
+    let (fast, fast_reqs) = FakeProvider::named(FAST, vec![]);
+    let mut agent = make_agent(main, vec![]);
+    agent.set_fast_provider(Some(fast));
+    run(&mut agent).await.unwrap();
+    assert_eq!(main_reqs.lock().unwrap().len(), 1);
+    let suggestion = agent.generate_followup_suggestion().await;
+    assert_eq!(suggestion.as_deref(), Some("run the tests"));
+    // Main provider saw only the main turn.
+    assert_eq!(main_reqs.lock().unwrap().len(), 1);
+    let fast_reqs = fast_reqs.lock().unwrap();
+    assert_eq!(fast_reqs.len(), 1);
+    assert_eq!(fast_reqs[0].model, FAST);
+    assert_eq!(fast_reqs[0].thinking_budget, None);
+}
+
+#[tokio::test]
+async fn f3_main_turns_stay_on_main_provider_and_model() {
+    let (main, main_reqs) = FakeProvider::new(vec![call("fake_read", "{}"), end("All changes are complete.")]);
+    let (fast, fast_reqs) = FakeProvider::named(FAST, vec![]);
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(main, vec![r]);
+    agent.set_fast_provider(Some(fast));
+    run(&mut agent).await.unwrap();
+    let main_reqs = main_reqs.lock().unwrap();
+    assert_eq!(main_reqs.len(), 2);
+    assert!(main_reqs.iter().all(|r| r.model == Config::default().model));
+    assert!(fast_reqs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn f4_without_fast_provider_background_calls_fall_back_to_main() {
+    let (main, main_reqs) = FakeProvider::new(vec![end("Done."), end("summary of the work")]);
+    let mut agent = make_agent(main, vec![]);
+    run(&mut agent).await.unwrap();
+    assert!(agent.generate_followup_suggestion().await.is_some());
+    seed_history(&mut agent);
+    assert!(agent.compact().await.unwrap());
+    let reqs = main_reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert_eq!(reqs[1].model, "fake-model");
+    assert_eq!(reqs[2].model, "fake-model");
+}
+
+#[tokio::test]
+async fn t1_thinking_budget_full_first_turn_minimal_after_success() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_read", "{}"), end("All changes are complete.")]);
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    agent.config_mut().thinking_budget = Some(8192);
+    run(&mut agent).await.unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs[0].thinking_budget, Some(8192));
+    assert_eq!(reqs[1].thinking_budget, Some(1024));
+    assert!(reqs[1].max_tokens > 1024);
+}
+
+#[tokio::test]
+async fn t2_thinking_budget_full_after_error_tool_result() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_fail", "{}"), end("All changes are complete.")]);
+    let mut agent = make_agent(p, vec![FakeTool::failing("fake_fail", PermissionLevel::ReadOnly)]);
+    agent.config_mut().thinking_budget = Some(8192);
+    run(&mut agent).await.unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs[0].thinking_budget, Some(8192));
+    assert_eq!(reqs[1].thinking_budget, Some(8192));
+}
+
+#[tokio::test]
+async fn t3_thinking_budget_full_in_plan_mode_and_none_when_unconfigured() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_read", "{}"), end("Here is the plan.")]);
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    agent.config_mut().thinking_budget = Some(8192);
+    agent.enter_plan_mode();
+    run(&mut agent).await.unwrap();
+    assert!(reqs.lock().unwrap().iter().all(|r| r.thinking_budget == Some(8192)));
+
+    let (p, reqs) = FakeProvider::new(vec![call("fake_read", "{}"), end("All changes are complete.")]);
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let mut agent = make_agent(p, vec![r]);
+    run(&mut agent).await.unwrap();
+    assert!(reqs.lock().unwrap().iter().all(|r| r.thinking_budget.is_none()));
+}
+
+// ---------------------------------------------------------------------------
+// Read-only calls of write-level tools don't count as writes.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e1_explore_agent_call_does_not_trigger_write_nudge() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("agent", "{\"task\":\"look around\",\"subagent_type\":\"explore\"}"),
+        end("Here is the summary."),
+    ]);
+    let (a, _inputs) = FakeTool::new("agent", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![a]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Here is the summary.");
+    assert_eq!(reqs.lock().unwrap().len(), 2, "explore sub-agent call triggered a nudge");
+}
+
+#[tokio::test]
+async fn e2_coder_agent_call_still_counts_as_write() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("agent", "{\"task\":\"edit\",\"subagent_type\":\"coder\"}"),
+        end("Done."),
+        end("Confirmed complete."),
+    ]);
+    let (a, _inputs) = FakeTool::new("agent", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![a]);
+    assert_eq!(run(&mut agent).await.unwrap(), "Confirmed complete.");
+    assert_eq!(reqs.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn e3_resumed_agent_call_counts_as_write_even_if_labelled_explore() {
+    // A resume runs the stored sub-agent's original type, so the label can't be trusted.
+    let (p, reqs) = FakeProvider::new(vec![
+        call("agent", "{\"task\":\"go on\",\"subagent_type\":\"explore\",\"resume\":\"subagent-123\"}"),
+        end("Done."),
+        end("Confirmed complete."),
+    ]);
+    let (a, _inputs) = FakeTool::new("agent", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![a]);
+    agent.enter_plan_mode();
+    // In plan mode a Write-level call is blocked, proving it wasn't treated as read-only.
+    let _ = run(&mut agent).await.unwrap();
+    let reqs = reqs.lock().unwrap();
+    let blocked = tool_results(&reqs[1]).iter().any(|(c, e)| *e == Some(true) && c.contains("plan mode"));
+    assert!(blocked, "resumed agent call was not blocked in plan mode");
 }

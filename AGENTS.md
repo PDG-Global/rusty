@@ -332,10 +332,11 @@ The `ThinkingLevel` enum controls the token budget allocated to reasoning/thinki
 | `normal` | 4096 | Standard multi-step tasks |
 | `deep` | 16384 | Complex reasoning, architecture decisions |
 
-**Dynamic adjustment** (`dynamic_thinking_level()`): The agent automatically adjusts the thinking level based on context:
-- Multi-step tasks (2+ tool turns) are boosted from Minimal to Normal.
-- Context usage above 70% triggers a one-level step-down.
-- Context usage above 85% forces Minimal regardless of setting.
+**Per-turn budget** (`turn_thinking_budget()` in `loop.rs`): the configured budget is used in full when the last message is the user's input (or an injected nudge), when a tool result in the last turn failed, or in plan mode. After a run of successful tool results it drops to the Minimal budget (1024). It never drops to zero, since some models are thinking-only.
+
+### Fast Model
+
+Each `ModelEntry` can set `fast_model`, a cheaper model on the same provider. It handles background work only: compaction summaries, checkpoints, the follow-up suggestion and `explore` sub-agents (which also get a trimmed system prompt). Main conversation turns always use the chosen model. Presets set a default (for example `kimi-for-coding-highspeed`, `deepseek-flash`, `claude-haiku-5-5`); entries saved before the field existed fall back to the matching preset. If the fast model fails (for instance, not available on the user's plan), `FallbackProvider` retries on the main model and keeps using it for the session. Override with `--fast-model <ID>` or disable with `--no-fast-model`.
 
 Set via `--thinking-budget` CLI flag, `thinking_level` in config/settings, or the TUI `/settings` General tab.
 

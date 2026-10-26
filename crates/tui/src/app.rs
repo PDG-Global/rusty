@@ -375,6 +375,7 @@ impl ModelFormState {
             thinking_budget,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         })
     }
 }
