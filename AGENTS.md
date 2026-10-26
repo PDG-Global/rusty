@@ -526,5 +526,5 @@ TUI Display ← Agent Events ← Tool Execution ← Tool Calls
 ---
 
 *Last updated: October 2026*
-*Version: 0.2.2*
+*Version: 0.3.0*
 *Rust edition: 2021*
