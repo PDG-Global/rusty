@@ -2098,9 +2098,10 @@ async fn tui_main_loop(
                         if key.code == KeyCode::Enter
                             && !app.input.is_empty()
                             && app.permission_prompt.is_none()
+                            && app.question_prompt.is_none()
                             && app.session_picker.is_none()
                             && app.file_picker.is_none()
-                            && !app.paste_mode
+                            && !app.key_now_is_paste_burst()
                         {
                             let input = app.input.clone();
                             app.input_suggestion = None;

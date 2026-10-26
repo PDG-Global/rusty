@@ -1243,6 +1243,15 @@ impl AppState {
         self.needs_redraw = true;
     }
 
+    /// Whether a key arriving now would be part of a paste burst. Callers that
+    /// check before `handle_key` must use this: `paste_mode` still reflects the
+    /// previous key, so a deliberate Enter after a burst would be swallowed.
+    pub fn key_now_is_paste_burst(&self) -> bool {
+        self.last_key_time
+            .map(|prev| prev.elapsed().as_nanos() < PASTE_DETECT_THRESHOLD_NS)
+            .unwrap_or(false)
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         // Track timing for paste detection.
         // If events arrive faster than PASTE_DETECT_THRESHOLD_NS, we're in a paste.
@@ -2887,6 +2896,16 @@ fn rgba_to_png(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn enter_after_a_pause_is_not_part_of_a_paste_burst() {
+        let mut s = super::AppState::default();
+        assert!(!s.key_now_is_paste_burst(), "no previous key");
+        s.last_key_time = Some(std::time::Instant::now());
+        assert!(s.key_now_is_paste_burst(), "key straight after another");
+        s.last_key_time = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+        assert!(!s.key_now_is_paste_burst(), "key after a human-scale pause");
+    }
+
     use super::*;
 
     fn state_with_streaming(text: &str) -> AppState {
