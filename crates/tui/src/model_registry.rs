@@ -36,6 +36,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
                     .collect(),
             ),
             context_window: Some(1_048_576),
+            fast_model: Some("kimi-for-coding-highspeed".into()),
         },
         ModelEntry {
             group: "Kimi".into(),
@@ -53,6 +54,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
                     .collect(),
             ),
             context_window: Some(1_048_576),
+            fast_model: Some("kimi-for-coding-highspeed".into()),
         },
         // ── Xiaomi MiMo ──────────────────────────────────────────────────
         ModelEntry {
@@ -67,6 +69,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: Some(4096),
             extra_headers: None,
             context_window: Some(1_048_576),
+            fast_model: None,
         },
         ModelEntry {
             group: "Xiaomi MiMo".into(),
@@ -80,6 +83,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: Some(4096),
             extra_headers: None,
             context_window: Some(1_048_576),
+            fast_model: None,
         },
         // ── DeepSeek ─────────────────────────────────────────────────────
         ModelEntry {
@@ -94,6 +98,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: Some(4096),
             extra_headers: None,
             context_window: Some(1_048_576),
+            fast_model: Some("deepseek-flash".into()),
         },
         ModelEntry {
             group: "DeepSeek".into(),
@@ -107,6 +112,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: Some(4096),
             extra_headers: None,
             context_window: Some(1_048_576),
+            fast_model: Some("deepseek-flash".into()),
         },
         // ── Zhipu GLM ────────────────────────────────────────────────────
         ModelEntry {
@@ -121,6 +127,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: Some("glm-5.3-flash".into()),
         },
         ModelEntry {
             group: "Zhipu GLM".into(),
@@ -134,6 +141,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: Some("glm-5.3-flash".into()),
         },
         // ── MiniMax ──────────────────────────────────────────────────────
         ModelEntry {
@@ -148,6 +156,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
             extra_headers: None,
             context_window: Some(1_048_576),
+            fast_model: Some("MiniMax-M3.1-Flash".into()),
         },
         ModelEntry {
             group: "MiniMax".into(),
@@ -161,6 +170,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
             extra_headers: None,
             context_window: Some(1_048_576),
+            fast_model: Some("MiniMax-M3.1-Flash".into()),
         },
         // ── OpenAI ───────────────────────────────────────────────────────
         ModelEntry {
@@ -175,6 +185,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: Some("gpt-6-luna".into()),
         },
         // ── Anthropic ────────────────────────────────────────────────────
         ModelEntry {
@@ -194,6 +205,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
             extra_headers: None,
             context_window: Some(1_000_000),
+            fast_model: Some("claude-haiku-5-5".into()),
         },
         // ── Ollama (local) ───────────────────────────────────────────────
         ModelEntry {
@@ -208,6 +220,7 @@ pub fn default_model_list() -> Vec<ModelEntry> {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         },
     ]
 }

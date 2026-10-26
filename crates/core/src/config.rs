@@ -269,6 +269,10 @@ pub struct ModelEntry {
     /// Used for auto-compaction thresholds and TUI context-usage display.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u32>,
+    /// Cheaper model of the same provider used for background work (suggestions,
+    /// checkpoints, compaction, explore sub-agents). Main turns never use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_model: Option<String>,
 }
 
 impl ModelEntry {
@@ -340,6 +344,10 @@ pub struct Config {
     /// Populated from the active `ModelEntry.context_window` at startup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u32>,
+    /// Cheaper model of the same provider used for background work (suggestions,
+    /// checkpoints, compaction, explore sub-agents). Main turns never use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_model: Option<String>,
 }
 
 impl Default for Config {
@@ -362,6 +370,7 @@ impl Default for Config {
             plan_with_tasks: false,
             provider_type: ProviderType::default(),
             context_window: None,
+            fast_model: None,
         }
     }
 }
@@ -568,6 +577,7 @@ impl Settings {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         };
         self.models.push(entry);
         self.active_model = "default".to_string();
@@ -1010,6 +1020,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         };
         let mut settings = Settings {
             api_key: Some("sk-legacy".into()),
@@ -1059,6 +1070,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
 
         assert!(settings.switch_active_model("gpt4"));
@@ -1091,6 +1103,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         };
         settings.add_model(updated);
 
@@ -1125,6 +1138,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.set_api_key("extra", "sk-extra".into());
 
@@ -1158,6 +1172,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         assert_eq!(settings.models[0].temperature, Some(1.0));
@@ -1181,6 +1196,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         assert_eq!(settings.models[0].thinking_budget, Some(4096));
@@ -1201,6 +1217,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         assert_eq!(settings.models[0].thinking_budget, Some(4096));
@@ -1221,6 +1238,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         assert_eq!(
@@ -1245,6 +1263,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         assert_eq!(
@@ -1269,6 +1288,7 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         // Second run must not change an already-correct entry.
@@ -1295,6 +1315,7 @@ mod tests {
             thinking_budget: Some(16384),
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         assert_eq!(settings.models[0].thinking_budget, Some(16384));
@@ -1315,9 +1336,28 @@ mod tests {
             thinking_budget: None,
             extra_headers: None,
             context_window: None,
+            fast_model: None,
         });
         settings.fixup();
         assert_eq!(settings.models[0].temperature, Some(0.7));
         assert_eq!(settings.models[0].thinking_budget, None);
+    }
+
+    #[test]
+    fn model_entry_without_fast_model_still_loads() {
+        let json = r#"{"name":"x","api_base":"https://a/v1","model":"m"}"#;
+        let entry: ModelEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.fast_model, None);
+        let out = serde_json::to_string(&entry).unwrap();
+        assert!(!out.contains("fast_model"));
+    }
+
+    #[test]
+    fn model_entry_fast_model_round_trips() {
+        let json = r#"{"name":"x","api_base":"https://a/v1","model":"m","fast_model":"m-flash"}"#;
+        let entry: ModelEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.fast_model.as_deref(), Some("m-flash"));
+        let back: ModelEntry = serde_json::from_str(&serde_json::to_string(&entry).unwrap()).unwrap();
+        assert_eq!(back.fast_model.as_deref(), Some("m-flash"));
     }
 }
