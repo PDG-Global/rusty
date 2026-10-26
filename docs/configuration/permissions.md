@@ -89,7 +89,7 @@ During a session, when you choose "Allow for this session" at a permission promp
 When a tool is invoked, Rusty checks permissions in this order:
 
 1.  **Bypass mode** -- If permission mode is `bypass`, allow immediately.
-2.  **Plan mode** -- If permission mode is `plan`, deny all write/execute operations.
+2.  **Plan mode** -- If permission mode is `plan`, allow only read-only tools and `exit_plan_mode`; deny everything else, even in bypass mode.
 3.  **Read-only or None level** -- Tools with `ReadOnly` or `None` permission levels are always allowed.
 4.  **AcceptEdits + Write** -- If mode is `accept-edits` and tool level is `Write`, allow without prompting.
 5.  **Permanent allowlist** -- Check if the tool invocation matches an entry in `allowed_tools`.
@@ -110,10 +110,11 @@ When an interactive prompt appears, the user can choose:
 
 ## Plan Mode
 
-Plan mode is designed for reviewing and planning without making changes:
+Plan mode lets Rusty investigate before it changes anything. Press Shift+Tab to cycle default, accept-edits and plan, or run `/plan` (optionally followed by a task). To start in plan mode, use `--permissions plan`.
 
-```bash
-rusty --permissions plan
-```
+1. **Investigate**: read-only tools, read-only shell commands and explore sub-agents are allowed. Everything else is denied, even in bypass mode.
+2. **Propose**: Rusty calls `exit_plan_mode` with a numbered plan, which appears in the transcript.
+3. **Approve**: reply 1 (approve and auto-accept edits), 2 (approve and ask before edits) or 3 / any text (keep planning with your feedback). A session that was in bypass mode before planning returns to bypass.
+4. **Execute**: the plan's top-level steps become the task list and Rusty implements them in the same run.
 
-In plan mode, Rusty can read files, search code, and browse the web, but cannot write files or execute commands. This is useful for code review and analysis tasks.
+With `--prompt` there is no one to ask, so the plan is printed and the run ends, still in plan mode.

@@ -332,9 +332,6 @@ pub struct Config {
     pub thinking_budget: Option<u32>,
     pub thinking_level: Option<ThinkingLevel>,
     pub temperature: Option<f32>,
-    /// When true, instructs the model to actively use `todowrite` for task tracking.
-    /// Implies Plan permission mode (read-only + todowrite).
-    pub plan_with_tasks: bool,
     /// Provider type, set by presets and resolved through model registry.
     /// Used as a fallback when no model entry is active.
     #[serde(default)]
@@ -367,7 +364,6 @@ impl Default for Config {
             thinking_budget: None,
             thinking_level: None,
             temperature: None,
-            plan_with_tasks: false,
             provider_type: ProviderType::default(),
             context_window: None,
             fast_model: None,
@@ -797,7 +793,6 @@ mod tests {
         assert!(cfg.thinking_budget.is_none());
         assert!(cfg.thinking_level.is_none());
         assert!(cfg.temperature.is_none());
-        assert!(!cfg.plan_with_tasks);
     }
 
     // ── Config::resolve_api_key ──────────────────────────────────────

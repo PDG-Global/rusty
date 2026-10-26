@@ -111,10 +111,11 @@ bash 工具使用 `classify_bash_command()` 来判定权限级别。命令被分
 
 ## Plan 模式
 
-Plan 模式专为审阅与规划而设计，不做任何更改：
+Plan 模式让 Rusty 在做任何更改之前先进行调查。按 Shift+Tab 可在 default、accept-edits 和 plan 之间循环，或运行 `/plan`（后面可附带任务）。使用 `--permissions plan` 可直接以 plan 模式启动。
 
-```bash
-rusty --permissions plan
-```
+1. **调查**：允许只读工具、只读 shell 命令和 explore 子代理，其余一律拒绝，即使在 bypass 模式下也是如此。
+2. **提出方案**：Rusty 调用 `exit_plan_mode` 并给出带编号的计划，计划会显示在对话记录中。
+3. **批准**：回复 1（批准并自动接受编辑）、2（批准并在编辑前询问）或 3 / 任意文字（附上反馈继续规划）。规划前处于 bypass 模式的会话在批准后会回到 bypass。
+4. **执行**：计划的顶层步骤会成为任务列表，Rusty 在同一次运行中实施。
 
-在 plan 模式下，Rusty 可以读取文件、搜索代码、浏览网页，但不能写入文件或执行命令。这对代码审查与分析任务很有用。
+使用 `--prompt` 时无人可询问，因此会打印计划并结束运行，仍处于 plan 模式。

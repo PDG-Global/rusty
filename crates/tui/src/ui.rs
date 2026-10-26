@@ -1950,7 +1950,7 @@ fn draw_status(app: &AppState, area: Rect, buf: &mut Buffer) {
             Style::default().fg(Color::Gray),
         ));
     }
-    if app.plan_mode {
+    if app.plan_mode || app.permission_mode == rusty_core::PermissionMode::Plan {
         right.push(Span::styled("plan ", Style::default().fg(Color::Yellow)));
     }
     if !cwd_display.is_empty() {

@@ -51,7 +51,6 @@ rusty [OPTIONS] [PROMPT]
 | 参数 | 说明 |
 |------|-------------|
 | `--permissions <MODE>` | 权限模式：`default`、`accept-edits`、`bypass`、`plan` |
-| `--plan-with-tasks` | 带任务跟踪的 plan 模式（隐含 `--permissions plan`） |
 
 ## 代理
 

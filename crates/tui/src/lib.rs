@@ -185,6 +185,11 @@ async fn run_loop(
                         app.plan_mode = mode;
                         app.needs_redraw = true;
                     }
+                    AgentEvent::PermissionMode(mode) => {
+                        app.permission_mode = mode;
+                        app.plan_mode = mode == rusty_core::PermissionMode::Plan;
+                        app.needs_redraw = true;
+                    }
                     AgentEvent::Suggestion(suggestion) => {
                         // Ignore the LLM suggestion if the user has typed anything
                         // since the response completed (it's now stale).

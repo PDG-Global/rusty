@@ -72,7 +72,6 @@ rusty --preset openai
 |------|-------------|
 | `--model` | Override the default model |
 | `--permissions` | Set permission mode: `default`, `accept-edits`, `bypass`, `plan` |
-| `--plan-with-tasks` | Enable structured task tracking in responses |
 | `--thinking-budget` | Token budget for reasoning/thinking content |
 | `--cwd` | Set the working directory |
 | `--no-claude-md` | Disable discovery of AGENTS.md/CLAUDE.md/RUSTY.md context files |

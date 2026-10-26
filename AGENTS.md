@@ -47,7 +47,7 @@ cli → agent → provider
 | File | Purpose |
 |---|---|
 | `types.rs` | `Role` (User/Assistant), `ContentBlock` (Text/Image/ToolUse/ToolResult/Thinking), `Message`, `MessageContent` (Text/Blocks), `UsageInfo`, `ToolDefinition`. `ContentBlock::Image` carries `media_type` (MIME) and base64-encoded `data` for pasted images. Message helpers: `user()`, `assistant()`, `user_blocks()`, `assistant_blocks()`, `get_text()`, `get_all_text()`, `has_tool_use()`, `get_tool_use_blocks()`, `has_image_blocks()`, `get_image_blocks()`. |
-| `config.rs` | `Config` (runtime config: model, api_key, api_base, max_tokens, temperature, permission_mode, thinking_budget, thinking_level, plan_with_tasks, auto_compact, system_prompt, append_system_prompt, no_claude_md, provider_type, context_window). `Settings` (persisted `~/.rusty/settings.json`: api_key, api_base, default_model, models, active_model, api_keys, allowed_tools, credential_store, thinking_level, permission_mode, permissions). `ModelEntry` struct: group, name, provider (ProviderType), api_base, model, available_models, max_tokens, temperature, thinking_budget, extra_headers, context_window. `ProviderType` enum: `OpenAI`, `Anthropic`. `CredentialStore` enum (Keyring / SettingsFile). `add_permanent_permission()`. |
+| `config.rs` | `Config` (runtime config: model, api_key, api_base, max_tokens, temperature, permission_mode, thinking_budget, thinking_level, auto_compact, system_prompt, append_system_prompt, no_claude_md, provider_type, context_window). `Settings` (persisted `~/.rusty/settings.json`: api_key, api_base, default_model, models, active_model, api_keys, allowed_tools, credential_store, thinking_level, permission_mode, permissions). `ModelEntry` struct: group, name, provider (ProviderType), api_base, model, available_models, max_tokens, temperature, thinking_budget, extra_headers, context_window. `ProviderType` enum: `OpenAI`, `Anthropic`. `CredentialStore` enum (Keyring / SettingsFile). `add_permanent_permission()`. |
 | `credentials.rs` | `CredentialManager` - tiered API key resolution. Priority: (1) env vars `RUSTY_API_KEY` then `OPENAI_API_KEY`, (2) OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service), (3) settings file. Also provides `store_in_keyring()`, `delete_from_keyring()`, `is_keyring_available()`. |
 | `setup_wizard.rs` | Interactive first-run wizard. Provider selection (Xiaomi, Kimi, OpenAI, DeepSeek, Ollama, Custom), API key entry with masked input, credential storage choice (keyring vs settings file), model selection, connectivity test. Plain terminal mode, no TUI dependency. |
 | `permissions.rs` | `PermissionMode` (Default/AcceptEdits/Bypass/Plan), `PermissionLevel` (None/ReadOnly/Write/Execute), `PermissionRequest`/`PermissionDecision`, `PermissionChoice` (AllowOnce/AllowSession/AllowAlways/Deny) user-facing prompt options, bash command classifier (`classify_bash_command`), `build_tool_description`, `make_allow_key`. |
@@ -87,7 +87,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `web_fetch.rs` | `web_fetch` | ReadOnly | Fetch URLs via reqwest (30s timeout). Configurable max_length (default 10000 chars). Comprehensive SSRF protection (see Security section). |
 | `todowrite.rs` | `todowrite` | None | Task list management backed by core `TaskRegistry` (per-session). Actions: `create` (alias `add`), `list`, `start`, `block`, `unblock`, `done`, `abandon`, `rename`, `reopen`. Args may be a nested `operation` object, flat `{action, id, summary, status}`, or a legacy `todos` list that replaces the whole list (omitted tasks are abandoned). |
 | `note.rs` | `note` | None | Session-scoped scratchpad for recording observations. Appends to `~/.rusty/sessions/{id}.notes.md`. Content is processed during checkpoint extraction and cleared after use. |
-| `plan_mode.rs` | `enter_plan_mode`, `exit_plan_mode` | - | Switch the session into and out of plan (read-only) mode. |
+| `plan_mode.rs` | `enter_plan_mode`, `exit_plan_mode` | - | Switch into plan (read-only) mode; `exit_plan_mode` takes a `plan` string and the agent loop runs the approval flow (approve with auto-accept edits, approve and ask before edits, or feedback). Approval turns the plan's top-level steps into tasks and continues the same run. With no question callback (`--prompt`) the run ends with the plan. Shift+Tab and `/plan` also enter plan mode. |
 | `question.rs` | `question` | - | Ask the user a question via `QuestionCallback` and return the answer. |
 | `background.rs` | (no tool) | - | `BackgroundManager` - tracks background sub-agent tasks (status, result). |
 | `task_output.rs` | `task_output` | - | Query status/result of a background sub-agent task. |
@@ -108,7 +108,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 | `loop.rs` | `Agent` struct - core orchestrator. Holds provider, tools, config, message history, permission state. `run()` method: send messages, stream response, accumulate text + tool calls, execute tools concurrently via `JoinSet`, repeat until done/max turns/cancellation. Supports `cancel()` via `AtomicBool`. |
 | `compact.rs` | Multi-tier auto-compaction: Tier 1 (25% context) micro-compacts old tool results, Tier 2 (50%) extracts structured checkpoint to `checkpoint.md`, Tier 3 (75%) summarizes old messages via LLM. Integrates with notes scratchpad. |
 | `checkpoint_writer.rs` | `spawn_checkpoint_writer()` - background sub-agent task that extracts structured checkpoint state without blocking the main loop. |
-| `lib.rs` | `spawn_subagent()` (same-process tokio task, BypassPermissions), `make_agent_tool()` (constructs `AgentTool` with spawn callback), `build_system_prompt()` (assembles system prompt with tool descriptions, permissions, platform info, date, optional plan-with-tasks instructions). |
+| `lib.rs` | `spawn_subagent()` (same-process tokio task, BypassPermissions), `make_agent_tool()` (constructs `AgentTool` with spawn callback), `build_system_prompt()` (assembles system prompt with tool descriptions, permissions, platform info, date). |
 
 **Loop behaviour:**
 - The current task list is injected into the system prompt each turn.
@@ -126,8 +126,8 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 6. If no tool calls: return final text
 
 **Permission system** (tiered check in `check_permission_tiered`):
-1. Bypass mode - allow all
-2. Plan mode - read-only only
+1. Plan mode (`PermissionMode::Plan`, the single source of truth; applies even to bypass) - read-only tools and `exit_plan_mode` only, everything else denied with "Plan mode is read-only. Investigate, then call exit_plan_mode with your plan."
+2. Bypass mode - allow all
 3. ReadOnly/None tools - auto-allow
 4. AcceptEdits + Write - auto-allow
 5. Permanent allowlist (from `~/.rusty/settings.json`)
@@ -175,7 +175,7 @@ All LLM communication is streaming-first. The provider yields `Stream<Item = Res
 
 `main.rs` handles:
 
-1. **CLI args** (clap): `--prompt`, `--model`, `--preset`, `--api-key`, `--api-base`, `--cwd`, `--permissions`, `--plan-with-tasks`, `--resume`, `--list-sessions`, `--headless`, `--max-turns`, `--max-tokens`, `--temperature`, `--thinking-budget`, `--verbose`, `--setup`, `--no-claude-md`, `--append-system-prompt`
+1. **CLI args** (clap): `--prompt`, `--model`, `--preset`, `--api-key`, `--api-base`, `--cwd`, `--permissions`, `--resume`, `--list-sessions`, `--headless`, `--max-turns`, `--max-tokens`, `--temperature`, `--thinking-budget`, `--verbose`, `--setup`, `--no-claude-md`, `--append-system-prompt`
 
 2. **First-run detection**: If `~/.rusty/settings.json` does not exist, the setup wizard launches automatically before any other logic. `--setup` forces the wizard explicitly.
 
@@ -465,8 +465,8 @@ cargo build --release
 # Headless stdin mode
 ./target/release/rusty --preset xiaomi --headless
 
-# Plan mode with task tracking
-./target/release/rusty --plan-with-tasks
+# Start in plan mode (Shift+Tab or /plan also switch at runtime)
+./target/release/rusty --permissions plan
 
 # Resume session
 ./target/release/rusty --resume SESSION_ID

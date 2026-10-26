@@ -105,11 +105,9 @@ pub struct Agent {
     task_registry: Option<Arc<rusty_core::task::TaskRegistry>>,
     /// Session ID for task registry queries.
     session_id: String,
-    /// When true, the agent is in explicit plan mode (no Write/Execute tools allowed).
-    pub plan_mode: bool,
-    /// When true, the model called exit_plan_mode this turn, so we should not
-    /// nudge it to continue working — it has explicitly handed control back.
-    exited_plan_mode_this_turn: bool,
+    /// The mode to return to once planning ends. Recorded whenever Plan is
+    /// entered from another mode; Default if unknown.
+    pre_plan_mode: PermissionMode,
     /// How many consecutive turns the model has stopped without making any
     /// write/execute changes. Used to escalate nudges when the model is stuck
     /// in a research loop.
@@ -141,6 +139,18 @@ pub struct Agent {
 /// to stop with incomplete tasks. Raised from 3 to give complex multi-step tasks
 /// more room to complete.
 const MAX_TASK_GATE_REENTRIES: u32 = 6;
+
+/// Reason given when plan mode denies a write or execute call.
+pub const PLAN_MODE_DENIAL: &str =
+    "Plan mode is read-only. Investigate, then call exit_plan_mode with your plan.";
+
+/// System prompt section added while planning.
+const PLAN_MODE_PROMPT: &str = "## Plan Mode\n\n\
+    You are planning, not implementing. Research the codebase using read-only tools; \
+    explore sub-agents are allowed. Do not attempt edits or other changes: they will be \
+    denied. When you are ready, call exit_plan_mode with the complete plan in the `plan` \
+    field, written in markdown as numbered steps. The user will then approve it, or send \
+    feedback for you to revise the plan.";
 
 /// Max "keep going" nudges per run when the model stops after making progress.
 const MAX_AUTO_CONTINUES: u32 = 3;
@@ -200,8 +210,7 @@ impl Agent {
             permanent_allowlist: HashSet::new(),
             task_registry: None,
             session_id: String::new(),
-            plan_mode: false,
-            exited_plan_mode_this_turn: false,
+            pre_plan_mode: PermissionMode::Default,
             consecutive_read_turns: 0,
             file_reads_this_run: 0,
             dedup_keys_this_turn: HashSet::new(),
@@ -214,8 +223,31 @@ impl Agent {
         }
     }
 
+    /// Set the permission mode. Entering Plan from another mode records that
+    /// mode so approval (or `exit_plan_mode()`) can restore it.
     pub fn set_permission_mode(&mut self, mode: PermissionMode) {
+        if mode == PermissionMode::Plan && self.permission_mode != PermissionMode::Plan {
+            self.pre_plan_mode = self.permission_mode;
+        } else if mode != PermissionMode::Plan {
+            // Leaving plan mode other than through approval forgets the earlier
+            // mode, so a later approval can't restore a stale bypass.
+            self.pre_plan_mode = PermissionMode::Default;
+        }
         self.permission_mode = mode;
+    }
+
+    pub fn permission_mode(&self) -> PermissionMode {
+        self.permission_mode
+    }
+
+    /// The mode that planning will return to.
+    pub fn pre_plan_mode(&self) -> PermissionMode {
+        self.pre_plan_mode
+    }
+
+    /// True while the agent is in plan mode (read-only investigation).
+    pub fn is_planning(&self) -> bool {
+        self.permission_mode == PermissionMode::Plan
     }
 
     pub fn set_max_turns(&mut self, max_turns: u32) {
@@ -223,11 +255,14 @@ impl Agent {
     }
 
     pub fn enter_plan_mode(&mut self) {
-        self.plan_mode = true;
+        self.set_permission_mode(PermissionMode::Plan);
     }
 
+    /// Leave plan mode without approval flow, restoring the previous mode.
     pub fn exit_plan_mode(&mut self) {
-        self.plan_mode = false;
+        if self.is_planning() {
+            self.permission_mode = self.pre_plan_mode;
+        }
     }
 
     pub fn set_permission_callback(&mut self, cb: PermissionCallback) {
@@ -298,6 +333,10 @@ impl Agent {
             prompt.push_str("\n\n");
             prompt.push_str(mode_text);
         }
+        if self.is_planning() {
+            prompt.push_str("\n\n");
+            prompt.push_str(PLAN_MODE_PROMPT);
+        }
 
         if let Some(registry) = &self.task_registry {
             let tasks = registry.format_for_prompt(&self.session_id);
@@ -353,7 +392,7 @@ impl Agent {
     /// Reset conversation and task state (used by /clear).
     pub async fn clear_state(&mut self) {
         self.messages.clear();
-        self.plan_mode = false;
+        self.exit_plan_mode();
         self.file_reads_this_run = 0;
         // Task registry persists across clears — tasks are not wiped on /clear.
     }
@@ -594,6 +633,119 @@ impl Agent {
         result
     }
 
+    /// Run the exit_plan_mode approval flow. Returns the tool result and, when
+    /// the run must end (no way to ask the user), the text to return to the caller.
+    async fn handle_exit_plan_mode(
+        &mut self,
+        arguments: &str,
+        on_text: Option<&TextCallback>,
+        on_question: Option<&QuestionCallback>,
+    ) -> (ToolResult, Option<String>) {
+        if !self.is_planning() {
+            return (
+                ToolResult::error(
+                    "Not in plan mode. exit_plan_mode only presents a plan for approval while planning."
+                        .to_string(),
+                ),
+                None,
+            );
+        }
+        let input: serde_json::Value = serde_json::from_str(arguments).unwrap_or_default();
+        let plan = input["plan"].as_str().unwrap_or("").trim().to_string();
+        if plan.is_empty() {
+            return (
+                ToolResult::error("Provide the full plan in the plan field.".to_string()),
+                None,
+            );
+        }
+
+        if let Some(cb) = on_text {
+            cb(&format!("\n\n**Proposed plan**\n\n{plan}\n\n"));
+        }
+
+        let Some(ask) = on_question else {
+            return (
+                ToolResult::success(
+                    "Plan recorded. Waiting for the user to approve it before any changes are made."
+                        .to_string(),
+                ),
+                Some(plan),
+            );
+        };
+
+        // Returning to bypass is only offered, explicitly, to a session that was in
+        // bypass before planning; the other choices are always honoured as chosen.
+        let bypass_offered = self.pre_plan_mode == PermissionMode::BypassPermissions;
+        let mut prompt = String::from(
+            "Approve this plan?\n\
+             1. Approve and auto-accept edits\n\
+             2. Approve and ask before edits\n\
+             3. Keep planning (type feedback)",
+        );
+        if bypass_offered {
+            prompt.push_str("\n4. Approve and return to bypass mode (no approvals)");
+        }
+        let answer = ask("Plan approval", &prompt).await;
+
+        let new_mode = match parse_plan_answer(&answer) {
+            PlanAnswer::Feedback(feedback) => {
+                let feedback = if feedback.is_empty() {
+                    "no details given".to_string()
+                } else {
+                    feedback
+                };
+                return (
+                    ToolResult::success(format!(
+                        "The user wants changes before approving: {feedback}. \
+                         Revise the plan and call exit_plan_mode again."
+                    )),
+                    None,
+                );
+            }
+            PlanAnswer::AutoAcceptEdits => PermissionMode::AcceptEdits,
+            PlanAnswer::AskBeforeEdits => PermissionMode::Default,
+            PlanAnswer::ReturnToBypass if bypass_offered => PermissionMode::BypassPermissions,
+            PlanAnswer::ReturnToBypass => {
+                return (
+                    ToolResult::success(
+                        "The user's answer was not one of the offered options. Stay in plan mode \
+                         and call exit_plan_mode again."
+                            .to_string(),
+                    ),
+                    None,
+                );
+            }
+        };
+        self.permission_mode = new_mode;
+        self.pre_plan_mode = PermissionMode::Default;
+        self.create_tasks_from_plan(&plan);
+        debug!("Plan approved; permission mode is now {:?}", new_mode);
+        (
+            ToolResult::success(format!(
+                "Plan approved. Permission mode is now {}. Implement the plan now, \
+                 keeping the task list updated.",
+                mode_label(new_mode)
+            )),
+            None,
+        )
+    }
+
+    /// Turn the plan's top-level items into tasks, unless the session already
+    /// has unfinished ones.
+    fn create_tasks_from_plan(&self, plan: &str) {
+        let Some(registry) = &self.task_registry else {
+            return;
+        };
+        if !registry.incomplete_details(&self.session_id).is_empty() {
+            return;
+        }
+        for item in plan_to_tasks(plan) {
+            if let Err(e) = registry.create(&self.session_id, &item, None, None) {
+                warn!("Failed to create task from plan: {e}");
+            }
+        }
+    }
+
     /// Log incomplete tasks on exit. Tasks persist in the registry across sessions
     /// and are NOT auto-completed — the agent or user can resume them later.
     fn finalize_plan(&self) {
@@ -632,7 +784,6 @@ impl Agent {
         if let Some(c) = cancel {
             c.reset();
         }
-        self.exited_plan_mode_this_turn = false;
         self.consecutive_read_turns = 0;
         self.task_gate_reentries = 0;
         self.messages.push(Message::user_blocks(content));
@@ -661,7 +812,7 @@ impl Agent {
             // Plan mode is never left implicitly: exit_plan_mode hands control back so
             // the user can review the plan before anything is written. If the model
             // keeps trying write/execute tools instead, stop and let the user decide.
-            if plan_mode_blocked_this_turn && self.plan_mode {
+            if plan_mode_blocked_this_turn && self.is_planning() {
                 consecutive_plan_blocks += 1;
                 if consecutive_plan_blocks >= 2 {
                     warn!("Plan mode blocked write/execute tools on consecutive turns; stopping for user review");
@@ -692,7 +843,7 @@ impl Agent {
             // Gentle reminder: if the model hasn't updated its task list in a while,
             // nudge it to consider using todowrite. This mirrors kimi-code's
             // TodoListReminderInjector behaviour.
-            if self.turns_since_todowrite >= 10 {
+            if self.turns_since_todowrite >= 10 && !self.is_planning() {
                 if let Some(registry) = &self.task_registry {
                     let incomplete = registry.incomplete_details(&self.session_id);
                     if !incomplete.is_empty() {
@@ -839,7 +990,7 @@ impl Agent {
             let thinking_budget = turn_thinking_budget(
                 self.config.thinking_budget,
                 &self.messages,
-                self.plan_mode,
+                self.is_planning(),
             );
             let level = thinking_budget
                 .map(rusty_core::budget_to_level)
@@ -1179,7 +1330,7 @@ impl Agent {
                     if let PermissionDecision::Deny(reason) = decision {
                         warn!("Tool {} denied: {}", tc.name, reason);
                         // Track if plan mode blocked a write/execute tool
-                        if self.plan_mode {
+                        if self.is_planning() {
                             if self.tools.contains_key(&tc.name) {
                                 let level = self.effective_level(&tc.name, &tc.arguments);
                                 if level == PermissionLevel::Write || level == PermissionLevel::Execute {
@@ -1219,6 +1370,13 @@ impl Agent {
                         });
                     }
 
+                    // exit_plan_mode is handled by the loop itself (approval flow).
+                    if tc.name == "exit_plan_mode" {
+                        spawn_handles.push(None);
+                        is_duplicate.push(false);
+                        continue;
+                    }
+
                     // Clone what we need for the spawned task
                     let tool_name = tc.name.clone();
                     let tool_args = tc.arguments.clone();
@@ -1249,6 +1407,7 @@ impl Agent {
                     })
                 ).await;
 
+                let mut end_with_plan: Option<String> = None;
                 for (((tc, decision), result), dup) in permission_results.iter().zip(results).zip(is_duplicate) {
                     // Duplicate calls get a synthetic result instead of re-executing.
                     if dup {
@@ -1271,6 +1430,20 @@ impl Agent {
                         ]));
                         continue;
                     }
+                    // exit_plan_mode runs the approval flow instead of a tool body.
+                    let result = if tc.name == "exit_plan_mode"
+                        && !matches!(decision, PermissionDecision::Deny(_))
+                    {
+                        let (r, end_plan) = self
+                            .handle_exit_plan_mode(&tc.arguments, on_text, callbacks.on_question)
+                            .await;
+                        if end_plan.is_some() {
+                            end_with_plan = end_plan;
+                        }
+                        Some(Ok(r))
+                    } else {
+                        result
+                    };
                     let tool_result = match result {
                         Some(Ok(r)) => r,
                         Some(Err(e)) => {
@@ -1332,13 +1505,8 @@ impl Agent {
 
                     // Update plan mode state based on special plan tools
                     if tc.name == "enter_plan_mode" && !tool_result.is_error {
-                        self.plan_mode = true;
-                        debug!("Entered explicit plan mode");
-                    }
-                    if tc.name == "exit_plan_mode" && !tool_result.is_error {
-                        self.plan_mode = false;
-                        self.exited_plan_mode_this_turn = true;
-                        debug!("Exited explicit plan mode");
+                        self.set_permission_mode(PermissionMode::Plan);
+                        debug!("Entered plan mode (will return to {:?})", self.pre_plan_mode);
                     }
 
                     // Count successful file reads for context protection
@@ -1350,6 +1518,12 @@ impl Agent {
                     if tc.name == "todowrite" && !tool_result.is_error {
                         self.turns_since_todowrite = 0;
                     }
+                }
+
+                // No way to ask for approval: the plan is recorded and the run ends.
+                if let Some(plan) = end_with_plan {
+                    self.finalize_plan();
+                    return Ok(plan);
                 }
 
                 // Continue the loop — the model needs to see tool results
@@ -1397,7 +1571,7 @@ impl Agent {
                     // didn't explicitly exit plan mode, inject a re-entry message listing
                     // the specific tasks. Capped at MAX_TASK_GATE_REENTRIES to prevent
                     // infinite loops. Modeled after MiMo's TaskGate.decide().
-                    if !self.exited_plan_mode_this_turn && !asking_question {
+                    if !self.is_planning() && !asking_question {
                         if let Some(gate_msg) = self.task_gate_check().await {
                             self.messages.push(Message::user(gate_msg));
                             continue;
@@ -1409,7 +1583,7 @@ impl Agent {
                     // wrote/executed since its last stop, or if its text announces more
                     // work ("Next, I'll..."). This catches the common case where the model
                     // does partial work without creating a task list.
-                    if !self.exited_plan_mode_this_turn
+                    if !self.is_planning()
                         && made_progress_this_run
                         && !self.all_tasks_complete()
                         && (wrote_since_last_stop || announces_more_work(&assistant_text))
@@ -1638,34 +1812,23 @@ impl Agent {
         arguments: &str,
         effective_level: PermissionLevel,
     ) -> PermissionDecision {
-        // 1. Explicit plan mode — deny write/execute (but allow exit_plan_mode).
-        //    This must come before BypassPermissions: even bypass mode respects plan restrictions,
-        //    otherwise the model can write files while the user expects a read-only planning phase.
-        if self.plan_mode
-            && effective_level != PermissionLevel::ReadOnly
-            && effective_level != PermissionLevel::None
-            && tool_name != "exit_plan_mode"
-        {
-            return PermissionDecision::Deny(
-                "You are in plan mode. Write and execute tools are disabled. \
-                 Use exit_plan_mode when you are ready to execute the plan."
-                    .into(),
-            );
-        }
-
-        // 2. Bypass mode — allow everything (except plan mode restrictions above)
-        if self.permission_mode == PermissionMode::BypassPermissions {
-            return PermissionDecision::AllowOnce;
-        }
-
-        // 3. CLI Plan mode — deny write/execute
-        if self.permission_mode == PermissionMode::Plan {
-            if effective_level == PermissionLevel::ReadOnly
+        // 1. Plan mode (single source of truth: PermissionMode::Plan). Read-only and
+        //    no-permission tools and exit_plan_mode are allowed; everything else is
+        //    denied. This precedes the bypass check so plan restrictions hold even
+        //    when the session would otherwise bypass permissions.
+        if self.is_planning() {
+            if tool_name == "exit_plan_mode"
+                || effective_level == PermissionLevel::ReadOnly
                 || effective_level == PermissionLevel::None
             {
                 return PermissionDecision::AllowOnce;
             }
-            return PermissionDecision::Deny("Plan mode is read-only".into());
+            return PermissionDecision::Deny(PLAN_MODE_DENIAL.into());
+        }
+
+        // 2. Bypass mode: allow everything.
+        if self.permission_mode == PermissionMode::BypassPermissions {
+            return PermissionDecision::AllowOnce;
         }
 
         // 3. Read-only / None tools — auto-allow, but block excessive file reads
@@ -1832,6 +1995,83 @@ impl FollowupJob {
             Some(text)
         }
     }
+}
+
+/// How the user answered the plan approval prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanAnswer {
+    AutoAcceptEdits,
+    AskBeforeEdits,
+    /// Only honoured when the session was in bypass before planning.
+    ReturnToBypass,
+    /// Anything else: stay in plan mode and revise (empty when no detail given).
+    Feedback(String),
+}
+
+/// Interpret the answer to the plan approval prompt.
+pub fn parse_plan_answer(answer: &str) -> PlanAnswer {
+    let trimmed = answer.trim();
+    let key = trimmed
+        .trim_end_matches(|c: char| c == '.' || c == '!' || c == ')')
+        .to_lowercase();
+    match key.as_str() {
+        "1" | "approve" | "approved" | "yes" | "y" | "ok" | "approve and auto-accept edits"
+        | "auto-accept" | "auto accept" => PlanAnswer::AutoAcceptEdits,
+        "2" | "approve and ask before edits" | "ask before edits" => PlanAnswer::AskBeforeEdits,
+        "3" | "keep planning" | "" => PlanAnswer::Feedback(String::new()),
+        "4" | "bypass" | "approve and return to bypass mode" => PlanAnswer::ReturnToBypass,
+        _ => PlanAnswer::Feedback(trimmed.to_string()),
+    }
+}
+
+fn mode_label(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Default => "default",
+        PermissionMode::AcceptEdits => "accept-edits",
+        PermissionMode::BypassPermissions => "bypass",
+        PermissionMode::Plan => "plan",
+    }
+}
+
+/// Extract the top-level numbered or bulleted items from a markdown plan.
+/// Items indented deeper than the shallowest list item (sub-bullets) are ignored.
+pub fn plan_to_tasks(plan: &str) -> Vec<String> {
+    fn item_text(line: &str) -> Option<(usize, &str)> {
+        let indent = line.len() - line.trim_start().len();
+        let rest = line.trim_start();
+        let text = if let Some(r) = rest
+            .strip_prefix("- ")
+            .or_else(|| rest.strip_prefix("* "))
+            .or_else(|| rest.strip_prefix("+ "))
+        {
+            r
+        } else {
+            let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+            if digits == 0 {
+                return None;
+            }
+            let after = &rest[digits..];
+            after
+                .strip_prefix(". ")
+                .or_else(|| after.strip_prefix(") "))?
+        };
+        let text = text.trim();
+        if text.is_empty() {
+            None
+        } else {
+            Some((indent, text))
+        }
+    }
+    let items: Vec<(usize, &str)> = plan.lines().filter_map(item_text).collect();
+    let Some(min_indent) = items.iter().map(|(i, _)| *i).min() else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter(|(i, _)| *i == min_indent)
+        .map(|(_, t)| t.to_string())
+        .take(30)
+        .collect()
 }
 
 fn turn_thinking_budget(configured: Option<u32>, messages: &[Message], plan_mode: bool) -> Option<u32> {
