@@ -31,6 +31,8 @@ pub struct ProviderPreset {
     pub extra_headers: Option<Vec<(&'static str, &'static str)>>,
     /// Sampling temperature. Defaults to 0.7 if not set.
     pub temperature: Option<f32>,
+    /// Context window in tokens, if documented for the default model.
+    pub context_window: Option<u32>,
     /// Thinking/reasoning token budget. None means thinking is not supported.
     pub thinking_budget: Option<u32>,
 }
@@ -43,9 +45,11 @@ impl ProviderPreset {
                 name: "Xiaomi MiMo (Global)",
                 entry_name: "xiaomi-global",
                 group: "Xiaomi MiMo",
-                api_base: "https://token-plan.xiaomimimo.com/v1",
+                api_base: "https://token-plan-sgp.xiaomimimo.com/v1",
                 default_model: "mimo-v2.5-pro",
-                available_models: &["mimo-v2.5-pro", "mimo-v2.5-flash"],
+
+                context_window: Some(1_048_576),
+                available_models: &["mimo-v2.5-pro", "mimo-v2.5"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -58,7 +62,9 @@ impl ProviderPreset {
                 group: "Xiaomi MiMo",
                 api_base: "https://token-plan-cn.xiaomimimo.com/v1",
                 default_model: "mimo-v2.5-pro",
-                available_models: &["mimo-v2.5-pro", "mimo-v2.5-flash"],
+
+                context_window: Some(1_048_576),
+                available_models: &["mimo-v2.5-pro", "mimo-v2.5"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -71,7 +77,9 @@ impl ProviderPreset {
                 group: "Kimi",
                 api_base: "https://api.kimi.com/coding/v1",
                 default_model: "kimi-for-coding",
-                available_models: &["kimi-for-coding"],
+
+                context_window: Some(1_048_576),
+                available_models: &["kimi-for-coding", "kimi-for-coding-highspeed", "k3.1-pro", "k3"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: Some(vec![("X-Title", "Rusty")]),
@@ -84,7 +92,9 @@ impl ProviderPreset {
                 group: "Kimi",
                 api_base: "https://api.kimi.com/coding/v1",
                 default_model: "kimi-for-coding",
-                available_models: &["kimi-for-coding"],
+
+                context_window: Some(1_048_576),
+                available_models: &["kimi-for-coding", "kimi-for-coding-highspeed", "k3.1-pro", "k3"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: Some(vec![("X-Title", "Rusty")]),
@@ -97,7 +107,9 @@ impl ProviderPreset {
                 group: "DeepSeek",
                 api_base: "https://api.deepseek.com",
                 default_model: "deepseek-v4-pro",
-                available_models: &["deepseek-v4-pro", "deepseek-v4-flash"],
+
+                context_window: Some(1_048_576),
+                available_models: &["deepseek-v4-pro", "deepseek-flash"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -110,7 +122,9 @@ impl ProviderPreset {
                 group: "DeepSeek",
                 api_base: "https://api.deepseek.com",
                 default_model: "deepseek-v4-pro",
-                available_models: &["deepseek-v4-pro", "deepseek-v4-flash"],
+
+                context_window: Some(1_048_576),
+                available_models: &["deepseek-v4-pro", "deepseek-flash"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -121,11 +135,13 @@ impl ProviderPreset {
                 name: "Zhipu GLM (Global)",
                 entry_name: "zhipu-global",
                 group: "Zhipu GLM",
-                api_base: "https://api.z.ai/api/anthropic",
-                default_model: "glm-5.1",
-                available_models: &["glm-5.2", "glm-5.1", "glm-5-turbo", "glm-4.6"],
+                api_base: "https://api.z.ai/api/coding/paas/v4",
+                default_model: "glm-5.3",
+
+                context_window: None,
+                available_models: &["glm-5.3", "glm-5.3-flash"],
                 needs_key: true,
-                provider: ProviderType::Anthropic,
+                provider: ProviderType::OpenAI,
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
@@ -135,8 +151,10 @@ impl ProviderPreset {
                 entry_name: "zhipu-cn",
                 group: "Zhipu GLM",
                 api_base: "https://open.bigmodel.cn/api/coding/paas/v4",
-                default_model: "glm-5.1",
-                available_models: &["glm-5.2", "glm-5.1", "glm-5-turbo", "glm-4.6"],
+                default_model: "glm-5.3",
+
+                context_window: None,
+                available_models: &["glm-5.3", "glm-5.3-flash"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -148,8 +166,10 @@ impl ProviderPreset {
                 entry_name: "minimax-global",
                 group: "MiniMax",
                 api_base: "https://api.minimax.io/v1",
-                default_model: "MiniMax-M2.7",
-                available_models: &["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"],
+                default_model: "MiniMax-M3",
+
+                context_window: Some(1_048_576),
+                available_models: &["MiniMax-M3", "MiniMax-M3.1-Flash"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -161,8 +181,10 @@ impl ProviderPreset {
                 entry_name: "minimax-cn",
                 group: "MiniMax",
                 api_base: "https://api.minimaxi.com/v1",
-                default_model: "MiniMax-M2.7",
-                available_models: &["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"],
+                default_model: "MiniMax-M3",
+
+                context_window: Some(1_048_576),
+                available_models: &["MiniMax-M3", "MiniMax-M3.1-Flash"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -174,10 +196,32 @@ impl ProviderPreset {
                 entry_name: "openai",
                 group: "OpenAI",
                 api_base: "https://api.openai.com/v1",
-                default_model: "gpt-5.5",
-                available_models: &["gpt-5.5", "gpt-5.4", "gpt-5.4-nano", "o3", "o4-mini"],
+                default_model: "gpt-6.1-sol",
+
+                context_window: None,
+                available_models: &["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
+                extra_headers: None,
+                temperature: None,
+                thinking_budget: None,
+            },
+            Self {
+                name: "Anthropic",
+                entry_name: "anthropic",
+                group: "Anthropic",
+                api_base: "https://api.anthropic.com/v1",
+                default_model: "claude-sonnet-5-5",
+
+                context_window: Some(1_000_000),
+                available_models: &[
+                    "claude-sonnet-5-5",
+                    "claude-opus-5-5",
+                    "claude-haiku-5-5",
+                    "claude-fable-5-1",
+                ],
+                needs_key: true,
+                provider: ProviderType::Anthropic,
                 extra_headers: None,
                 temperature: None,
                 thinking_budget: None,
@@ -187,8 +231,10 @@ impl ProviderPreset {
                 entry_name: "ollama",
                 group: "Ollama",
                 api_base: "http://localhost:11434/v1",
-                default_model: "qwen3:8b",
-                available_models: &[],
+                default_model: "qwen3-coder:30b",
+
+                context_window: Some(262_144),
+                available_models: &["qwen3-coder:30b", "gpt-oss:20b", "gpt-oss:120b"],
                 needs_key: false,
                 provider: ProviderType::OpenAI,
                 extra_headers: None,
@@ -201,6 +247,8 @@ impl ProviderPreset {
                 group: "Custom",
                 api_base: "http://localhost:8080/v1",
                 default_model: "default",
+
+                context_window: None,
                 available_models: &[],
                 needs_key: true,
                 provider: ProviderType::OpenAI,
@@ -478,7 +526,14 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
     let mut settings = if path.exists() {
         let content = std::fs::read_to_string(&path)
             .map_err(|e| RustyError::Config(format!("Failed to read settings: {e}")))?;
-        serde_json::from_str::<Settings>(&content).unwrap_or_default()
+        // Don't silently replace an unreadable file: that would drop other model
+        // entries and keys when the settings are written back.
+        serde_json::from_str::<Settings>(&content).map_err(|e| {
+            RustyError::Config(format!(
+                "Existing settings at {} could not be parsed ({e}). Fix or move the file, then run setup again.",
+                path.display()
+            ))
+        })?
     } else {
         Settings::default()
     };
@@ -495,7 +550,7 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
         temperature: Some(preset.temperature.unwrap_or(0.7)),
         thinking_budget: preset.thinking_budget,
         extra_headers: preset.extra_headers.clone().map(|h| h.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()),
-        context_window: None,
+        context_window: preset.context_window,
     };
     settings.add_model(entry);
     settings.active_model = preset.entry_name.to_string();
@@ -510,13 +565,15 @@ pub async fn run_setup_wizard() -> Result<bool, RustyError> {
     settings.credential_store = actual_store;
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        crate::config::ensure_restricted_dir(parent)
             .map_err(|e| RustyError::Config(format!("Failed to create config dir: {e}")))?;
     }
     let json = serde_json::to_string_pretty(&settings)
         .map_err(|e| RustyError::Config(format!("Failed to serialize settings: {e}")))?;
     std::fs::write(&path, json)
         .map_err(|e| RustyError::Config(format!("Failed to write settings: {e}")))?;
+    // The file may hold API keys in plain text.
+    crate::config::set_restrictive_file_permissions(&path);
 
     println!();
     println!("  {} {}", "✓".green(), "Configuration saved!".bold().green());
@@ -695,7 +752,7 @@ mod tests {
 
     #[test]
     fn provider_presets_count() {
-        assert_eq!(ProviderPreset::all().len(), 13);
+        assert_eq!(ProviderPreset::all().len(), 14);
     }
 
     #[test]
@@ -712,8 +769,9 @@ mod tests {
         assert_eq!(presets[8].name, "MiniMax (Global)");
         assert_eq!(presets[9].name, "MiniMax (China)");
         assert_eq!(presets[10].name, "OpenAI");
-        assert_eq!(presets[11].name, "Ollama (local)");
-        assert!(presets[12].name.starts_with("Custom"));
+        assert_eq!(presets[11].name, "Anthropic");
+        assert_eq!(presets[12].name, "Ollama (local)");
+        assert!(presets[13].name.starts_with("Custom"));
     }
 
     #[test]
@@ -730,8 +788,9 @@ mod tests {
         assert_eq!(presets[8].entry_name, "minimax-global");
         assert_eq!(presets[9].entry_name, "minimax-cn");
         assert_eq!(presets[10].entry_name, "openai");
-        assert_eq!(presets[11].entry_name, "ollama");
-        assert_eq!(presets[12].entry_name, "custom");
+        assert_eq!(presets[11].entry_name, "anthropic");
+        assert_eq!(presets[12].entry_name, "ollama");
+        assert_eq!(presets[13].entry_name, "custom");
     }
 
     #[test]
@@ -749,11 +808,11 @@ mod tests {
         // OpenAI should have multiple models
         let openai = &presets[10];
         assert!(!openai.available_models.is_empty());
-        assert!(openai.available_models.contains(&"gpt-5.5"));
+        assert!(openai.available_models.contains(&"gpt-6.1-sol"));
 
-        // Ollama has no hardcoded alternatives
-        let ollama = &presets[11];
-        assert!(ollama.available_models.is_empty());
+        let ollama = &presets[12];
+        assert_eq!(ollama.default_model, "qwen3-coder:30b");
+        assert_eq!(ollama.available_models.len(), 3);
     }
 
     #[test]

@@ -68,7 +68,7 @@ rusty --setup
 {
   "api_keys": {
     "mimo-v2.5-pro": "sk-mimo-...",
-    "gpt-4o": "sk-openai-..."
+    "gpt-6.1-sol": "sk-openai-..."
   }
 }
 ```

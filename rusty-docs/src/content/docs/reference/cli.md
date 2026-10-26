@@ -24,7 +24,7 @@ rusty [OPTIONS] [PROMPT]
 
 | Flag | Description |
 |------|-------------|
-| `--model <MODEL>` | Model to use (e.g. `mimo-v2.5-pro`, `gpt-4o`) |
+| `--model <MODEL>` | Model to use (e.g. `mimo-v2.5-pro`, `gpt-6.1-sol`) |
 | `--preset <PRESET>` | Provider preset: `xiaomi`, `kimi`, `openai`, `deepseek`, `ollama` |
 | `--api-key <KEY>` | API key |
 | `--api-base <URL>` | API base URL |

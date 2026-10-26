@@ -244,7 +244,7 @@ pub struct ModelEntry {
     pub provider: ProviderType,
     /// API base URL (e.g. `https://api.openai.com/v1`).
     pub api_base: String,
-    /// Model identifier (e.g. `mimo-v2.5-pro`, `gpt-4o`).
+    /// Model identifier (e.g. `mimo-v2.5-pro`, `gpt-6.1-sol`).
     pub model: String,
     /// All model identifiers available on this endpoint.
     /// The first element should match `model` (the primary/default).
@@ -1173,7 +1173,7 @@ mod tests {
             group: "Xiaomi MiMo".into(),
             name: "xiaomi-global".into(),
             provider: ProviderType::OpenAI,
-            api_base: "https://token-plan.xiaomimimo.com/v1".into(),
+            api_base: "https://token-plan-sgp.xiaomimimo.com/v1".into(),
             model: "mimo-v2.5-pro".into(),
             available_models: vec![],
             max_tokens: 32768,
@@ -1214,7 +1214,7 @@ mod tests {
             name: "zhipu-cn".into(),
             provider: ProviderType::OpenAI,
             api_base: "https://api.z.ai/api/coding/paas/v4".into(),
-            model: "glm-5.1".into(),
+            model: "glm-5.3".into(),
             available_models: vec![],
             max_tokens: 8192,
             temperature: None,
@@ -1238,7 +1238,7 @@ mod tests {
             name: "zhipu-global".into(),
             provider: ProviderType::OpenAI,
             api_base: "https://open.bigmodel.cn/api/paas/v4/".into(),
-            model: "glm-5.1".into(),
+            model: "glm-5.3".into(),
             available_models: vec![],
             max_tokens: 8192,
             temperature: None,
@@ -1262,7 +1262,7 @@ mod tests {
             name: "zhipu-cn".into(),
             provider: ProviderType::OpenAI,
             api_base: "https://open.bigmodel.cn/api/coding/paas/v4".into(),
-            model: "glm-5.1".into(),
+            model: "glm-5.3".into(),
             available_models: vec![],
             max_tokens: 8192,
             temperature: None,
@@ -1287,7 +1287,7 @@ mod tests {
             group: "Xiaomi MiMo".into(),
             name: "xiaomi-global".into(),
             provider: ProviderType::OpenAI,
-            api_base: "https://token-plan.xiaomimimo.com/v1".into(),
+            api_base: "https://token-plan-sgp.xiaomimimo.com/v1".into(),
             model: "mimo-v2.5-pro".into(),
             available_models: vec![],
             max_tokens: 32768,

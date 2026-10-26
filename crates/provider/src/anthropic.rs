@@ -915,7 +915,7 @@ mod tests {
             config: ProviderConfig {
                 api_key: "test-key".to_string(),
                 api_base: api_base.to_string(),
-                model: "kimi-k2.6".to_string(),
+                model: "kimi-for-coding".to_string(),
                 max_tokens: 4096,
                 temperature: None,
                 thinking_budget: None,
