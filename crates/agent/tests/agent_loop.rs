@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use rusty_agent::{Agent, AgentCallbacks};
+use rusty_agent::{parse_plan_answer, plan_to_tasks, Agent, AgentCallbacks, PlanAnswer, QuestionCallback};
 use rusty_core::task::TaskRegistry;
 use rusty_core::{
     Config, ContentBlock, Message, PermissionLevel, PermissionMode, Role, RustyError,
@@ -467,7 +467,7 @@ async fn p1_plan_mode_blocks_writes_and_stops_after_two_blocked_turns() {
     assert!(out.starts_with("Stopped: still in plan mode"), "got {out:?}");
     assert_eq!(reqs.lock().unwrap().len(), 2);
     assert!(inputs.lock().unwrap().is_empty(), "write tool ran in plan mode");
-    assert!(agent.plan_mode, "plan mode was left without exit_plan_mode");
+    assert!(agent.is_planning(), "plan mode was left without exit_plan_mode");
 }
 
 #[tokio::test]
@@ -482,7 +482,7 @@ async fn p2_plan_mode_stays_on_after_a_single_blocked_write() {
     assert_eq!(run(&mut agent).await.unwrap(), "Here is the plan.");
     assert_eq!(reqs.lock().unwrap().len(), 2);
     assert!(inputs.lock().unwrap().is_empty());
-    assert!(agent.plan_mode);
+    assert!(agent.is_planning());
 }
 
 #[tokio::test]
@@ -501,7 +501,7 @@ async fn p3_non_consecutive_plan_blocks_do_not_stop_the_run() {
     assert_eq!(reqs.lock().unwrap().len(), 4);
     assert!(w_inputs.lock().unwrap().is_empty());
     assert_eq!(r_inputs.lock().unwrap().len(), 1);
-    assert!(agent.plan_mode);
+    assert!(agent.is_planning());
 }
 
 // ---------------------------------------------------------------------------
@@ -666,7 +666,7 @@ async fn e3_resumed_agent_call_counts_as_write_even_if_labelled_explore() {
     // In plan mode a Write-level call is blocked, proving it wasn't treated as read-only.
     let _ = run(&mut agent).await.unwrap();
     let reqs = reqs.lock().unwrap();
-    let blocked = tool_results(&reqs[1]).iter().any(|(c, e)| *e == Some(true) && c.contains("plan mode"));
+    let blocked = tool_results(&reqs[1]).iter().any(|(c, e)| *e == Some(true) && c.contains("Plan mode is read-only"));
     assert!(blocked, "resumed agent call was not blocked in plan mode");
 }
 
@@ -721,4 +721,223 @@ async fn c2_suggestion_strips_curly_quotes_without_panicking() {
     run(&mut agent).await.unwrap();
     agent.set_fast_provider(Some(Arc::new(ReplyProvider("\u{201C}run the tests\u{201D}"))));
     assert_eq!(agent.generate_followup_suggestion().await.as_deref(), Some("run the tests"));
+}
+
+// ---------------------------------------------------------------------------
+// Plan mode: one source of truth (PermissionMode::Plan) and an approval flow.
+// ---------------------------------------------------------------------------
+
+const PLAN: &str = "1. Add the foo module\n   - sketch the API\n2. Wire foo into main\n";
+
+fn exit_call(plan: &str) -> Vec<StreamEvent> {
+    call("exit_plan_mode", &json!({ "plan": plan }).to_string())
+}
+
+fn plan_tools() -> Vec<Box<dyn Tool>> {
+    vec![
+        Box::new(rusty_tools::plan_mode::EnterPlanModeTool),
+        Box::new(rusty_tools::plan_mode::ExitPlanModeTool),
+    ]
+}
+
+/// A question callback that replays scripted answers and records each (header, prompt).
+fn scripted_questions(
+    answers: Vec<&str>,
+) -> (QuestionCallback, Arc<Mutex<Vec<(String, String)>>>) {
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let answers = Arc::new(Mutex::new(
+        answers.into_iter().map(String::from).collect::<VecDeque<_>>(),
+    ));
+    let asked_cb = asked.clone();
+    let cb: QuestionCallback = Arc::new(move |header, prompt| {
+        asked_cb.lock().unwrap().push((header.to_string(), prompt.to_string()));
+        let answer = answers.lock().unwrap().pop_front().unwrap_or_default();
+        Box::pin(async move { answer })
+    });
+    (cb, asked)
+}
+
+async fn run_with_questions(agent: &mut Agent, q: &QuestionCallback) -> Result<String, RustyError> {
+    agent
+        .run(
+            vec![ContentBlock::Text { text: "go".into() }],
+            AgentCallbacks { on_question: Some(q), ..Default::default() },
+        )
+        .await
+}
+
+#[tokio::test]
+async fn pm_a_plan_mode_denies_writes_with_the_new_reason() {
+    let (p, reqs) = FakeProvider::new(vec![call("fake_write", "{\"path\":\"a\"}"), end("Plan text.")]);
+    let (w, inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![w]);
+    agent.set_permission_mode(PermissionMode::Plan);
+    run(&mut agent).await.unwrap();
+    assert!(inputs.lock().unwrap().is_empty());
+    let results = tool_results(&reqs.lock().unwrap()[1]);
+    assert!(
+        results[0].0.contains("Plan mode is read-only. Investigate, then call exit_plan_mode with your plan."),
+        "got {:?}",
+        results[0].0
+    );
+}
+
+#[tokio::test]
+async fn pm_b_approval_switches_mode_creates_tasks_and_continues() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let reg = Arc::new(TaskRegistry::open(&dir.path().join("t.db")).unwrap());
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let reg_exec = reg.clone();
+    let write: Box<dyn Tool> = Box::new(FakeTool {
+        name: "fake_write",
+        level: PermissionLevel::Write,
+        inputs: inputs.clone(),
+        on_exec: Some(Box::new(move || {
+            for t in reg_exec.list("s1", None, false).unwrap() {
+                reg_exec.done("s1", &t.id, None).unwrap();
+            }
+        })),
+        fail: false,
+    });
+    let mut tools = plan_tools();
+    tools.push(write);
+    let (mut agent, reqs) = registry_agent(
+        vec![exit_call(PLAN), call("fake_write", "{\"path\":\"a\"}"), end("Done.")],
+        tools,
+        reg.clone(),
+    );
+    agent.set_permission_mode(PermissionMode::Default);
+    agent.set_permission_mode(PermissionMode::Plan);
+    let (q, asked) = scripted_questions(vec!["1"]);
+    let seen = Arc::new(Mutex::new(String::new()));
+    let seen_cb = seen.clone();
+    let on_text: rusty_agent::r#loop::TextCallback = Box::new(move |t| seen_cb.lock().unwrap().push_str(t));
+    let out = agent
+        .run(
+            vec![ContentBlock::Text { text: "go".into() }],
+            AgentCallbacks { on_question: Some(&q), on_text: Some(&on_text), ..Default::default() },
+        )
+        .await
+        .unwrap();
+    assert_eq!(out, "Done.");
+    assert_eq!(agent.permission_mode(), PermissionMode::AcceptEdits);
+    assert_eq!(inputs.lock().unwrap().len(), 1, "write did not run after approval");
+    let tasks: Vec<String> = reg.list("s1", None, true).unwrap().into_iter().map(|t| t.summary).collect();
+    assert_eq!(tasks, vec!["Add the foo module", "Wire foo into main"]);
+    assert_eq!(asked.lock().unwrap()[0].0, "Plan approval");
+    assert!(seen.lock().unwrap().contains("**Proposed plan**"));
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert!(tool_results(&reqs[1])[0].0.starts_with("Plan approved. Permission mode is now accept-edits."));
+}
+
+#[tokio::test]
+async fn pm_c_feedback_keeps_planning_and_reaches_the_model() {
+    let (p, reqs) = FakeProvider::new(vec![exit_call(PLAN), end("Revised.")]);
+    let mut agent = make_agent(p, plan_tools());
+    agent.set_permission_mode(PermissionMode::Plan);
+    let (q, _) = scripted_questions(vec!["use sqlite instead"]);
+    assert_eq!(run_with_questions(&mut agent, &q).await.unwrap(), "Revised.");
+    assert!(agent.is_planning());
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    let result = &tool_results(&reqs[1])[0].0;
+    assert!(result.contains("use sqlite instead"), "got {result:?}");
+    assert!(result.contains("call exit_plan_mode again"));
+}
+
+#[tokio::test]
+async fn pm_d_without_a_question_callback_the_run_ends_with_the_plan() {
+    let (p, reqs) = FakeProvider::new(vec![exit_call(PLAN)]);
+    let (w, inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut tools = plan_tools();
+    tools.push(w);
+    let mut agent = make_agent(p, tools);
+    agent.set_permission_mode(PermissionMode::Plan);
+    let out = run(&mut agent).await.unwrap();
+    assert_eq!(out, PLAN.trim());
+    assert!(agent.is_planning());
+    assert!(inputs.lock().unwrap().is_empty());
+    assert_eq!(reqs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn pm_e_empty_plan_is_an_error_result() {
+    let (p, reqs) = FakeProvider::new(vec![call("exit_plan_mode", "{}"), end("Sorry.")]);
+    let mut agent = make_agent(p, plan_tools());
+    agent.set_permission_mode(PermissionMode::Plan);
+    let (q, asked) = scripted_questions(vec!["1"]);
+    run_with_questions(&mut agent, &q).await.unwrap();
+    assert!(asked.lock().unwrap().is_empty(), "approval was requested for an empty plan");
+    assert!(agent.is_planning());
+    let results = tool_results(&reqs.lock().unwrap()[1]);
+    assert_eq!(results[0], ("Provide the full plan in the plan field.".to_string(), Some(true)));
+}
+
+#[tokio::test]
+async fn pm_f_no_nudges_or_task_gate_while_planning() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let reg = Arc::new(TaskRegistry::open(&dir.path().join("t.db")).unwrap());
+    reg.create("s1", "never done", None, None).unwrap();
+    let (r, _) = FakeTool::new("fake_read", PermissionLevel::ReadOnly);
+    let (mut agent, reqs) = registry_agent(
+        vec![call("fake_read", "{}"), end("Now let me update the tests:")],
+        vec![r],
+        reg,
+    );
+    agent.set_permission_mode(PermissionMode::Plan);
+    assert_eq!(run(&mut agent).await.unwrap(), "Now let me update the tests:");
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2, "a nudge or task gate fired while planning");
+}
+
+#[tokio::test]
+async fn pm_g_bypass_is_restored_after_approval() {
+    let (p, _) = FakeProvider::new(vec![exit_call(PLAN), end("Done.")]);
+    let mut agent = make_agent(p, plan_tools()); // starts in bypass
+    agent.enter_plan_mode();
+    assert_eq!(agent.pre_plan_mode(), PermissionMode::BypassPermissions);
+    let (q, _) = scripted_questions(vec!["2"]);
+    run_with_questions(&mut agent, &q).await.unwrap();
+    assert_eq!(agent.permission_mode(), PermissionMode::BypassPermissions);
+}
+
+#[tokio::test]
+async fn pm_g2_enter_plan_mode_tool_switches_and_blocks_even_from_bypass() {
+    let (p, reqs) = FakeProvider::new(vec![
+        call("enter_plan_mode", "{}"),
+        call("fake_write", "{\"path\":\"a\"}"),
+        end("Planning."),
+    ]);
+    let (w, inputs) = FakeTool::new("fake_write", PermissionLevel::Write);
+    let mut tools = plan_tools();
+    tools.push(w);
+    let mut agent = make_agent(p, tools); // bypass
+    run(&mut agent).await.unwrap();
+    assert!(agent.is_planning());
+    assert_eq!(agent.pre_plan_mode(), PermissionMode::BypassPermissions);
+    assert!(inputs.lock().unwrap().is_empty());
+    assert!(tool_results(&reqs.lock().unwrap()[2])[1].0.contains("Plan mode is read-only"));
+}
+
+#[test]
+fn pm_h_plan_to_tasks_handles_numbered_and_bulleted_lists() {
+    let numbered = "Intro\n1. First\n   - detail a\n   - detail b\n2) Second\n10. Tenth\n";
+    assert_eq!(plan_to_tasks(numbered), vec!["First", "Second", "Tenth"]);
+    let bullets = "## Steps\n- Alpha\n  * nested\n- Beta\n+ Gamma\n";
+    assert_eq!(plan_to_tasks(bullets), vec!["Alpha", "Beta", "Gamma"]);
+    assert!(plan_to_tasks("just prose, no list").is_empty());
+}
+
+#[test]
+fn pm_i_plan_answer_parsing() {
+    assert_eq!(parse_plan_answer("1"), PlanAnswer::AutoAcceptEdits);
+    assert_eq!(parse_plan_answer(" Approve "), PlanAnswer::AutoAcceptEdits);
+    assert_eq!(parse_plan_answer("2"), PlanAnswer::AskBeforeEdits);
+    assert_eq!(parse_plan_answer("3"), PlanAnswer::Feedback(String::new()));
+    assert_eq!(parse_plan_answer(""), PlanAnswer::Feedback(String::new()));
+    assert_eq!(
+        parse_plan_answer("also add tests"),
+        PlanAnswer::Feedback("also add tests".to_string())
+    );
 }

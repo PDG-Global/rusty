@@ -94,7 +94,6 @@ All settings can be overridden at runtime via CLI flags:
 | `--max-tokens` | Maximum tokens in the response |
 | `--temperature` | Sampling temperature |
 | `--thinking-budget` | Token budget for reasoning/thinking content |
-| `--plan-with-tasks` | Enable structured task tracking in responses |
 | `--cwd` | Set the working directory |
 | `--prompt` | Run in headless mode with a single prompt |
 | `--headless` | Run in stdin REPL mode |

@@ -13,7 +13,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub use r#loop::{Agent, AgentCallbacks, PermissionCallback, QuestionCallback, ToolStatus};
+pub use r#loop::{
+    parse_plan_answer, plan_to_tasks, Agent, AgentCallbacks, PermissionCallback, PlanAnswer,
+    QuestionCallback, ToolStatus, PLAN_MODE_DENIAL,
+};
 // Re-export CancelToken so downstream crates (e.g. rusty CLI) can use `rusty_agent::CancelToken`.
 pub use rusty_core::CancelToken;
 

@@ -20,12 +20,12 @@ Rusty 支持三种运行模式，以适应不同的工作流与环境。
 - 可滚动的消息历史
 - 退出时保存会话
 - 通过侧边栏（`/settings`）选择模型注册表
-- 通过 `--plan-with-tasks` 进行结构化任务跟踪
+- Plan 模式：Shift+Tab 或 `/plan`，只读调查后批准计划
 
 ```bash
 rusty
 rusty --preset openai --api-key sk-...
-rusty --plan-with-tasks
+rusty --permissions plan
 ```
 
 ### 键盘快捷键
@@ -83,4 +83,4 @@ rusty --headless
 | CI/CD 流水线 | 无头 + `--permissions bypass` |
 | 快速一次性提问 | 无头 |
 | 长时间的开发工作 | TUI + 会话恢复 |
-| 规划与任务跟踪 | TUI + `--plan-with-tasks` |
+| 规划与任务跟踪 | TUI plan 模式（Shift+Tab 或 `/plan`） |

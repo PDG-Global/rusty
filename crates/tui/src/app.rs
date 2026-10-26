@@ -179,6 +179,8 @@ pub enum AgentEvent {
     ModelChanged(String, u32),
     UpdateAvailable(rusty_core::update::UpdateCheckResult),
     PlanMode(bool),
+    /// The agent's current permission mode (startup, after each run, on change).
+    PermissionMode(rusty_core::PermissionMode),
     /// LLM-generated follow-up suggestion (None signals no suggestion)
     Suggestion(Option<String>),
 }
@@ -202,7 +204,9 @@ pub enum TuiCommand {
     /// Set thinking level
     SetThinkingLevel(Option<rusty_core::ThinkingLevel>),
     /// Set permission mode
-    SetPermissionMode(rusty_core::PermissionMode),
+    /// Change the permission mode. `persist` saves it as the default (settings
+    /// panel); Shift+Tab and /plan are session-only toggles.
+    SetPermissionMode { mode: rusty_core::PermissionMode, persist: bool },
     /// Add a new model entry to settings
     AddModel(rusty_core::ModelEntry),
     /// Update an existing model entry (old_name, new_entry)
@@ -409,7 +413,7 @@ pub enum SlashCommand {
     Settings,
     /// /version — show current version and check for updates
     Version,
-    /// /plan — enter explicit plan mode (read-only planning)
+    /// /plan [task] — switch to plan mode (read-only planning), optionally with a task
     Plan,
     /// /test — test connection to current model
     Test,
@@ -435,6 +439,7 @@ impl SlashCommand {
             "/settings" => Some(SlashCommand::Settings),
             "/version" | "/v" => Some(SlashCommand::Version),
             "/plan" => Some(SlashCommand::Plan),
+            _ if trimmed.starts_with("/plan ") => Some(SlashCommand::Plan),
             "/test" => Some(SlashCommand::Test),
             _ => None,
         }
@@ -454,7 +459,7 @@ impl SlashCommand {
             ("/permissions", "Manage always-approved tools list"),
             ("/settings", "Open settings and model registry"),
             ("/version", "Show current version and update status"),
-            ("/plan", "Enter explicit plan mode for planning only"),
+            ("/plan", "Switch to plan mode: investigate read-only, then approve a plan"),
             ("/test", "Test connection to current model"),
             ("/quit", "Exit rusty"),
         ]
@@ -594,6 +599,17 @@ pub fn next_permission_mode(current: rusty_core::PermissionMode) -> rusty_core::
         rusty_core::PermissionMode::AcceptEdits => rusty_core::PermissionMode::BypassPermissions,
         rusty_core::PermissionMode::BypassPermissions => rusty_core::PermissionMode::Plan,
         rusty_core::PermissionMode::Plan => rusty_core::PermissionMode::Default,
+    }
+}
+
+/// Next mode when cycling with Shift+Tab: default, accept-edits, plan, default.
+/// Bypass goes to plan.
+pub fn cycle_permission_mode(current: rusty_core::PermissionMode) -> rusty_core::PermissionMode {
+    match current {
+        rusty_core::PermissionMode::Default => rusty_core::PermissionMode::AcceptEdits,
+        rusty_core::PermissionMode::AcceptEdits => rusty_core::PermissionMode::Plan,
+        rusty_core::PermissionMode::Plan => rusty_core::PermissionMode::Default,
+        rusty_core::PermissionMode::BypassPermissions => rusty_core::PermissionMode::Plan,
     }
 }
 
@@ -995,9 +1011,12 @@ pub struct AppState {
     pub thinking_level_change_requested: Option<Option<rusty_core::ThinkingLevel>>,
     /// Set by the Enter handler in the General tab — the TUI main loop
     /// picks this up and sends `TuiCommand::SetPermissionMode` to the agent task.
-    pub permission_mode_change_requested: Option<rusty_core::PermissionMode>,
+    pub permission_mode_change_requested: Option<(rusty_core::PermissionMode, bool)>,
     /// Whether the agent is currently in explicit plan mode.
     pub plan_mode: bool,
+    /// The permission mode currently in force, as last reported by the agent or
+    /// changed locally (Shift+Tab, /plan, settings).
+    pub permission_mode: rusty_core::PermissionMode,
     /// Queue of commands dispatched by key handlers that the main event loop
     /// picks up and sends to the agent task (needed because key handlers
     /// borrow `self` mutably so we can't send directly).
@@ -1042,7 +1061,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/permissions", "Manage tool permissions"),
     ("/settings", "Open settings overlay"),
     ("/version", "Show version and check for updates"),
-    ("/plan", "Enter explicit plan mode for planning only"),
+    ("/plan", "Switch to plan mode: investigate read-only, then approve a plan"),
     ("/test", "Test connection to current model"),
     ("/quit", "Exit"),
 ];
@@ -1201,6 +1220,7 @@ impl Default for AppState {
             thinking_level_change_requested: None,
             permission_mode_change_requested: None,
             plan_mode: false,
+            permission_mode: rusty_core::PermissionMode::Default,
             pending_commands: std::collections::VecDeque::new(),
             viewport_height: 20,
             slash_command: None,
@@ -1213,6 +1233,16 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Switch permission mode: update the displayed mode at once and ask the
+    /// agent task to apply it.
+    pub fn request_permission_mode(&mut self, mode: rusty_core::PermissionMode) {
+        self.permission_mode = mode;
+        self.plan_mode = mode == rusty_core::PermissionMode::Plan;
+        self.permission_mode_change_requested = Some((mode, true));
+        self.push_system(&format!("Mode: {}", permission_mode_label(mode)));
+        self.needs_redraw = true;
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         // Track timing for paste detection.
         // If events arrive faster than PASTE_DETECT_THRESHOLD_NS, we're in a paste.
@@ -1618,7 +1648,9 @@ impl AppState {
                                 Some(GeneralRow::PermissionMode) => {
                                     let next = next_permission_mode(settings.general_permission_mode);
                                     settings.general_permission_mode = next;
-                                    self.permission_mode_change_requested = Some(next);
+                                    self.permission_mode = next;
+                                    self.plan_mode = next == rusty_core::PermissionMode::Plan;
+                                    self.permission_mode_change_requested = Some((next, false));
                                     self.needs_redraw = true;
                                 }
                                 None => {}
@@ -1769,6 +1801,17 @@ impl AppState {
             KeyCode::Esc if self.autocomplete.is_some() => {
                 self.autocomplete = None;
                 self.needs_redraw = true;
+                return;
+            }
+            // Shift+Tab cycles the permission mode (no popup or overlay is open here).
+            KeyCode::BackTab => {
+                if self.is_streaming {
+                    self.push_system("Wait for the current response to finish before changing mode.");
+                    self.needs_redraw = true;
+                } else {
+                    let next = cycle_permission_mode(self.permission_mode);
+                    self.request_permission_mode(next);
+                }
                 return;
             }
             // Sidebar navigation when visible

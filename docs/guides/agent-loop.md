@@ -70,7 +70,7 @@ The system prompt is assembled from several sources:
 - **Sandbox notice**: Reminder that file operations are restricted to the working directory
 - **Context files**: Contents of AGENTS.md, CLAUDE.md, or RUSTY.md files found in the project
 - **Current date**: For time-sensitive operations
-- **Plan-with-tasks instructions**: Optional instructions for structured task tracking
+- **Plan mode section**: Added while planning, telling the model to investigate read-only and submit a plan with `exit_plan_mode`
 
 ## Streaming
 

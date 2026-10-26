@@ -20,12 +20,12 @@ The default mode launches a full terminal UI built with Ratatui. This provides:
 - Scrollable message history
 - Session save on exit
 - Model registry picker via the sidebar (`/settings`)
-- Structured task tracking with `--plan-with-tasks`
+- Plan mode: Shift+Tab or `/plan`, read-only investigation, then plan approval
 
 ```bash
 rusty
 rusty --preset openai --api-key sk-...
-rusty --plan-with-tasks
+rusty --permissions plan
 ```
 
 ### Keyboard Shortcuts
@@ -35,6 +35,7 @@ rusty --plan-with-tasks
 | `Enter` | Send message |
 | `Up/Down` | Scroll history |
 | `Tab` | Autocomplete slash commands |
+| `Shift+Tab` | Cycle mode: default, accept-edits, plan |
 | `Ctrl+C` | Cancel current operation |
 | `Ctrl+D` | Exit |
 
@@ -83,4 +84,4 @@ Features:
 | CI/CD pipelines | Headless with `--permissions bypass` |
 | Quick one-off question | Headless |
 | Long-running development work | TUI with session resume |
-| Planning and task tracking | TUI with `--plan-with-tasks` |
+| Planning and task tracking | TUI plan mode (Shift+Tab or `/plan`) |

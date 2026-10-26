@@ -94,7 +94,6 @@ Rusty 将其持久化配置存储在 `~/.rusty/settings.json`。该文件由首�
 | `--max-tokens` | 响应的最大 token 数 |
 | `--temperature` | 采样温度 |
 | `--thinking-budget` | 推理/思考内容的 token 预算 |
-| `--plan-with-tasks` | 在响应中启用结构化任务跟踪 |
 | `--cwd` | 设置工作目录 |
 | `--prompt` | 以无头模式运行单个提示 |
 | `--headless` | 以标准输入 REPL 模式运行 |

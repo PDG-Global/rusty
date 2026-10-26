@@ -50,7 +50,6 @@ rusty [OPTIONS] [PROMPT]
 | Flag | Description |
 |------|-------------|
 | `--permissions <MODE>` | Permission mode: `default`, `accept-edits`, `bypass`, `plan` |
-| `--plan-with-tasks` | Plan mode with task tracking (implies `--permissions plan`) |
 
 ## Agent
 

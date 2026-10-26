@@ -74,13 +74,9 @@ rusty --preset xiaomi --api-key YOUR_KEY --prompt "Explain this codebase"
 rusty --preset xiaomi --api-key YOUR_KEY --headless
 ```
 
-### Plan mode with task tracking
+### Plan mode
 
-```bash
-rusty --plan-with-tasks
-```
-
-This enables read-only permissions. Task tracking via the todowrite tool is always active; this flag is a convenience alias for `--permissions plan`.
+Press Shift+Tab to cycle default, accept-edits and plan, or type `/plan` (optionally followed by a task). Rusty investigates read-only, proposes a numbered plan with `exit_plan_mode`, and waits for your approval before executing it. Start in plan mode with `rusty --permissions plan`.
 
 ### Resume a session
 
@@ -155,7 +151,6 @@ The setup wizard can store your key in the OS keyring or in the settings file.
     --api-key <KEY>          API key
     --cwd <DIR>              Working directory
     --permissions <MODE>     Permission mode (default/accept-edits/bypass/plan)
-    --plan-with-tasks        Plan mode with task tracking (implies --permissions plan)
     --setup                  Run interactive setup wizard
     --resume <ID>            Resume session by ID
     --list-sessions          List saved sessions

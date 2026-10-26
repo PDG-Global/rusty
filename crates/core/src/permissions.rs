@@ -37,8 +37,8 @@ pub fn permission_mode_prompt(mode: PermissionMode) -> Option<&'static str> {
         PermissionMode::Plan => Some(
             "## Permission Mode\n\n\
             You are in plan mode. Write and execute tools are disabled. \
-            Focus on research and planning using read-only tools. \
-            Use exit_plan_mode when you are ready to execute.",
+            Investigate with read-only tools, then call exit_plan_mode with your plan \
+            to ask the user for approval.",
         ),
     }
 }
@@ -154,7 +154,10 @@ pub fn check_auto_permission(mode: PermissionMode, level: PermissionLevel) -> Pe
             if level == PermissionLevel::ReadOnly || level == PermissionLevel::None {
                 PermissionDecision::AllowOnce
             } else {
-                PermissionDecision::Deny("Plan mode is read-only".to_string())
+                PermissionDecision::Deny(
+                    "Plan mode is read-only. Investigate, then call exit_plan_mode with your plan."
+                        .to_string(),
+                )
             }
         }
         PermissionMode::Default => {

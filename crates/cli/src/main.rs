@@ -68,10 +68,6 @@ struct Args {
     #[arg(long, value_enum, default_value = "default")]
     permissions: PermissionModeArg,
 
-    /// Plan mode with task tracking (implies --permissions plan, instructs model to use todowrite)
-    #[arg(long)]
-    plan_with_tasks: bool,
-
     /// Resume session by ID
     #[arg(long)]
     resume: Option<String>,
@@ -533,10 +529,6 @@ async fn main() -> Result<()> {
     }
     config.verbose = args.verbose;
     config.permission_mode = args.permissions.into();
-    if args.plan_with_tasks {
-        config.permission_mode = PermissionMode::Plan;
-        config.plan_with_tasks = true;
-    }
     // Build provider — resolve API key in priority order:
     //   1. --api-key CLI flag (highest priority)
     //   2. RUSTY_API_KEY / OPENAI_API_KEY env vars
@@ -823,8 +815,56 @@ async fn run_headless_stdin(
     let stdin = io::stdin();
     let mut _session_name: Option<String> = None;
 
+    // Plan approval (and the question tool) read the answer from stdin.
+    let ask_cb: rusty_agent::QuestionCallback = Arc::new(|header, prompt| {
+        let text = format!("\n[{header}]\n{prompt}\n> ");
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                use std::io::Write;
+                print!("{text}");
+                let _ = io::stdout().flush();
+                let mut answer = String::new();
+                let _ = io::stdin().lock().read_line(&mut answer);
+                answer.trim().to_string()
+            })
+            .await
+            .unwrap_or_default()
+        })
+    });
+
+    // Tool permission prompts, only on an interactive terminal: piped input is
+    // scripted, and reading answers from it would consume the script's next lines.
+    {
+        use std::io::IsTerminal;
+        if io::stdin().is_terminal() {
+            let perm_cb: rusty_agent::r#loop::PermissionCallback = Arc::new(|req| {
+                let text = format!(
+                    "\n[Permission] {}: {}\nAllow? [y]es / [a]lways this session / [n]o > ",
+                    req.tool_name, req.description
+                );
+                Box::pin(async move {
+                    tokio::task::spawn_blocking(move || {
+                        use std::io::Write;
+                        print!("{text}");
+                        let _ = io::stdout().flush();
+                        let mut answer = String::new();
+                        let _ = io::stdin().lock().read_line(&mut answer);
+                        match answer.trim().to_lowercase().as_str() {
+                            "y" | "yes" => PermissionDecision::AllowOnce,
+                            "a" | "always" => PermissionDecision::AllowSession,
+                            _ => PermissionDecision::Deny("Denied by the user.".to_string()),
+                        }
+                    })
+                    .await
+                    .unwrap_or_else(|_| PermissionDecision::Deny("Permission prompt failed.".to_string()))
+                })
+            });
+            agent.set_permission_callback(perm_cb);
+        }
+    }
+
     println!("rusty (headless mode). Type 'exit' or Ctrl-D to quit.");
-    println!("Slash commands: /help, /init, /resume, /sessions, /compact, /clear, /copy, /model, /rename, /quit");
+    println!("Slash commands: /help, /init, /plan, /resume, /sessions, /compact, /clear, /copy, /model, /rename, /quit");
 
     loop {
         print!("> ");
@@ -883,6 +923,7 @@ async fn run_headless_stdin(
                             vec![ContentBlock::Text { text: init_prompt }],
                             AgentCallbacks {
                                 on_text: Some(&text_cb),
+                                on_question: Some(&ask_cb),
                                 ..Default::default()
                             },
                         )
@@ -1026,16 +1067,23 @@ async fn run_headless_stdin(
                     continue;
                 }
                 Some(rusty_tui::app::SlashCommand::Plan) => {
-                    let plan_prompt = "Enter plan mode. Read the relevant files and create a detailed plan. Do not execute any write or execute tools.".to_string();
+                    agent.set_permission_mode(PermissionMode::Plan);
+                    let task = line.strip_prefix("/plan").unwrap_or("").trim().to_string();
+                    if task.is_empty() {
+                        println!("{PLAN_MODE_HELP}");
+                        continue;
+                    }
+                    println!("Mode: plan");
                     let text_cb: rusty_agent::r#loop::TextCallback = Box::new(|text| {
                         print!("{text}");
                         let _ = io::stdout().flush();
                     });
                     let result = agent
                         .run(
-                            vec![ContentBlock::Text { text: plan_prompt }],
+                            vec![ContentBlock::Text { text: task }],
                             AgentCallbacks {
                                 on_text: Some(&text_cb),
+                                on_question: Some(&ask_cb),
                                 ..Default::default()
                             },
                         )
@@ -1069,6 +1117,7 @@ async fn run_headless_stdin(
                 vec![ContentBlock::Text { text: line.to_string() }],
                 AgentCallbacks {
                     on_text: Some(&text_cb),
+                    on_question: Some(&ask_cb),
                     ..Default::default()
                 },
             )
@@ -1078,6 +1127,21 @@ async fn run_headless_stdin(
         }
     }
     Ok(())
+}
+
+/// Explanation printed by `/plan` when no task follows it.
+const PLAN_MODE_HELP: &str = "Plan mode is on. I will investigate read-only, then propose a plan \
+for your approval before changing anything. Describe what you want planned. \
+Shift+Tab or /plan cycles modes.";
+
+/// Tell the TUI which permission mode the agent is in (drives the status badge).
+fn send_mode_events(tx: &mpsc::UnboundedSender<AgentTaskEvent>, agent: &Agent) {
+    let _ = tx.send(AgentTaskEvent::Event(
+        rusty_tui::app::AgentEvent::PermissionMode(agent.permission_mode()),
+    ));
+    let _ = tx.send(AgentTaskEvent::Event(
+        rusty_tui::app::AgentEvent::PlanMode(agent.is_planning()),
+    ));
 }
 
 /// Build the prompt for /init — instructs the agent to analyze the codebase and write AGENTS.md
@@ -1267,6 +1331,8 @@ async fn run_tui(
                 })
             });
             agent.set_question_callback(question_cb);
+            // Report the starting mode so the status bar shows it (e.g. --permissions plan).
+            send_mode_events(&event_tx, &agent);
             // Show any existing tasks (e.g. when started with --resume)
             let _ = event_tx.send(AgentTaskEvent::Event(
                 rusty_tui::app::AgentEvent::Tasks(agent.render_tasks()),
@@ -1368,10 +1434,8 @@ async fn run_tui(
                         }
                     }
                     // Emit final plan mode state after the turn completes
-                    let plan_mode = agent.plan_mode;
-                    let _ = event_tx.send(AgentTaskEvent::Event(
-                        rusty_tui::app::AgentEvent::PlanMode(plan_mode),
-                    ));
+                    let plan_mode = agent.is_planning();
+                    send_mode_events(&event_tx, &agent);
                     // Refresh the task panel from the registry (catches sub-agent changes too)
                     let _ = event_tx.send(AgentTaskEvent::Event(
                         rusty_tui::app::AgentEvent::Tasks(agent.render_tasks()),
@@ -1488,6 +1552,7 @@ async fn run_tui(
                                 let _ = event_tx.send(AgentTaskEvent::Event(
                                     rusty_tui::app::AgentEvent::PlanMode(false),
                                 ));
+                                send_mode_events(&event_tx, &agent);
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
                             Some(rusty_tui::app::TuiCommand::ResumeSession(id, messages)) => {
@@ -1604,17 +1669,17 @@ async fn run_tui(
                                 ));
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
-                            Some(rusty_tui::app::TuiCommand::SetPermissionMode(mode)) => {
+                            Some(rusty_tui::app::TuiCommand::SetPermissionMode { mode, persist }) => {
                                 let mut agent = agent_arc.lock().await;
                                 agent.set_permission_mode(mode);
+                                send_mode_events(&event_tx, &agent);
                                 drop(agent);
-                                settings.permission_mode = Some(mode);
-                                let _ = settings.save().await;
-                                let _ = event_tx.send(AgentTaskEvent::Event(
-                                    rusty_tui::app::AgentEvent::ResponseComplete(
-                                        format!("Permission mode set to: {mode:?}")
-                                    ),
-                                ));
+                                // Only the settings panel saves a default. Shift+Tab and /plan are
+                                // session-only, and Plan is never saved as the default.
+                                if persist && mode != PermissionMode::Plan {
+                                    settings.permission_mode = Some(mode);
+                                    let _ = settings.save().await;
+                                }
                                 let _ = event_tx.send(AgentTaskEvent::ReadyForInput);
                             }
                             Some(rusty_tui::app::TuiCommand::AddModel(entry)) => {
@@ -2047,7 +2112,7 @@ async fn tui_main_loop(
                                 app.cursor_pos = 0;
                                 app.history.push(input.clone());
                                 app.history_idx = None;
-                                handle_slash_command(app, slash, cmd_tx, working_dir, sessions_dir).await;
+                                handle_slash_command(app, slash, &input, cmd_tx, working_dir, sessions_dir).await;
                                 app.needs_redraw = true;
                             } else if input.starts_with('/') {
                                 app.push_system(&format!(
@@ -2093,8 +2158,8 @@ async fn tui_main_loop(
                             if let Some(level) = app.thinking_level_change_requested.take() {
                                 let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetThinkingLevel(level));
                             }
-                            if let Some(mode) = app.permission_mode_change_requested.take() {
-                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetPermissionMode(mode));
+                            if let Some((mode, persist)) = app.permission_mode_change_requested.take() {
+                                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetPermissionMode { mode, persist });
                             }
                             if had_perm {
                                 app.needs_redraw = true;
@@ -2165,6 +2230,11 @@ async fn tui_main_loop(
                             app.plan_mode = mode;
                             app.needs_redraw = true;
                         }
+                        rusty_tui::app::AgentEvent::PermissionMode(mode) => {
+                            app.permission_mode = mode;
+                            app.plan_mode = mode == PermissionMode::Plan;
+                            app.needs_redraw = true;
+                        }
                         rusty_tui::app::AgentEvent::Tasks(rendered) => {
                             app.set_task_panel(&rendered);
                         }
@@ -2233,6 +2303,7 @@ async fn tui_main_loop(
 async fn handle_slash_command(
     app: &mut rusty_tui::app::AppState,
     cmd: rusty_tui::app::SlashCommand,
+    raw_input: &str,
     cmd_tx: &mpsc::UnboundedSender<rusty_tui::app::TuiCommand>,
     _working_dir: &PathBuf,
     sessions_dir: &Path,
@@ -2335,7 +2406,6 @@ async fn handle_slash_command(
             app.thinking_expanded = false;
             app.pending_tools.clear();
             app.pinned_todos = None;
-            app.plan_mode = false;
             let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Clear);
             app.push_system("Conversation cleared.");
             app.needs_redraw = true;
@@ -2364,7 +2434,8 @@ async fn handle_slash_command(
             app.needs_redraw = true;
         }
         rusty_tui::app::SlashCommand::Rename => {
-            let input = app.input.clone();
+            // app.input is cleared before dispatch, so use the raw command line.
+            let input = raw_input.to_string();
             let new_name = input.strip_prefix("/rename").unwrap_or("").trim();
             if new_name.is_empty() {
                 app.push_system("Usage: /rename <new session name>");
@@ -2378,7 +2449,7 @@ async fn handle_slash_command(
         }
         rusty_tui::app::SlashCommand::Permissions => {
             let settings = rusty_core::Settings::load().await.unwrap_or_default();
-            let input = app.input.clone();
+            let input = raw_input.to_string();
             let args = input
                 .strip_prefix("/permissions")
                 .or_else(|| input.strip_prefix("/perms"))
@@ -2437,7 +2508,7 @@ async fn handle_slash_command(
                     models,
                     active_name,
                     settings.thinking_level,
-                    settings.permission_mode.unwrap_or(rusty_core::PermissionMode::Default),
+                    app.permission_mode,
                 ));
             }
             app.input.clear();
@@ -2460,19 +2531,27 @@ async fn handle_slash_command(
             app.needs_redraw = true;
         }
         rusty_tui::app::SlashCommand::Plan => {
-            app.messages.push(rusty_tui::app::ChatMessage {
-                role: rusty_tui::app::MessageRole::User,
-                content: "/plan (enter explicit plan mode)".to_string(),
-                tool_blocks: vec![],
-            });
-            app.is_streaming = true;
-            app.streaming_text.clear();
-            app.streaming_text = "...".to_string();
-            app.scroll_anchor = None;
-            app.is_user_scrolled = false;
+            let task = raw_input.trim().strip_prefix("/plan").unwrap_or("").trim().to_string();
+            app.permission_mode = PermissionMode::Plan;
+            app.plan_mode = true;
+            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::SetPermissionMode { mode: PermissionMode::Plan, persist: false });
+            if task.is_empty() {
+                app.push_system(PLAN_MODE_HELP);
+            } else {
+                app.push_system("Mode: plan");
+                app.messages.push(rusty_tui::app::ChatMessage {
+                    role: rusty_tui::app::MessageRole::User,
+                    content: task.clone(),
+                    tool_blocks: vec![],
+                });
+                app.is_streaming = true;
+                app.streaming_text.clear();
+                app.streaming_text = "...".to_string();
+                app.scroll_anchor = None;
+                app.is_user_scrolled = false;
+                let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: task }]));
+            }
             app.needs_redraw = true;
-            let plan_prompt = "Enter plan mode. Read the relevant files and create a detailed plan. Do not execute any write or execute tools.".to_string();
-            let _ = cmd_tx.send(rusty_tui::app::TuiCommand::Chat(vec![ContentBlock::Text { text: plan_prompt }]));
         }
         rusty_tui::app::SlashCommand::Test => {
             app.push_system("Testing connection to current model...");

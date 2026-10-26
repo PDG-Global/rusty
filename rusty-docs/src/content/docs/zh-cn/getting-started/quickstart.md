@@ -72,7 +72,6 @@ rusty --preset openai
 |------|-------------|
 | `--model` | 覆盖默认模型 |
 | `--permissions` | 设置权限模式：`default`、`accept-edits`、`bypass`、`plan` |
-| `--plan-with-tasks` | 在响应中启用结构化任务跟踪 |
 | `--thinking-budget` | 推理/思考内容的 token 预算 |
 | `--cwd` | 设置工作目录 |
 | `--no-claude-md` | 禁用对 AGENTS.md/CLAUDE.md/RUSTY.md 上下文文件的发现 |
