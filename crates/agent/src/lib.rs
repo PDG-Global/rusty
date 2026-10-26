@@ -366,7 +366,9 @@ pub async fn build_system_prompt(
         Establish a clear visual hierarchy with one primary action per view. Make layouts \
         responsive down to phone widths.\n\
         - **Avoid template defaults:** no gratuitous gradients, heavy shadows, glassmorphism or \
-        everything-centred layouts. Every decorative choice should serve the content."
+        everything-centred layouts. Every decorative choice should serve the content.\n\
+        - **No emoji as icons or decoration.** Use inline SVG icons, a project icon set, or \
+        typographic elements instead, unless the user asks for emoji."
             .to_string(),
     );
 
