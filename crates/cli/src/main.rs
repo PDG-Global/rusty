@@ -335,45 +335,70 @@ async fn main() -> Result<()> {
         match preset.as_str() {
             "xiaomi" | "mimo" => {
                 config.api_base = Some("https://token-plan-cn.xiaomimimo.com/v1".to_string());
-                if args.model.is_none() && settings.default_model.is_none() {
+                if args.model.is_none() {
                     config.model = "mimo-v2.5-pro".to_string();
                 }
             }
             "kimi" | "moonshot" => {
                 config.api_base = Some("https://api.kimi.com/coding/v1".to_string());
                 config.temperature = Some(1.0);
-                if args.model.is_none() && settings.default_model.is_none() {
+                if args.model.is_none() {
                     config.model = "kimi-for-coding".to_string();
                 }
             }
             "openai" => {
                 config.api_base = Some("https://api.openai.com/v1".to_string());
-                if args.model.is_none() && settings.default_model.is_none() {
-                    config.model = "gpt-4o".to_string();
+                if args.model.is_none() {
+                    config.model = "gpt-6.1-sol".to_string();
                 }
             }
             "deepseek" => {
                 config.api_base = Some("https://api.deepseek.com".to_string());
-                if args.model.is_none() && settings.default_model.is_none() {
+                if args.model.is_none() {
                     config.model = "deepseek-v4-pro".to_string();
+                }
+            }
+            "zhipu" | "glm" => {
+                config.api_base = Some("https://api.z.ai/api/coding/paas/v4".to_string());
+                if args.model.is_none() {
+                    config.model = "glm-5.3".to_string();
+                }
+            }
+            "minimax" => {
+                config.api_base = Some("https://api.minimax.io/v1".to_string());
+                if args.model.is_none() {
+                    config.model = "MiniMax-M3".to_string();
+                }
+            }
+            "anthropic" | "claude" => {
+                config.api_base = Some("https://api.anthropic.com/v1".to_string());
+                config.provider_type = rusty_core::ProviderType::Anthropic;
+                if args.model.is_none() {
+                    config.model = "claude-sonnet-5-5".to_string();
                 }
             }
             "ollama" => {
                 config.api_base = Some("http://localhost:11434/v1".to_string());
-                if args.model.is_none() && settings.default_model.is_none() {
-                    config.model = "llama3".to_string();
+                if args.model.is_none() {
+                    config.model = "qwen3-coder:30b".to_string();
                 }
             }
             _ => {
                 eprintln!("Unknown preset: {preset}");
-                eprintln!("Available presets: xiaomi, kimi, openai, deepseek, ollama");
+                eprintln!("Available presets: xiaomi, kimi, openai, deepseek, zhipu, minimax, anthropic, ollama");
                 std::process::exit(1);
             }
         }
     }
 
     // Apply settings/registry defaults (model registry takes priority over legacy fields)
-    let active_entry = settings.active_model_entry().cloned();
+    // An explicit --preset selects the provider, so it bypasses the active registry
+    // entry (whose model, provider type and headers belong to another provider).
+    let active_entry = if args.preset.is_some() {
+        None
+    } else {
+        settings.active_model_entry().cloned()
+    };
     let permanent_allowlist = settings.allowed_tools_set();
 
     if let Some(ref entry) = active_entry {
@@ -401,8 +426,10 @@ async fn main() -> Result<()> {
                 config.api_base = Some(base);
             }
         }
-        if let Some(model) = settings.default_model.clone() {
-            config.model = model;
+        if args.preset.is_none() {
+            if let Some(model) = settings.default_model.clone() {
+                config.model = model;
+            }
         }
     }
 

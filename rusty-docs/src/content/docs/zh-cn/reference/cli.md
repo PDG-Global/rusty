@@ -24,7 +24,7 @@ rusty [OPTIONS] [PROMPT]
 
 | 参数 | 说明 |
 |------|-------------|
-| `--model <MODEL>` | 要使用的模型（例如 `mimo-v2.5-pro`、`gpt-4o`） |
+| `--model <MODEL>` | 要使用的模型（例如 `mimo-v2.5-pro`、`gpt-6.1-sol`） |
 | `--preset <PRESET>` | 提供方预设：`xiaomi`、`kimi`、`openai`、`deepseek`、`ollama` |
 | `--api-key <KEY>` | API 密钥 |
 | `--api-base <URL>` | API base URL |

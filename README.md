@@ -17,7 +17,7 @@ A lightweight AI coding agent that runs in your terminal. Connects to OpenAI-com
 - Tiered permission system (bypass, accept-edits, plan, default)
 - Interactive first-run setup wizard
 - API key management with OS keyring support (macOS Keychain, Windows Credential Manager, Linux Secret Service)
-- Multiple API presets (Xiaomi MiMo, Kimi, OpenAI, Ollama, DeepSeek)
+- Multiple API presets (Xiaomi MiMo, Kimi, OpenAI, Anthropic, Zhipu GLM, MiniMax, Ollama, DeepSeek)
 
 ## Installation
 
@@ -137,10 +137,13 @@ The setup wizard can store your key in the OS keyring or in the settings file.
 | Preset | API Base | Default Model |
 |--------|----------|---------------|
 | `xiaomi` | `https://token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5-pro` |
-| `kimi` | `https://api.kimi.com/coding/v1/` | `kimi-k2.6` |
-| `openai` | `https://api.openai.com/v1` | `gpt-4o` |
+| `kimi` | `https://api.kimi.com/coding/v1` | `kimi-for-coding` |
+| `openai` | `https://api.openai.com/v1` | `gpt-6.1-sol` |
 | `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` |
-| `ollama` | `http://localhost:11434/v1` | `llama3` |
+| `zhipu` / `glm` | `https://api.z.ai/api/coding/paas/v4` | `glm-5.3` |
+| `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3` |
+| `anthropic` / `claude` | `https://api.anthropic.com/v1` | `claude-sonnet-5-5` |
+| `ollama` | `http://localhost:11434/v1` | `qwen3-coder:30b` |
 
 ## CLI Options
 

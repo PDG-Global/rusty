@@ -363,12 +363,15 @@ Empty strings are treated as absent at every stage.
 | Preset | API Base | Default Model |
 |---|---|---|
 | `xiaomi` | `https://token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5-pro` |
-| `kimi` | `https://api.kimi.com/coding/v1/` | `kimi-k2.6` |
-| `openai` | `https://api.openai.com/v1` | `gpt-4o` |
+| `kimi` | `https://api.kimi.com/coding/v1` | `kimi-for-coding` |
+| `openai` | `https://api.openai.com/v1` | `gpt-6.1-sol` |
 | `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` |
-| `ollama` | `http://localhost:11434/v1` | `llama3` |
+| `zhipu` / `glm` | `https://api.z.ai/api/coding/paas/v4` | `glm-5.3` |
+| `minimax` | `https://api.minimax.io/v1` | `MiniMax-M3` |
+| `anthropic` / `claude` | `https://api.anthropic.com/v1` | `claude-sonnet-5-5` |
+| `ollama` | `http://localhost:11434/v1` | `qwen3-coder:30b` |
 
-Note: The setup wizard uses slightly different default models for some providers (e.g., `kimi-k2`, `gpt-4.1`, `qwen3:8b` for Ollama). CLI presets take precedence when `--preset` is used.
+Note: The setup wizard uses slightly different default models for some providers (e.g., `kimi-for-coding`, `gpt-6.1-sol`, `qwen3-coder:30b` for Ollama). CLI presets take precedence when `--preset` is used.
 
 ---
 
@@ -523,5 +526,5 @@ TUI Display ← Agent Events ← Tool Execution ← Tool Calls
 ---
 
 *Last updated: October 2026*
-*Version: 0.2.2*
+*Version: 0.3.0*
 *Rust edition: 2021*
