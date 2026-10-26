@@ -170,7 +170,7 @@ async fn run_checkpoint_writer(
     prompt.push_str(&old_text);
 
     prompt.push_str("\n\nProduce the full checkpoint with all 11 sections. \
-        Use the exact `## §N Title` headers. Update sections incrementally — \
+        Use the exact `## §N Title` headers. Update sections incrementally: \
         preserve content that's still accurate, update what changed.");
 
     let request = MessageRequest {
@@ -257,5 +257,5 @@ Rules:
 - Focus on facts, not narration.
 - Include file paths and specific technical details.
 - §1 MUST contain at least one block-quoted verbatim user request.
-- §2 MUST be present and actionable — the agent wakes up with only this checkpoint.
-- If a section has nothing, write '(none)' — do not omit sections.";
+- §2 MUST be present and actionable: the agent wakes up with only this checkpoint.
+- If a section has nothing, write '(none)'. Do not omit sections.";

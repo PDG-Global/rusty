@@ -281,6 +281,10 @@ struct OaiStreamState {
     tool_calls: Vec<(usize, OaiStreamToolCall)>,
     finish: Option<String>,
     done: bool,
+    /// Whether any regular `content` text was streamed.
+    saw_text: bool,
+    /// Reasoning text, used as the answer only if the model sent no content.
+    reasoning: String,
 }
 
 fn map_finish_reason(finish: &str) -> &'static str {
@@ -293,18 +297,25 @@ fn map_finish_reason(finish: &str) -> &'static str {
 
 impl OaiStreamState {
     /// Emit the single terminal `Done` (once).
-    fn done_event(&mut self) -> Option<Result<StreamEvent, RustyError>> {
+    fn done_event(&mut self) -> Vec<Result<StreamEvent, RustyError>> {
         if self.done {
-            return None;
+            return Vec::new();
         }
         self.done = true;
-        Some(Ok(StreamEvent::Done {
+        let mut events = Vec::new();
+        // Some providers (Kimi) can put the whole answer in reasoning_content with
+        // empty content. Only then use the reasoning as the answer text.
+        if !self.saw_text && self.tool_calls.is_empty() && !self.reasoning.trim().is_empty() {
+            events.push(Ok(StreamEvent::TextDelta(std::mem::take(&mut self.reasoning))));
+        }
+        events.push(Ok(StreamEvent::Done {
             stop_reason: Some(
                 self.finish
                     .take()
                     .unwrap_or_else(|| "end_turn".to_string()),
             ),
-        }))
+        }));
+        events
     }
 
     /// Process one trimmed SSE line, returning the events it produces.
@@ -333,6 +344,7 @@ impl OaiStreamState {
                                     if let Some(c) = choice {
                                         if let Some(content) = &c.delta.content {
                                             if !content.is_empty() {
+                                                self.saw_text = true;
                                                 events.push(Ok(StreamEvent::TextDelta(
                                                     content.clone(),
                                                 )));
@@ -340,23 +352,16 @@ impl OaiStreamState {
                                         }
                                     }
 
-                                    // Thinking/reasoning content — emit as ThinkingDelta for UI,
-                                    // and also as TextDelta so the agent accumulates it.
-                                    // Some providers (Kimi) put all output in reasoning_content
-                                    // with empty content, so TextDelta is needed to capture it.
+                                    // Thinking/reasoning content: emit as ThinkingDelta only, and
+                                    // buffer it in case the model never sends regular content
+                                    // (see done_event).
                                     if let Some(c) = choice {
                                         if let Some(thinking) = &c.delta.reasoning_content {
                                             if !thinking.is_empty() {
+                                                self.reasoning.push_str(thinking);
                                                 events.push(Ok(StreamEvent::ThinkingDelta(
                                                     thinking.clone(),
                                                 )));
-                                                // Only emit as text if no regular content
-                                                // was present in this chunk
-                                                if !events.iter().any(|e| matches!(e, Ok(StreamEvent::TextDelta(_)))) {
-                                                    events.push(Ok(StreamEvent::TextDelta(
-                                                        thinking.clone(),
-                                                    )));
-                                                }
                                             }
                                         }
                                     }
@@ -601,6 +606,39 @@ mod tests {
             r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
         ]);
         assert_eq!(done_reasons(&evs), vec![Some("tool_use".to_string())]);
+    }
+
+    fn text_of(evs: &[StreamEvent]) -> String {
+        evs.iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reasoning_does_not_leak_into_text() {
+        let evs = run_lines(&[
+            r#"data: {"choices":[{"index":0,"delta":{"reasoning_content":"plan the reply"},"finish_reason":null}]}"#,
+            r#"data: {"choices":[{"index":0,"delta":{"content":"Hello."},"finish_reason":"stop"}]}"#,
+            "data: [DONE]",
+        ]);
+        assert_eq!(text_of(&evs), "Hello.");
+        assert!(evs.iter().any(|e| matches!(e, StreamEvent::ThinkingDelta(t) if t == "plan the reply")));
+    }
+
+    #[test]
+    fn reasoning_only_response_becomes_text() {
+        let evs = run_lines(&[
+            r#"data: {"choices":[{"index":0,"delta":{"reasoning_content":"The answer "},"finish_reason":null}]}"#,
+            r#"data: {"choices":[{"index":0,"delta":{"reasoning_content":"is 4."},"finish_reason":"stop"}]}"#,
+            "data: [DONE]",
+        ]);
+        assert_eq!(text_of(&evs), "The answer is 4.");
+        // The fallback text comes before the single Done.
+        assert!(matches!(evs.last(), Some(StreamEvent::Done { .. })));
+        assert_eq!(done_reasons(&evs).len(), 1);
     }
 
     #[test]

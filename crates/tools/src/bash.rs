@@ -29,7 +29,7 @@ fn smart_truncate(text: &str, max_chars: usize) -> String {
     let cut_at = slice.rfind('\n').unwrap_or(safe);
 
     format!(
-        "{}\n\n... (output truncated, showing {} of {} chars — {} lines omitted)",
+        "{}\n\n... (output truncated, showing {} of {} chars, {} lines omitted)",
         &text[..cut_at],
         cut_at,
         text.len(),
@@ -279,7 +279,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command and return its output. Use for running tests, building, git commands, and system operations. Path arguments and redirect targets are checked — commands referencing paths outside the working directory will be rejected."
+        "Execute a shell command and return its output. Use for running tests, building, git commands, and system operations. Path arguments and redirect targets are checked; commands referencing paths outside the working directory will be rejected."
     }
 
     fn input_schema(&self) -> Value {

@@ -264,7 +264,7 @@ impl Agent {
         !tasks.is_empty() && tasks.iter().all(|t| t.status.is_terminal())
     }
 
-    /// The current session's task list, rendered as `T1 (open) — summary` lines.
+    /// The current session's task list, rendered as `T1 (open): summary` lines.
     pub fn render_tasks(&self) -> String {
         self.task_registry
             .as_ref()
@@ -1157,7 +1157,7 @@ impl Agent {
                         self.messages.push(Message::user(
                             "Your previous response was truncated because it exceeded the output token limit. \
                              The tool call(s) you started had incomplete arguments and could not be executed. \
-                             Please retry with a smaller request — for example, write large files in smaller \
+                             Please retry with a smaller request, for example write large files in smaller \
                              chunks instead of all at once."
                                 .to_string(),
                         ));
@@ -1286,7 +1286,7 @@ impl Agent {
                     // Duplicate calls get a synthetic result instead of re-executing.
                     if dup {
                         let dup_result = ToolResult::success(format!(
-                            "Duplicate tool call skipped — you already called {} with these arguments in this turn. \
+                            "Duplicate tool call skipped: you already called {} with these arguments in this turn. \
                              Re-use the result from your previous call.",
                             tc.name
                         ));

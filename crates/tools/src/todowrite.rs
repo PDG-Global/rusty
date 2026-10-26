@@ -260,7 +260,7 @@ impl TodoWriteTool {
                     .map_err(terr)?;
                 let rendered = self.registry.render_for_tool_output(sid);
                 Ok(ToolResult::success(format!(
-                    "Created {} — {}\n\n{}",
+                    "Created {}: {}\n\n{}",
                     task.id, task.summary, rendered
                 )))
             }

@@ -2325,7 +2325,7 @@ impl AppState {
     }
 
     /// Update the pinned task panel from a rendered task list
-    /// (`T1 (open) — summary` lines). Hidden when no task is still active.
+    /// (`T1 (open): summary` lines). Hidden when no task is still active.
     pub fn set_task_panel(&mut self, rendered: &str) {
         let has_active = rendered.contains("(open)")
             || rendered.contains("(in_progress)")

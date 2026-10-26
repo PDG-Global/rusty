@@ -29,7 +29,7 @@ impl Tool for NoteTool {
 
     fn description(&self) -> &str {
         "Record an observation or decision to a session scratchpad. \
-         Use this to capture context that would otherwise be lost — \
+         Use this to capture context that would otherwise be lost: \
          discovered patterns, important file locations, technical decisions, \
          gotchas, or anything you want to remember across compaction. \
          Notes are processed during context management and preserved in summaries. \
