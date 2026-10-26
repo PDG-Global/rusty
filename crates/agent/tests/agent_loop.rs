@@ -651,3 +651,21 @@ async fn e2_coder_agent_call_still_counts_as_write() {
     assert_eq!(run(&mut agent).await.unwrap(), "Confirmed complete.");
     assert_eq!(reqs.lock().unwrap().len(), 3);
 }
+
+#[tokio::test]
+async fn e3_resumed_agent_call_counts_as_write_even_if_labelled_explore() {
+    // A resume runs the stored sub-agent's original type, so the label can't be trusted.
+    let (p, reqs) = FakeProvider::new(vec![
+        call("agent", "{\"task\":\"go on\",\"subagent_type\":\"explore\",\"resume\":\"subagent-123\"}"),
+        end("Done."),
+        end("Confirmed complete."),
+    ]);
+    let (a, _inputs) = FakeTool::new("agent", PermissionLevel::Write);
+    let mut agent = make_agent(p, vec![a]);
+    agent.enter_plan_mode();
+    // In plan mode a Write-level call is blocked, proving it wasn't treated as read-only.
+    let _ = run(&mut agent).await.unwrap();
+    let reqs = reqs.lock().unwrap();
+    let blocked = tool_results(&reqs[1]).iter().any(|(c, e)| *e == Some(true) && c.contains("plan mode"));
+    assert!(blocked, "resumed agent call was not blocked in plan mode");
+}

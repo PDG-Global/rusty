@@ -1319,7 +1319,7 @@ impl Agent {
                     })
                 ).await;
 
-                for (((tc, _decision), result), dup) in permission_results.iter().zip(results).zip(is_duplicate) {
+                for (((tc, decision), result), dup) in permission_results.iter().zip(results).zip(is_duplicate) {
                     // Duplicate calls get a synthetic result instead of re-executing.
                     if dup {
                         let dup_result = ToolResult::success(format!(
@@ -1348,16 +1348,23 @@ impl Agent {
                             ToolResult::error(e.to_string())
                         }
                         None => {
-                            // Permission denied — already logged
+                            // Permission denied (already logged). Pass the reason on so the
+                            // model knows what to do instead (e.g. call exit_plan_mode).
+                            let content = match decision {
+                                PermissionDecision::Deny(reason) if !reason.is_empty() => {
+                                    format!("Permission denied: {reason}")
+                                }
+                                _ => "Permission denied".to_string(),
+                            };
                             if let Some(cb) = on_tool {
                                 cb(&tc.name, ToolStatus::Error {
-                                    output: format!("Permission denied"),
+                                    output: content.clone(),
                                 });
                             }
                             self.messages.push(Message::user_blocks(vec![
                                 ContentBlock::ToolResult {
                                     tool_use_id: tc.id.clone(),
-                                    content: format!("Permission denied"),
+                                    content,
                                     is_error: Some(true),
                                 },
                             ]));
@@ -1679,7 +1686,12 @@ impl Agent {
                 BashClassification::ReadOnly => PermissionLevel::ReadOnly,
                 BashClassification::Write | BashClassification::Execute => PermissionLevel::Execute,
             },
-            "agent" if input()["subagent_type"].as_str().unwrap_or("explore") == "explore" => {
+            // Resuming runs the stored sub-agent with its original type, ignoring
+            // `subagent_type`, so only a fresh explore sub-agent is read-only.
+            "agent"
+                if input()["resume"].as_str().unwrap_or("").is_empty()
+                    && input()["subagent_type"].as_str().unwrap_or("explore") == "explore" =>
+            {
                 PermissionLevel::ReadOnly
             }
             _ => self
